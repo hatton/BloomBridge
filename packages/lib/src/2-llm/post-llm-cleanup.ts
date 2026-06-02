@@ -38,9 +38,7 @@ export function attemptCleanup(content: string): {
       const markdownContent = lines.slice(yamlEndIndex).join("\n");
       content = `---\n${yamlContent.trim()}\n---\n${markdownContent}`;
       content = content.replace(/---\n---/g, "---\n"); // remove any double dashes that might have been created
-      logger.verbose(
-        "Fixed malformed YAML frontmatter by adding missing delimiters"
-      );
+      logger.verbose("Fixed malformed YAML frontmatter by adding missing delimiters");
     }
 
     // remove any other ``` (I've seen it after the YAML frontmatter)
@@ -61,10 +59,10 @@ export function attemptCleanup(content: string): {
     langCommentFollowedImmediatelyByImageRegex,
     (_match, langComment, imageStatement) => {
       logger.warn(
-        `Reordered language comment to follow image statement in markdown: ${langComment} ${imageStatement}`
+        `Reordered language comment to follow image statement in markdown: ${langComment} ${imageStatement}`,
       );
       return `${imageStatement}\n${langComment}\n`;
-    }
+    },
   );
 
   // Mark page numbers that OCR often includes at the end of pages
@@ -82,10 +80,13 @@ export function attemptCleanup(content: string): {
       continue;
     }
 
-    // Find all zxx text blocks with only numeric content on this page
-    // Use a more flexible regex that matches numeric content followed by any whitespace
+    // Find all zxx text blocks with only numeric content on this page.
+    // The content is the page number itself; OCR sometimes wraps it in markdown
+    // heading markup (e.g. "##### 4"), so allow an optional leading "#"-run before
+    // the digits. We still require the rest to be purely numeric/punctuation so we
+    // don't swallow real headings like "##### Chapter 4".
     const zxxNumericRegex =
-      /(<!-- text lang="zxx" -->)(\s*\n\s*[\p{Nd}\-\.\s]+)(?=\s*(?:\n|$))/gu;
+      /(<!-- text lang="zxx" -->)(\s*\n\s*(?:#{1,6}\s*)?[\p{Nd}\-.\s]+)(?=\s*(?:\n|$))/gu;
     const matches: {
       fullMatch: string;
       comment: string;
@@ -108,13 +109,11 @@ export function attemptCleanup(content: string): {
       const lastMatch = matches[matches.length - 1];
       const markedComment = lastMatch.comment.replace(
         'lang="zxx"',
-        'lang="zxx" field="pageNumber"'
+        'lang="zxx" field="pageNumber"',
       );
       const replacement = markedComment + lastMatch.content;
       pages[i] = page.replace(lastMatch.fullMatch, replacement);
-      logger.verbose(
-        `Marked page number block: "${lastMatch.fullMatch.trim()}"`
-      );
+      logger.verbose(`Marked page number block: "${lastMatch.fullMatch.trim()}"`);
     }
   }
 

@@ -4,6 +4,7 @@ import {
   makeMarkdownFromPDF,
   logger,
   llmMarkdown,
+  attemptCleanup,
   Parser,
   HtmlGenerator,
   addBloomPlanToMarkdown,
@@ -292,13 +293,19 @@ export async function processConversion(inputPath: string, options: Arguments) {
     if (latestArtifact === Artifact.MarkdownFromLLMRaw) {
       logger.info(`-> Processing raw LLM markdown...`);
 
-      // Read the raw LLM output
+      // Read the raw LLM output and run the same post-LLM cleanup that the live
+      // LLM stage applies (strip code fences, mark page numbers, etc.). This makes
+      // "start from .raw-llm.md" a deterministic way to re-apply cleanup fixes
+      // without paying for another LLM call.
       const rawLLMContent = await fs.readFile(plan.markdownFromLLMPath!, "utf-8");
-
-      // For now, just pass through the content as-is
-      // Any cleaning should be handled by the existing post-llm-cleanup.ts logic
-      logger.info(`Writing raw LLM content to cleaned path: ${plan.markdownCleanedAfterLLMPath}`);
-      await fs.writeFile(plan.markdownCleanedAfterLLMPath!, rawLLMContent);
+      const cleanupResult = attemptCleanup(rawLLMContent);
+      if (!cleanupResult.valid) {
+        throw new Error(
+          `Cleanup of raw LLM markdown produced invalid content. See "${plan.markdownCleanedAfterLLMPath!}".`,
+        );
+      }
+      logger.info(`Writing cleaned-up markdown to: ${plan.markdownCleanedAfterLLMPath}`);
+      await fs.writeFile(plan.markdownCleanedAfterLLMPath!, cleanupResult.cleaned);
 
       latestArtifact = Artifact.MarkdownFromLLMCleaned;
       console.log(

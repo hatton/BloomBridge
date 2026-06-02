@@ -111,6 +111,28 @@ Next page content.
     expect(result.cleaned).toContain("Next page content.");
   });
 
+  it("marks page numbers wrapped in markdown heading markup", () => {
+    const input = wrapWithFrontmatter(`<!-- text lang="en" -->
+Content here.
+
+<!-- text lang="zxx" -->
+##### 4
+
+<!-- page index=2 -->
+
+<!-- text lang="en" -->
+More content.
+
+<!-- text lang="zxx" -->
+## 12`);
+    const result = attemptCleanup(input);
+    expect(result.valid).toBe(true);
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n##### 4');
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n## 12');
+    // A real heading (with letters) must NOT be treated as a page number.
+    expect(result.cleaned).not.toContain('field="pageNumber" -->\n##### Chapter');
+  });
+
   it("marks page numbers with dashes and dots in zxx blocks", () => {
     const input = wrapWithFrontmatter(`<!-- text lang="en" -->
 Content here.
