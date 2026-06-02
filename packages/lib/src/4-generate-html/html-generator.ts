@@ -1,12 +1,7 @@
 import escapeHtml from "escape-html";
+import { randomUUID } from "crypto";
 import { getUrlFromLicense } from "./licenses.js";
-import type {
-  Book,
-  Page,
-  PageElement,
-  TextBlockElement,
-  ImageElement,
-} from "../types.js";
+import type { Book, Page, PageElement, TextBlockElement, ImageElement } from "../types.js";
 import { FrontMatterMetadata } from "../3-add-bloom-plan/bloomMetadata.js";
 import {
   generateOrigamiHtml,
@@ -22,10 +17,7 @@ import { LogEntry, logger } from "../logger";
 // just be overwritten.
 
 export class HtmlGenerator {
-  public static generateHtmlDocument(
-    book: Book,
-    logCallback?: (log: LogEntry) => void
-  ): string {
+  public static generateHtmlDocument(book: Book, logCallback?: (log: LogEntry) => void): string {
     if (logCallback) logger.subscribe(logCallback);
 
     // use console.log to give me a bunch of info to see why this line is failing:
@@ -42,21 +34,17 @@ export class HtmlGenerator {
       logger.warn("Setting book title to 'untitled'.");
     }
     // verify that we have an l1
-    if (
-      !Object.entries(book.frontMatterMetadata).find(([key]) => key === "l1")
-    ) {
+    if (!Object.entries(book.frontMatterMetadata).find(([key]) => key === "l1")) {
       logger.error("Book metadata does not contain a primary language (l1).");
-      throw new Error(
-        "Book metadata does not contain a primary language (l1)."
-      );
+      throw new Error("Book metadata does not contain a primary language (l1).");
     }
     // verify that the titleRecord has an entry for l1
     if (!titleRecord[book.frontMatterMetadata.l1]) {
       logger.error(
-        `Um, Book title does not contain an entry for the primary language (${book.frontMatterMetadata.l1}).`
+        `Um, Book title does not contain an entry for the primary language (${book.frontMatterMetadata.l1}).`,
       );
       logger.error(
-        `book.frontMatterMetadata: ${JSON.stringify(book.frontMatterMetadata, null, 2)}`
+        `book.frontMatterMetadata: ${JSON.stringify(book.frontMatterMetadata, null, 2)}`,
       );
       logger.error(`titleRecord: ${JSON.stringify(titleRecord, null, 2)}`);
       // throw new Error(
@@ -74,9 +62,7 @@ export class HtmlGenerator {
     </head>
     <body>
     ${this.generateBloomDataDiv(book)}
-    ${book.pages
-      .map((page) => this.generatePage(page, book.frontMatterMetadata))
-      .join("\n")}
+    ${book.pages.map((page) => this.generatePage(page, book.frontMatterMetadata)).join("\n")}
     </body>
   </html>`;
   }
@@ -89,23 +75,19 @@ export class HtmlGenerator {
 
     if (book.frontMatterMetadata.l2) {
       const bilingualContentPages = book.pages.filter(
-        (page) => page.appearsToBeBilingualPage
+        (page) => page.appearsToBeBilingualPage,
       ).length;
       if (bilingualContentPages > book.pages.length / 2) {
         elements.push(
-          `      <div data-book="contentLanguage2" lang="*">${book.frontMatterMetadata.l2}</div>`
+          `      <div data-book="contentLanguage2" lang="*">${book.frontMatterMetadata.l2}</div>`,
         );
       }
     }
 
     // get the first image from the first page, output that as the coverImage
-    const coverImages = book.pages[0].elements.filter(
-      (element) => element.type === "image"
-    );
+    const coverImages = book.pages[0].elements.filter((element) => element.type === "image");
     if (coverImages.length > 1) {
-      logger.warn(
-        "Multiple cover images found on the first page. Using the first one."
-      );
+      logger.warn("Multiple cover images found on the first page. Using the first one.");
     }
     if (coverImages.length === 0) {
       logger.warn("No cover image found on the first page.");
@@ -114,8 +96,8 @@ export class HtmlGenerator {
     if (firstImage && (firstImage as ImageElement).src) {
       elements.push(
         `      <div data-book="coverImage" lang="*">${escapeHtml(
-          (firstImage as ImageElement).src
-        )}</div>`
+          (firstImage as ImageElement).src,
+        )}</div>`,
       );
     }
 
@@ -142,13 +124,11 @@ export class HtmlGenerator {
 
       // Use the mapping to rename the field if it exists, otherwise use the original field name
       const outputFieldName =
-        inputFieldNameToOutputName[
-          element.field as keyof typeof inputFieldNameToOutputName
-        ] || element.field;
+        inputFieldNameToOutputName[element.field as keyof typeof inputFieldNameToOutputName] ||
+        element.field;
 
       // only log if the outputFieldName is different from the input field name
-      if (outputFieldName !== element.field)
-        logger.info(`${element.field} -> ${outputFieldName}`);
+      if (outputFieldName !== element.field) logger.info(`${element.field} -> ${outputFieldName}`);
 
       // Initialize the output field if it doesn't exist
       if (!groupedFields[outputFieldName]) {
@@ -174,7 +154,7 @@ export class HtmlGenerator {
         if (valueArray.length > 0) {
           const concatenatedValue = valueArray.join("<br>");
           elements.push(
-            `      <div data-book="${outputFieldName}" lang="${lang}">${concatenatedValue}</div>`
+            `      <div data-book="${outputFieldName}" lang="${lang}">${concatenatedValue}</div>`,
           );
         }
       }
@@ -195,13 +175,9 @@ export class HtmlGenerator {
       .replace(/__(.*?)__/g, "<strong>$1</strong>") // Bold with underscores
       .replace(/\*(.*?)\*/g, "<em>$1</em>") // Italic
       .replace(/_(.*?)_/g, "<em>$1</em>") // Italic with underscores
-
       .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>');
   }
-  private static getFieldContent(
-    key: string,
-    book: Book
-  ): Record<string, string> | undefined {
+  private static getFieldContent(key: string, book: Book): Record<string, string> | undefined {
     const fields: TextBlockElement[] = this.fields(book);
     const field = fields.find((field) => field.field === key);
     if (!field) {
@@ -218,17 +194,11 @@ export class HtmlGenerator {
     const fields: Record<string, Record<string, string>>[] = [];
     for (const page of book.pages) {
       for (const element of page.elements) {
-        if (
-          element.type === "text" &&
-          element.field &&
-          element.field !== "pageNumber"
-        ) {
+        if (element.type === "text" && element.field && element.field !== "pageNumber") {
           const textElement = element as TextBlockElement;
           const fieldName = textElement.field;
           // If the field already exists, merge the content
-          const existingField = fields.find(
-            (f) => Object.keys(f)[0] === fieldName
-          );
+          const existingField = fields.find((f) => Object.keys(f)[0] === fieldName);
 
           // Process content to strip markdown headings
           const processedContent: Record<string, string> = {};
@@ -258,9 +228,7 @@ export class HtmlGenerator {
     // use getUrlFromLicense and getLicenseFromUrl to fill in license or licenseUrl if we have one and not the other
     // use the first language found in the existing fields for the lookup
     const licenseField = fields.find((f) => Object.keys(f)[0] === "license");
-    const licenseUrlField = fields.find(
-      (f) => Object.keys(f)[0] === "licenseUrl"
-    );
+    const licenseUrlField = fields.find((f) => Object.keys(f)[0] === "licenseUrl");
     if (licenseField && !licenseUrlField) {
       // We have a license but no licenseUrl, so we need to generate the licenseUrl
       const firstLang = Object.keys(licenseField["license"])[0];
@@ -269,9 +237,7 @@ export class HtmlGenerator {
       fields.push({
         licenseUrl: { [firstLang]: licenseUrl },
       });
-      logger.info(
-        `Generated licenseUrl from license: ${licenseValue} -> ${licenseUrl}`
-      );
+      logger.info(`Generated licenseUrl from license: ${licenseValue} -> ${licenseUrl}`);
     } else if (!licenseField && licenseUrlField) {
       // We have a licenseUrl but no license, so we need to generate the license
       const firstLang = Object.keys(licenseUrlField["licenseUrl"])[0];
@@ -280,9 +246,7 @@ export class HtmlGenerator {
       fields.push({
         license: { [firstLang]: licenseValue },
       });
-      logger.info(
-        `Generated license from licenseUrl: ${licenseUrlValue} -> ${licenseValue}`
-      );
+      logger.info(`Generated license from licenseUrl: ${licenseUrlValue} -> ${licenseValue}`);
     }
     //console.log("Fields generated:", JSON.stringify(fields, null, 2));
 
@@ -301,10 +265,7 @@ export class HtmlGenerator {
     return result;
   }
 
-  private static generatePage(
-    page: Page,
-    metadata: FrontMatterMetadata
-  ): string {
+  private static generatePage(page: Page, metadata: FrontMatterMetadata): string {
     const origamiItems: OrigamiItem[] = [];
 
     // Determine if the page structure matches a [Text, Image, Text] sequence
@@ -317,10 +278,7 @@ export class HtmlGenerator {
 
     page.elements.forEach((element: PageElement, index: number) => {
       // Skip page number elements
-      if (
-        element.type === "text" &&
-        (element as TextBlockElement).field === "pageNumber"
-      ) {
+      if (element.type === "text" && (element as TextBlockElement).field === "pageNumber") {
         return;
       }
 
@@ -384,7 +342,11 @@ export class HtmlGenerator {
     }
     // Consider adding 'numberedPage' if it's a content page, etc.
 
-    return `    <div class="${pageClasses.trim()}">
+    // Every .bloom-page must have a unique, non-empty id (required by Bloom and
+    // its validator). Bloom uses GUIDs; generate one per page.
+    const pageId = randomUUID();
+
+    return `    <div class="${pageClasses.trim()}" id="${pageId}">
       <div class="marginBox">
         ${origamiContent}
       </div>
@@ -415,7 +377,7 @@ function fixIsbn(fields: TextBlockElement[]) {
         field.content = { "*": isbnValue };
 
         logger.info(
-          `Fixed ISBN field: changed language to "*" and cleaned value to "${isbnValue}"`
+          `Fixed ISBN field: changed language to "*" and cleaned value to "${isbnValue}"`,
         );
       }
     }
