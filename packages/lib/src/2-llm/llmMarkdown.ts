@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import { Language } from "../types";
 import { attemptCleanup } from "./post-llm-cleanup";
+import { getModuleDir } from "../moduleDir";
 
 export interface TagMarkdownOptions {
   logCallback?: (log: LogEntry) => void;
@@ -22,18 +23,14 @@ export interface TagMarkdownOptions {
 export async function llmMarkdown(
   markdown: string,
   openRouterApiKey: string,
-  options?: TagMarkdownOptions
+  options?: TagMarkdownOptions,
 ): Promise<{
   markdownResultFromLLM: string;
   cleanedUpMarkdown: string;
   valid: boolean;
   error?: string;
 }> {
-  const {
-    logCallback,
-    overridePrompt = undefined,
-    overrideModel = undefined,
-  } = options || {};
+  const { logCallback, overridePrompt, overrideModel } = options || {};
 
   if (logCallback) logger.subscribe(logCallback);
 
@@ -44,7 +41,7 @@ export async function llmMarkdown(
       logger.error("OpenRouter API key is required");
       throw new Error("OpenRouter API key is required");
     } // Read the enrichment prompt from file
-    const promptPath = path.join(__dirname, "llmPrompt.txt");
+    const promptPath = path.join(getModuleDir(), "llmPrompt.txt");
     let llmPrompt: string;
 
     try {
@@ -53,15 +50,13 @@ export async function llmMarkdown(
     } catch (error) {
       logger.error(`Failed to read enrichment prompt: ${error}`);
       throw error;
-    } // Configure OpenRouter with Gemini 2.5 Flash
-    const modelName = overrideModel || "google/gemini-2.5-pro";
+    } // Configure OpenRouter with Gemini 3.1 Pro Preview
+    const modelName = overrideModel || "google/gemini-3.1-pro-preview";
     const openrouterProvider = createOpenRouter({
       apiKey: openRouterApiKey,
     });
 
-    logger.info(
-      `Processing markdown with ${modelName} through OpenRouter API...`
-    );
+    logger.info(`Processing markdown with ${modelName} through OpenRouter API...`);
 
     const maxTokens = getMaxTokens(markdown, llmPrompt);
     logger.info(`Setting maxTokens to: ${maxTokens}`);
@@ -83,7 +78,7 @@ export async function llmMarkdown(
         messages.push({
           role: "user",
           content: `We have reason to expect that some or all of these languages are in the following document. ${JSON.stringify(
-            languages
+            languages,
           )}`,
         });
       }
@@ -105,19 +100,15 @@ export async function llmMarkdown(
         finishReason,
       });
       if (finishReason === "length") {
-        throw new Error(
-          "Ran out of tokens before finishing (max tokens reached)"
-        );
+        throw new Error("Ran out of tokens before finishing (max tokens reached)");
       }
       if (finishReason === "error" || finishReason === "payment") {
         throw new Error(
-          "API request failed - this may be due to insufficient credits, invalid API key, or service unavailability. Please check your OpenRouter account and API key."
+          "API request failed - this may be due to insufficient credits, invalid API key, or service unavailability. Please check your OpenRouter account and API key.",
         );
       }
       if (finishReason === "content-filter") {
-        throw new Error(
-          "Content was filtered by the AI model's safety systems"
-        );
+        throw new Error("Content was filtered by the AI model's safety systems");
       }
       throw new Error(`Streaming finished with reason: ${finishReason}`);
     }
@@ -171,10 +162,7 @@ function getMaxTokens(markdown: string, llmPrompt: string): number {
   const promptThinkingTokens = llmPrompt.length * kPromptThinkingFactor;
 
   const maxTokens =
-    markdown.length *
-      (kMultiplierForOutput +
-        kMultiplierForAnnotations +
-        kMultiplierForThinking) +
+    markdown.length * (kMultiplierForOutput + kMultiplierForAnnotations + kMultiplierForThinking) +
     promptThinkingTokens;
 
   return Math.round(maxTokens);

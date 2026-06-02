@@ -1,8 +1,10 @@
 import { spawn } from "child_process";
 import * as fs from "fs/promises";
+import { existsSync } from "fs";
 import * as path from "path";
 import * as os from "os";
 import { logger } from "../logger";
+import { getModuleDir } from "../moduleDir";
 
 export interface PdfImage {
   pageNumber: number;
@@ -19,25 +21,26 @@ export interface PdfImage {
  * First tries the bundled version, then falls back to system PATH
  */
 function getPdfImagesPath(): string {
-  // Try to find bundled version first
-  // In a built package, the binaries should be in the same directory as the compiled code
-  const bundledPath = path.resolve(
-    __dirname,
-    "..",
-    "bin",
-    "win32",
-    "pdfimages.exe"
-  );
+  // The Poppler binaries are copied into `<dist>/bin/win32` at build time. Depending
+  // on whether this module is running bundled (dist/index.{mjs,cjs}) or unbundled
+  // (src during tests), the binaries sit at a different relative offset, so try the
+  // likely candidates before falling back to the system PATH.
+  const moduleDir = getModuleDir();
+  const candidates = [
+    path.resolve(moduleDir, "bin", "win32", "pdfimages.exe"), // bundled: dist/bin/win32
+    path.resolve(moduleDir, "..", "bin", "win32", "pdfimages.exe"), // legacy nested layout
+    path.resolve(moduleDir, "..", "..", "bin", "win32", "pdfimages.exe"), // src/1-ocr -> packages/lib/bin
+  ];
 
-  try {
-    // Check if bundled version exists (synchronously for simplicity)
-    require("fs").accessSync(bundledPath);
-    return bundledPath;
-  } catch {
-    // Fall back to system PATH
-    logger.info("Using pdfimages from system PATH");
-    return "pdfimages";
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
   }
+
+  // Fall back to system PATH
+  logger.info("Using pdfimages from system PATH");
+  return "pdfimages";
 }
 
 /**
@@ -130,7 +133,7 @@ function parseImageList(listOutput: string): Array<{
  */
 export async function extractImagesWithPdfImages(
   pdfPath: string,
-  outputDir: string
+  outputDir: string,
 ): Promise<PdfImage[]> {
   try {
     // Ensure output directory exists
@@ -149,7 +152,7 @@ export async function extractImagesWithPdfImages(
     // Use a temporary directory with ASCII-only path to avoid Unicode issues with pdfimages
     const tempDir = path.join(
       os.tmpdir(),
-      `pdfimages_${Date.now()}_${Math.random().toString(36).substring(2)}`
+      `pdfimages_${Date.now()}_${Math.random().toString(36).substring(2)}`,
     );
     await fs.mkdir(tempDir, { recursive: true });
 
@@ -157,8 +160,11 @@ export async function extractImagesWithPdfImages(
       // Create a temporary prefix for pdfimages output in the temp directory
       const tempPrefix = path.join(tempDir, "temp_img");
 
-      // Extract all images using Poppler with original formats
-      await runPdfImages(["-all", pdfPath, tempPrefix]);
+      // Extract all images using Poppler, forcing PNG output. `-png` decodes every
+      // source encoding (raw "image", ccitt/stencil bilevel, jpeg, etc.) to a valid
+      // PNG with deterministic `temp_img-NNN.png` names. `-all` instead emits native
+      // formats (e.g. `.ccitt`) that aren't web-usable and break filename matching.
+      await runPdfImages(["-png", pdfPath, tempPrefix]);
 
       // Process extracted images and rename them to match our naming convention
       const extractedImages: PdfImage[] = [];
@@ -167,9 +173,7 @@ export async function extractImagesWithPdfImages(
       for (const imageInfo of imageList) {
         // Skip soft masks (smask) as they are transparency masks, not standalone images
         if (imageInfo.type === "smask") {
-          logger.info(
-            `Skipping soft mask on page ${imageInfo.page} (image ${imageInfo.num})`
-          );
+          logger.info(`Skipping soft mask on page ${imageInfo.page} (image ${imageInfo.num})`);
           continue;
         }
 
@@ -178,44 +182,19 @@ export async function extractImagesWithPdfImages(
         pageImageCounts.set(imageInfo.page, currentCount + 1);
         const imageIndexOnPage = currentCount + 1;
 
-        // Determine the file extension based on the image type
-        let extension = ".png"; // default fallback
-        if (imageInfo.enc === "jpeg" || imageInfo.enc === "jpg") {
-          extension = ".jpg";
-        } else if (imageInfo.enc === "png") {
-          extension = ".png";
-        } else if (imageInfo.type === "image" || imageInfo.type === "smask") {
-          // For regular images and masks, pdfimages typically creates .ppm or .pbm files
-          // but we'll convert these to PNG for compatibility
-          extension = ".png";
-        }
+        // `-png` always emits PNG, so our output and the source file are both .png.
+        const ourFilename = `image-${imageInfo.page}-${imageIndexOnPage}.png`;
 
-        // Generate our standardized filename with appropriate extension
-        const ourFilename = `image-${imageInfo.page}-${imageIndexOnPage}${extension}`;
+        // pdfimages names files `<prefix>-<num>.png`, where <num> is the (zero-based,
+        // 3-padded) value from the `-list` output.
+        const pdfImagesPath = path.join(
+          tempDir,
+          `temp_img-${String(imageInfo.num).padStart(3, "0")}.png`,
+        );
 
-        // Find the file that pdfimages created - need to check multiple possible extensions
-        const possibleExtensions = [".jpg", ".png", ".ppm", ".pbm", ".pgm"];
-        let pdfImagesPath: string | null = null;
-        let foundExtension: string | null = null;
-
-        for (const ext of possibleExtensions) {
-          const candidatePath = path.join(
-            tempDir,
-            `temp_img-${String(imageInfo.num).padStart(3, "0")}${ext}`
-          );
-          try {
-            await fs.access(candidatePath);
-            pdfImagesPath = candidatePath;
-            foundExtension = ext;
-            break;
-          } catch {
-            // File doesn't exist with this extension, try next
-          }
-        }
-
-        if (!pdfImagesPath || !foundExtension) {
+        if (!existsSync(pdfImagesPath)) {
           logger.warn(
-            `Could not find extracted image file for image ${imageInfo.num}`
+            `Could not find extracted image file for image ${imageInfo.num} at ${pdfImagesPath}`,
           );
           continue;
         }
@@ -236,17 +215,13 @@ export async function extractImagesWithPdfImages(
             type: imageInfo.type,
           });
 
-          logger.info(
-            `${ourFilename} (${imageInfo.width}x${imageInfo.height})`
-          );
+          logger.info(`${ourFilename} (${imageInfo.width}x${imageInfo.height})`);
         } catch (error) {
           logger.warn(`Failed to process image ${imageInfo.num}: ${error}`);
         }
       }
 
-      logger.info(
-        `Extraction complete. Successfully extracted ${extractedImages.length} images`
-      );
+      logger.info(`Extraction complete. Successfully extracted ${extractedImages.length} images`);
       return extractedImages;
     } finally {
       // Clean up the temporary directory
@@ -268,13 +243,10 @@ export async function extractImagesWithPdfImages(
  */
 export async function extractAndSaveImagesWithPdfImages(
   pdfPath: string,
-  outputDir: string
+  outputDir: string,
 ): Promise<string[]> {
   try {
-    const extractedImages = await extractImagesWithPdfImages(
-      pdfPath,
-      outputDir
-    );
+    const extractedImages = await extractImagesWithPdfImages(pdfPath, outputDir);
     return extractedImages.map((img) => path.join(outputDir, img.filename));
   } catch (error) {
     logger.error(`Error saving extracted images with pdfimages: ${error}`);
