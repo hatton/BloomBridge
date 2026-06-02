@@ -11,8 +11,10 @@ import {
   pdfToMarkdown,
   extractImagesWithPdfImages,
   extractAndSaveImagesWithPdfImages,
+  prepareCovers,
   writeMetaJson,
   notifyBloomOfBook,
+  type CoverMode,
 } from "@pdf-to-bloom/lib"; // Assuming these functions are async and return/handle as described
 import {
   createLogCallback,
@@ -50,6 +52,7 @@ export type Arguments = {
   ocrMethod: string; // OCR processing method: mistral, unpdf, or any OpenRouter model
   parserEngine: string; // PDF parsing engine for OpenRouter: native, mistral-ocr, or pdf-text
   imager: string; // Image extraction method: pdfjs or poppler
+  cover?: string; // Full-page cover handling: auto (default), render, or none
 };
 
 type Plan = {
@@ -70,6 +73,7 @@ type Plan = {
   ocrMethod: string;
   parserEngine: string;
   imager: string;
+  coverMode: CoverMode;
 };
 
 // Convert numeric enum value to readable string
@@ -82,6 +86,23 @@ const artifactNames = {
   [Artifact.MarkdownReadyForBloom]: "Bloom-ready Markdown",
   [Artifact.HTML]: "Bloom HTML",
 };
+
+/**
+ * Normalize the --cover option to a CoverMode, defaulting to "auto".
+ */
+function normalizeCoverMode(value?: string): CoverMode {
+  switch ((value ?? "auto").toLowerCase()) {
+    case "render":
+      return "render";
+    case "none":
+      return "none";
+    case "auto":
+      return "auto";
+    default:
+      logger.warn(`Unknown --cover value '${value}', defaulting to 'auto'.`);
+      return "auto";
+  }
+}
 
 /**
  * Extracts images from a PDF using the specified method
@@ -173,6 +194,16 @@ export async function processConversion(inputPath: string, options: Arguments) {
         // After writing markdown, extract images from the PDF to match markdown references
         await extractImages(plan.pdfPath!, plan.bookFolderPath!, plan.imager);
       }
+
+      // Detect and render full-page-art covers (front/back) straight from the PDF.
+      // This bakes a `cover.jpg` and a markdown reference into the OCR output, so
+      // later runs that start from the markdown don't need the PDF or re-run OCR.
+      markdownContent = await prepareCovers(
+        plan.pdfPath!,
+        markdownContent,
+        plan.bookFolderPath!,
+        plan.coverMode,
+      );
 
       logger.info(`Writing OCR'd markdown to: ${plan.markdownFromOCRPath}`);
       await fs.writeFile(plan.markdownFromOCRPath!, markdownContent); // Write the markdown content to file
@@ -312,7 +343,19 @@ export async function processConversion(inputPath: string, options: Arguments) {
 
       // Ensure the output directory exists
       await fs.mkdir(plan.bookFolderPath!, { recursive: true });
-      await fs.writeFile(path.join(plan.bookFolderPath!, "index.html"), bloomHtmlContent);
+      // A Bloom book's HTML file is named after its folder (e.g.
+      // "A Thief in the Night/A Thief in the Night.htm"). Write to that name so we
+      // overwrite the file a running Bloom actually reads when it refreshes — not
+      // a sibling "index.html" it would ignore.
+      const bookHtmlPath = path.join(
+        plan.bookFolderPath!,
+        path.basename(plan.bookFolderPath!) + ".htm",
+      );
+      await fs.writeFile(bookHtmlPath, bloomHtmlContent);
+      // Remove any leftover index.html from the old output convention; Bloom's
+      // FindBookHtmlInFolder prefers "<folder>.htm" but a stray index.html is
+      // confusing cruft, so clean it up.
+      await fs.rm(path.join(plan.bookFolderPath!, "index.html"), { force: true });
 
       // Write meta.json (creating a new bookInstanceId, or preserving the
       // existing one when updating a book already in a Bloom collection). The id
@@ -520,6 +563,7 @@ async function makeThePlan(inputPath: string, cliArguments: Arguments): Promise<
     ocrMethod: cliArguments.ocrMethod,
     parserEngine: cliArguments.parserEngine,
     imager: cliArguments.imager,
+    coverMode: normalizeCoverMode(cliArguments.cover),
   };
   //console.log(`Plan created:`, JSON.stringify(plan, null, 2));
 

@@ -57,6 +57,11 @@ program
     "Image extraction method: 'poppler' (default, uses pdfimages from Poppler for higher fidelity). Note: 'pdfjs' method has been removed.",
     "poppler",
   )
+  .option(
+    "--cover <mode>",
+    "Full-page cover handling: 'auto' (default, render front/back cover to an image only when the page is detected as full-bleed art), 'render' (always render the first and last pages as cover images), or 'none' (leave covers to OCR/Bloom's default xMatter).",
+    "auto",
+  )
   .option("--verbose", "Enable verbose logging to see detailed process steps")
   .action(async (input, options) => {
     if (input) {
@@ -73,6 +78,7 @@ program
         ocrMethod: options.ocr || "gpt",
         parserEngine: options.parser || "native",
         imager: options.imager || "poppler",
+        cover: options.cover || "auto",
       };
 
       await processConversion(input, args);

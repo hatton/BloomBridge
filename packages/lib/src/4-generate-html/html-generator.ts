@@ -1,7 +1,15 @@
 import escapeHtml from "escape-html";
 import { randomUUID } from "crypto";
 import { getUrlFromLicense } from "./licenses.js";
-import type { Book, Page, PageElement, TextBlockElement, ImageElement } from "../types.js";
+import {
+  type Book,
+  type Page,
+  type PageElement,
+  type TextBlockElement,
+  type ImageElement,
+  FRONT_COVER_IMAGE_FILENAME,
+  BACK_COVER_IMAGE_FILENAME,
+} from "../types.js";
 import { FrontMatterMetadata } from "../3-add-bloom-plan/bloomMetadata.js";
 import {
   generateOrigamiHtml,
@@ -84,21 +92,40 @@ export class HtmlGenerator {
       }
     }
 
-    // get the first image from the first page, output that as the coverImage
-    const coverImages = book.pages[0].elements.filter((element) => element.type === "image");
-    if (coverImages.length > 1) {
+    // Determine the cover image. Bloom regenerates the front cover xMatter page
+    // and fills its <img data-book="coverImage"> from this data-book value.
+    //
+    // Ideally the cover art is an image element on the first page. But some OCR
+    // engines (notably Mistral) don't extract the full-bleed background art on a
+    // cover page and only capture its overlaid text. In that common case the same
+    // cover art is reproduced on the title page (e.g. Library For All readers), so
+    // fall back to the first image found anywhere in the book.
+    const coverImagesOnFirstPage = book.pages[0].elements.filter(
+      (element) => element.type === "image",
+    );
+    if (coverImagesOnFirstPage.length > 1) {
       logger.warn("Multiple cover images found on the first page. Using the first one.");
     }
-    if (coverImages.length === 0) {
-      logger.warn("No cover image found on the first page.");
-    }
-    const firstImage = coverImages[0];
-    if (firstImage && (firstImage as ImageElement).src) {
-      elements.push(
-        `      <div data-book="coverImage" lang="*">${escapeHtml(
-          (firstImage as ImageElement).src,
-        )}</div>`,
+    let coverImage = coverImagesOnFirstPage[0] as ImageElement | undefined;
+    if (!coverImage) {
+      logger.warn(
+        "No cover image found on the first page; falling back to the first image in the book.",
       );
+      for (const page of book.pages) {
+        const image = page.elements.find((element) => element.type === "image");
+        if (image) {
+          coverImage = image as ImageElement;
+          break;
+        }
+      }
+    }
+    if (coverImage?.src) {
+      logger.info(`Using "${coverImage.src}" as the cover image.`);
+      elements.push(
+        `      <div data-book="coverImage" lang="*">${escapeHtml(coverImage.src)}</div>`,
+      );
+    } else {
+      logger.warn("No cover image found anywhere in the book.");
     }
 
     // hack for now
@@ -265,7 +292,69 @@ export class HtmlGenerator {
     return result;
   }
 
+  /**
+   * Emit a full-bleed custom-layout cover page (front or back).
+   *
+   * Bloom regenerates xMatter, so a plain `data-book="coverImage"` produces its
+   * default cover (small positioned image + title + credits). To get a true
+   * edge-to-edge cover we instead emit a `bloom-customLayout` xMatter page whose
+   * `.marginBox` holds the image as a `bloom-backgroundImage` canvas element.
+   *
+   * On import Bloom saves this marginBox into the dataDiv under the page's
+   * `data-custom-layout-id` (`customOutsideFrontCover`/`customOutsideBackCover`),
+   * then restores it over the regenerated xMatter cover and re-applies
+   * `bloom-customLayout` — preserving our full-page art. (See Bloom's
+   * BookData.cs / XMatterHelper.cs custom-layout round-trip.)
+   */
+  private static generateFullPageCoverPage(kind: "front" | "back", imageSrc: string): string {
+    const pageId = randomUUID();
+    const isFront = kind === "front";
+    const pageClasses = isFront
+      ? "bloom-page cover coverColor bloom-frontMatter frontCover outsideFrontCover A5Portrait bloom-customLayout"
+      : "bloom-page cover coverColor bloom-backMatter outsideBackCover A5Portrait bloom-customLayout";
+    const dataExport = isFront ? "front-matter-cover" : "back-matter-back-cover";
+    const xmatterPage = isFront ? "frontCover" : "outsideBackCover";
+    const customLayoutId = isFront ? "customOutsideFrontCover" : "customOutsideBackCover";
+    // The front cover's image is also the book's coverImage; the back cover image
+    // is not a standard data-book field, so it is only the background here.
+    const dataBookAttr = isFront ? ' data-book="coverImage"' : "";
+
+    // `bloom-imageObjectFit-cover` makes the art fill the page (cropping bleed)
+    // rather than letterboxing. The data-bubble marks this as a canvas element so
+    // Bloom's canvas tooling recognizes it.
+    const dataBubble =
+      "{`version`:`1.0`,`style`:`none`,`tails`:[],`level`:1,`backgroundColors`:[`transparent`],`shadowOffset`:0}";
+
+    return `    <div class="${pageClasses}" data-page="required singleton" data-export="${dataExport}" data-xmatter-page="${xmatterPage}" data-custom-layout-id="${customLayoutId}" id="${pageId}">
+      <div class="marginBox">
+        <div class="bloom-canvas bloom-has-canvas-element bloom-imageObjectFit-cover">
+          <div class="bloom-canvas-element bloom-backgroundImage" style="width:100%;height:100%;left:0;top:0;" data-bubble="${dataBubble}">
+            <div class="bloom-imageContainer">
+              <img src="${escapeHtml(imageSrc)}" class="bloom-imageObjectFit-cover" alt=""${dataBookAttr} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
   private static generatePage(page: Page, metadata: FrontMatterMetadata): string {
+    // A page whose art is a whole-page render (see 1-ocr/prepareCovers.ts) becomes
+    // a full-bleed custom-layout cover: the image fills the page as a background
+    // and all other elements (title, credits, etc.) are dropped, since the
+    // rendered image already contains them.
+    const coverImage = page.elements.find(
+      (element): element is ImageElement =>
+        element.type === "image" &&
+        (element.src === FRONT_COVER_IMAGE_FILENAME || element.src === BACK_COVER_IMAGE_FILENAME),
+    );
+    if (coverImage) {
+      return this.generateFullPageCoverPage(
+        coverImage.src === FRONT_COVER_IMAGE_FILENAME ? "front" : "back",
+        coverImage.src,
+      );
+    }
+
     const origamiItems: OrigamiItem[] = [];
 
     // Determine if the page structure matches a [Text, Image, Text] sequence

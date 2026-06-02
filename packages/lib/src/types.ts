@@ -1,5 +1,14 @@
 import { FrontMatterMetadata } from "./3-add-bloom-plan/bloomMetadata";
 
+/**
+ * Reserved filenames for whole-page renders of full-bleed covers (see
+ * `1-ocr/prepareCovers.ts`). These names are the signal that links the OCR stage
+ * (which renders + injects the image) to the HTML stage (which emits a custom
+ * full-page cover when it sees an image with one of these srcs on a cover page).
+ */
+export const FRONT_COVER_IMAGE_FILENAME = "cover.jpg";
+export const BACK_COVER_IMAGE_FILENAME = "back-cover.jpg";
+
 export interface ImageElement {
   type: "image";
   src: string;

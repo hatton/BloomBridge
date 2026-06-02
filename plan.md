@@ -239,6 +239,33 @@ In `html-generator.ts` / `origami.ts`:
 - Set appearance toggles to hide default cover title/language text where the art already contains it.
 - **Test:** front & back cover pages have correct classes/`data-xmatter-page`, cover image is a full-size canvas background, validator passes.
 
+#### Phase 5 progress (2026-06-02)
+
+**Approach decided:** full-page-art covers are captured by **rendering the whole PDF page to a flat image** (Poppler `pdftocairo`), not by extracting embedded images — so the composited cover (background art + overlaid badges/logos/title) is preserved faithfully. Whether a page is full-page art is **auto-detected**: `pdfinfo` page size vs. `pdfimages -list` displayed image size; if one image covers ≥ 85% of the page it's treated as full-bleed art. A `--cover auto|render|none` flag overrides (default `auto`).
+
+**Done:**
+
+- New lib modules: `1-ocr/poppler.ts` (shared binary resolver/runner), `1-ocr/coverDetection.ts` (`getPdfPageInfo`, `getLargestImageCoverage`, `isFullPageArtPage`), `1-ocr/renderPdfPage.ts` (`renderPdfPageToImage` via `pdftocairo`), `1-ocr/prepareCovers.ts` (orchestrates detect → render → inject).
+- Bundled `pdftocairo.exe` + `pdfinfo.exe` (Poppler 24.08.0, matching the existing `pdfimages.exe`/DLLs) into `packages/lib/bin/win32/`.
+- Pipeline: `process.ts` calls `prepareCovers` in the PDF stage. It renders `cover.jpg` (front) and `back-cover.jpg` (back) into the book folder and injects `![cover.jpg](cover.jpg)` at the top of the cover page in the OCR markdown. Image tags survive the LLM verbatim, and stage 4's existing "first image on cover page → `data-book=coverImage`" picks it up. This bakes the cover into the `.ocr.md`, so re-runs from markdown need no PDF and no re-OCR.
+- Verified on `thief.pdf`: detection = page 1/4/28 → full art (100%), text pages → 0%. `cover.jpg`/`back-cover.jpg` render faithfully (full composite). After `prepareCovers` + stage 4, `#bloomDataDiv` has `data-book="coverImage">cover.jpg`.
+
+**Custom full-page covers (2026-06-02, second pass):**
+
+Decided **not** to use a plain `data-book="coverImage"` (Bloom renders that as its default cover: small positioned image + title + credits overlaid). Instead we emit the cover/back-cover pages as **`bloom-customLayout` xMatter pages** whose `.marginBox` is just the rendered image as a `bloom-backgroundImage` canvas element — no title/credits/topic. This is the current canonical Bloom approach (the legacy `cover-is-image` class is migrated away in `BookStorageTests.cs`).
+
+How Bloom keeps it (verified against Bloom source `BookData.cs` / `XMatterHelper.cs`): a page with `bloom-customLayout` + `data-custom-layout-id="customOutsideFrontCover"` (or `customOutsideBackCover`) + `data-xmatter-page` has its marginBox saved into the dataDiv under that id, and on xMatter regeneration the content is restored over the template cover and `bloom-customLayout` is re-applied by id.
+
+- `html-generator.ts`: `generateFullPageCoverPage("front"|"back", src)` emits the custom-layout page. `generatePage` dispatches to it when a page contains an image whose src is the reserved `cover.jpg` / `back-cover.jpg` (constants `FRONT_COVER_IMAGE_FILENAME` / `BACK_COVER_IMAGE_FILENAME` in `types.ts`, shared with `prepareCovers`). All other elements on that page are dropped (the rendered image already shows them).
+- `prepareCovers.ts` now injects **both** covers (`cover.jpg` page 1, `back-cover.jpg` last page).
+- Verified: stage 4 emits both custom-layout cover pages (front `frontCover`, back `outsideBackCover`), `data-book="coverImage">cover.jpg` in the dataDiv, and the output passes Bloom's `validateBloomBook.mjs` (exit 0). The structure matches a known-good hand-edited Bloom cover.
+
+**Still to do for Phase 5:**
+
+- **Confirm in Bloom via a clean re-import** — Bloom's port-8089 "refresh" doesn't re-import an already-imported book; need a fresh import to see the full-page cover render and confirm the custom-layout round-trip survives.
+- **Full PDF→Bloom re-run** to confirm the injected cover refs survive OCR→LLM→plan in practice (verified `prepareCovers` + stage 4 in isolation so far).
+- Decide whether the print **spine bleed strip** visible on the rendered covers should be cropped.
+
 ### Phase 6 — Full-bleed content pages with positioned text
 
 - For content pages (illustration + story text), emit the illustration as a full-bleed background canvas and the text as an overlaid `bloom-translationGroup` (a positioned canvas-element text box), instead of stacked split-panes.
@@ -257,7 +284,7 @@ In `html-generator.ts` / `origami.ts`:
 1. **Which appearance theme?** `zero-margin-ebook` gives full-bleed; confirm against Bloom's current shipped themes (`D:/bloom/src/content/appearanceThemes/`) and whether a newer default supports full-bleed per-page. _Recommend verifying before Phase 4._
 2. **Custom cover approach:** explicit cover pages emitted by us vs. relying on Bloom's "Use first page as cover" with a full-bleed cover image. Faithful complex covers argue for explicit pages.
 3. **Content page text placement:** the print PDF is `2xpage A4` (likely full-page art with text). The EPUB separates image and text. Do we want text overlaid on the illustration (true full-bleed picture book) or image-top/text-bottom? This determines Phase 6 layout. _Recommend: full-bleed art + overlaid text box to honor "full-bleed pages."_
-4. **`.htm` vs `index.html`:** Bloom expects `<BookName>.htm`. Decide whether to rename output (Bloom can import either, but the convention matters for collection drop-in).
+4. **`.htm` vs `index.html`:** ✅ RESOLVED — write `<FolderName>.htm`. Bloom's `BookStorage.FindBookHtmlInFolder` (Remote-Reload worktree) tries `<FolderName>.htm` first and only falls back to a stray `.html` if that's absent. We were writing `index.html`, so once a book had been imported (and a `<FolderName>.htm` existed) every re-run was silently ignored — Bloom always read the stale `.htm`. `process.ts` now writes `<bookFolder>/<bookFolderBaseName>.htm` and removes any leftover `index.html`. The `external/updateBook` notify then reloads it from disk and Bloom hydrates (CSS/xMatter, incl. the custom-cover round-trip).
 5. **Back-matter special pages** (questions/author/level/LFA): keep as content pages, or map to Bloom conventions?
 
 ---
