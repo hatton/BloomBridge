@@ -12,17 +12,17 @@ This is a **Yarn workspaces monorepo** with three packages:
 
 ## Package Manager
 
-- **Yarn Classic (v1.22.22)** - Use `yarn` commands, not `npm`
-- **Yarn Workspaces** - All packages managed from root
-- **Package Manager**: `yarn@1.22.22`
+- **pnpm** - Use `pnpm`/`vp` commands, not `npm` or `yarn` (pinned via the `packageManager` field)
+- **pnpm Workspaces** - All packages managed from root (`pnpm-workspace.yaml`)
+- **Vite+ (`vp`)** - Unified toolchain; install once: `npm install -g vite-plus-cli`
 
 ## Language & Build Tools
 
 - **TypeScript** - Primary language for source code
-- **Node.js 22.11.0** - Runtime version (managed by Volta)
-- **Vite** - Build tool and bundler with `vite-plugin-dts` for type definitions (lib package)
-- **TypeScript Compiler** - Direct `tsc` build for CLI package
-- **Vitest** - Testing framework (built into Vite)
+- **Node.js 22+** - No runtime pin
+- **Vite+** - Build tool and bundler (Vite under the hood); `vite-plugin-dts` for type definitions (lib package)
+- **Vitest** - Testing framework (via `vite-plus/test`)
+- **oxfmt / oxlint** - Formatting and linting (via `vp fmt` / `vp lint` / `vp check`)
 - **React** - Frontend framework for web package
 - **Tailwind CSS** - Styling framework for web package
 
@@ -30,23 +30,23 @@ This is a **Yarn workspaces monorepo** with three packages:
 
 ### Building
 
-- `yarn build` - Build all packages
-- `yarn build:lib` - Build only the lib package
-- `yarn build:cli` - Build only the CLI package
+- `pnpm build` - Build all packages
+- `pnpm build:lib` - Build only the lib package
+- `pnpm build:cli` - Build only the CLI package
 
 ### Development
 
-- `yarn dev` - Start development mode for all packages
-- `yarn dev:lib` - Start lib development (build watch mode)
-- `yarn dev:cli` - Start CLI development (TypeScript watch mode)
+- `vp run dev` - Start development mode for all packages (parallel watch build)
+- `pnpm dev:lib` - Start lib development only (build watch mode)
+- `pnpm dev:cli` - Start CLI development only (build watch mode)
 
 ### CLI Usage
 
-- `yarn cli` - Run the built CLI tool
+- `pnpm cli` - Run the built CLI tool
 
 ## Testing
 
-- use `yarn test` to run all tests across packages. This often works bettern than the "run_tests" tool.
+- use `vp test run` to run all tests across packages. This often works better than the "run_tests" tool.
 - Use **Vitest** for all tests
 - Test files should end with `.test.ts`
 - Import test utilities: `import { describe, it, expect } from 'vitest'`
@@ -69,7 +69,7 @@ Do not tell me to do things or check things, do it yourself as an agent.
 
 Ask me any clarifying questions.
 
-When running add-hoc tests in the terminal, use the --output option to place outputs underneath the `test-outputs` directory, e.g. `yarn test:md-to-tagged --output test-outputs/md-to-tagged`.
+When running add-hoc tests in the terminal, use the --output option to place outputs underneath the `test-outputs` directory, e.g. `pnpm test:md-to-tagged --output test-outputs/md-to-tagged`.
 
 When doing debugging by writing temporary one-off code files in the terminal, remember not to leave them laying around.
 

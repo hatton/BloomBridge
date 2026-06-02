@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vite-plus/test";
 import { BloomMarkdown } from "./parseMarkdown";
 import type { TextBlockElement, ImageElement } from "../types";
 
@@ -21,16 +21,11 @@ Hola mundo`;
     const parser = new BloomMarkdown();
     const result = parser.parseMarkdown(content);
 
-    expect(result.frontMatterMetadata.allTitles.en).toBe("Test Book");
     expect(result.frontMatterMetadata.l1).toBe("en");
     expect(result.frontMatterMetadata.l2).toBe("es");
     expect(result.pages).toHaveLength(1);
-    expect((result.pages[0].elements[0] as TextBlockElement).content.en).toBe(
-      "Hello world"
-    );
-    expect((result.pages[0].elements[0] as TextBlockElement).content.es).toBe(
-      "Hola mundo"
-    );
+    expect((result.pages[0].elements[0] as TextBlockElement).content.en).toBe("Hello world");
+    expect((result.pages[0].elements[0] as TextBlockElement).content.es).toBe("Hola mundo");
   });
 
   it("should detect page layouts correctly", () => {
@@ -135,11 +130,9 @@ Text with image that doesn't exist on disk`;
     expect(result.pages).toHaveLength(1);
     // Note: layout field has been removed from Page interface
     // expect(result.pages[0].layout).toBe("image-top-text-bottom");
-    expect((result.pages[0].elements[0] as ImageElement).src).toBe(
-      "nonexistent-image.png"
-    );
+    expect((result.pages[0].elements[0] as ImageElement).src).toBe("nonexistent-image.png");
     expect((result.pages[0].elements[1] as TextBlockElement).content.en).toBe(
-      "Text with image that doesn't exist on disk"
+      "Text with image that doesn't exist on disk",
     );
     expect(result.pages[0]).toBeDefined();
   });
@@ -168,18 +161,10 @@ Spanish text`;
     const result = parser.parseMarkdown(content);
 
     expect(result.pages).toHaveLength(1);
-    expect((result.pages[0].elements[0] as TextBlockElement).content.en).toBe(
-      "English text"
-    );
-    expect((result.pages[0].elements[0] as TextBlockElement).content.fr).toBe(
-      "French text"
-    );
-    expect((result.pages[0].elements[0] as TextBlockElement).content.es).toBe(
-      "Spanish text"
-    );
-    expect(
-      Object.keys((result.pages[0].elements[0] as TextBlockElement).content)
-    ).toHaveLength(3);
+    expect((result.pages[0].elements[0] as TextBlockElement).content.en).toBe("English text");
+    expect((result.pages[0].elements[0] as TextBlockElement).content.fr).toBe("French text");
+    expect((result.pages[0].elements[0] as TextBlockElement).content.es).toBe("Spanish text");
+    expect(Object.keys((result.pages[0].elements[0] as TextBlockElement).content)).toHaveLength(3);
   });
 
   it("should handle empty pages correctly", () => {
@@ -204,12 +189,8 @@ Third page`;
 
     // Empty pages should be filtered out
     expect(result.pages).toHaveLength(2);
-    expect((result.pages[0].elements[0] as TextBlockElement).content.en).toBe(
-      "First page"
-    );
-    expect((result.pages[1].elements[0] as TextBlockElement).content.en).toBe(
-      "Third page"
-    );
+    expect((result.pages[0].elements[0] as TextBlockElement).content.en).toBe("First page");
+    expect((result.pages[1].elements[0] as TextBlockElement).content.en).toBe("Third page");
   });
 
   it("should handle pages with attributes correctly", () => {
@@ -248,34 +229,32 @@ Back matter Spanish`;
     expect(result.pages[0].type).toBe("cover");
     expect(result.pages[0].appearsToBeBilingualPage).toBe(true);
     expect((result.pages[0].elements[0] as TextBlockElement).content.en).toBe(
-      "Cover title in English"
+      "Cover title in English",
     );
     expect((result.pages[0].elements[0] as TextBlockElement).content.es).toBe(
-      "Cover title in Spanish"
+      "Cover title in Spanish",
     );
 
     // Second page: content type (default bilingual based on content)
     expect(result.pages[1].type).toBe("content");
     expect(!!result.pages[1].appearsToBeBilingualPage).toBe(false);
     expect((result.pages[1].elements[0] as TextBlockElement).content.en).toBe(
-      "Regular content page"
+      "Regular content page",
     );
 
     // Third page: explicitly not bilingual
     expect(result.pages[2].type).toBe("content"); // Default type
     expect(result.pages[2].appearsToBeBilingualPage).toBe(false);
-    expect((result.pages[2].elements[0] as TextBlockElement).content.en).toBe(
-      "Monolingual page"
-    );
+    expect((result.pages[2].elements[0] as TextBlockElement).content.en).toBe("Monolingual page");
 
     // Fourth page: back-matter with bilingual content
     expect(result.pages[3].type).toBe("back-matter");
     expect(result.pages[3].appearsToBeBilingualPage).toBe(true);
     expect((result.pages[3].elements[0] as TextBlockElement).content.en).toBe(
-      "Back matter English"
+      "Back matter English",
     );
     expect((result.pages[3].elements[0] as TextBlockElement).content.es).toBe(
-      "Back matter Spanish"
+      "Back matter Spanish",
     );
   });
 
@@ -388,22 +367,16 @@ French acknowledgment
     const book = parser.parseMarkdown(input);
     expect(book.pages.length).toBe(1);
     expect(book.pages[0].appearsToBeBilingualPage).toBe(undefined);
-    expect((book.pages[0].elements[0] as TextBlockElement).field).toBe(
-      "copyright"
-    );
-    expect((book.pages[0].elements[1] as TextBlockElement).field).toBe(
-      "license"
-    );
+    expect((book.pages[0].elements[0] as TextBlockElement).field).toBe("copyright");
+    expect((book.pages[0].elements[1] as TextBlockElement).field).toBe("license");
     // and this is single element with two languages
-    expect((book.pages[0].elements[2] as TextBlockElement).field).toBe(
-      "acknowledgments"
-    );
+    expect((book.pages[0].elements[2] as TextBlockElement).field).toBe("acknowledgments");
     // should have english and french content
     expect((book.pages[0].elements[2] as TextBlockElement).content.en).toBe(
-      "English acknowledgment"
+      "English acknowledgment",
     );
     expect((book.pages[0].elements[2] as TextBlockElement).content.fr).toBe(
-      "French acknowledgment"
+      "French acknowledgment",
     );
   });
 

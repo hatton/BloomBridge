@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vite-plus/test";
 import { HtmlGenerator } from "./html-generator";
 import { Book } from "../types";
 
@@ -111,14 +111,12 @@ describe("generateHtmlDocument", () => {
       expect(html).toContain('class="bloom-page customPage bloom-backMatter"');
 
       // Should have multiple content pages without special matter classes
-      const contentPageMatches = html.match(
-        /class="bloom-page customPage"(?! bloom-)/g
-      );
+      const contentPageMatches = html.match(/class="bloom-page customPage"(?! bloom-)/g);
       expect(contentPageMatches).toHaveLength(2); // Two content pages
     });
 
     it("should handle bilingual pages correctly", () => {
-      const book = {
+      const book: Book = {
         frontMatterMetadata: {
           languages: { en: "English", es: "Spanish" },
           l1: "en",
@@ -317,9 +315,7 @@ describe("generateHtmlDocument", () => {
           {
             type: "content" as const,
             appearsToBeBilingualPage: true,
-            elements: [
-              { type: "text" as const, content: { en: "test", es: "prueba" } },
-            ],
+            elements: [{ type: "text" as const, content: { en: "test", es: "prueba" } }],
           },
           {
             type: "content" as const,
@@ -334,9 +330,7 @@ describe("generateHtmlDocument", () => {
           {
             type: "content" as const,
             appearsToBeBilingualPage: false,
-            elements: [
-              { type: "text" as const, content: { en: "english only" } },
-            ],
+            elements: [{ type: "text" as const, content: { en: "english only" } }],
           },
         ],
       };
@@ -358,23 +352,17 @@ describe("generateHtmlDocument", () => {
           {
             type: "content" as const,
             appearsToBeBilingualPage: true,
-            elements: [
-              { type: "text" as const, content: { en: "test", es: "prueba" } },
-            ],
+            elements: [{ type: "text" as const, content: { en: "test", es: "prueba" } }],
           },
           {
             type: "content" as const,
             appearsToBeBilingualPage: false,
-            elements: [
-              { type: "text" as const, content: { en: "english only 1" } },
-            ],
+            elements: [{ type: "text" as const, content: { en: "english only 1" } }],
           },
           {
             type: "content" as const,
             appearsToBeBilingualPage: false,
-            elements: [
-              { type: "text" as const, content: { en: "english only 2" } },
-            ],
+            elements: [{ type: "text" as const, content: { en: "english only 2" } }],
           },
         ],
       };
@@ -412,15 +400,9 @@ describe("generateHtmlDocument", () => {
 
       const html = HtmlGenerator.generateHtmlDocument(book);
 
-      expect(html).toContain(
-        'data-book="bookTitle" lang="en">Multi-Language Book</div>'
-      );
-      expect(html).toContain(
-        'data-book="bookTitle" lang="es">Libro Multi-Idioma</div>'
-      );
-      expect(html).toContain(
-        'data-book="bookTitle" lang="fr">Livre Multi-Langues</div>'
-      );
+      expect(html).toContain('data-book="bookTitle" lang="en">Multi-Language Book</div>');
+      expect(html).toContain('data-book="bookTitle" lang="es">Libro Multi-Idioma</div>');
+      expect(html).toContain('data-book="bookTitle" lang="fr">Livre Multi-Langues</div>');
     });
 
     it("should escape HTML characters in frontMatterMetadata", () => {
@@ -453,9 +435,7 @@ describe("generateHtmlDocument", () => {
       const html = HtmlGenerator.generateHtmlDocument(book);
 
       expect(html).toContain("Book with &lt;tags&gt; &amp; &quot;quotes&quot;");
-      expect(html).toContain(
-        "Copyright © 2023 &lt;Publisher&gt; &amp; &quot;Authors&quot;"
-      );
+      expect(html).toContain("Copyright © 2023 &lt;Publisher&gt; &amp; &quot;Authors&quot;");
 
       expect(html).not.toContain("<Publisher>");
     });
@@ -591,9 +571,7 @@ describe("generateHtmlDocument", () => {
       const result = HtmlGenerator.generateHtmlDocument(book);
 
       // Should have one originalAcknowledgments div with concatenated content
-      const originalAckMatches = result.match(
-        /data-book="originalAcknowledgments"/g
-      );
+      const originalAckMatches = result.match(/data-book="originalAcknowledgments"/g);
       expect(originalAckMatches).toHaveLength(1);
 
       // Should have one ISBN div
@@ -603,7 +581,7 @@ describe("generateHtmlDocument", () => {
       // Check that the concatenated content includes all mapped fields with <br> separators
       expect(result).toContain('data-book="originalAcknowledgments"');
       expect(result).toContain(
-        "Written by Jane Doe<br>John Smith<br>Alice Brown<br>Test Publishing"
+        "Written by Jane Doe<br>John Smith<br>Alice Brown<br>Test Publishing",
       );
 
       // Check that ISBN field is separate

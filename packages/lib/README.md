@@ -5,7 +5,7 @@ The core Node.js library for converting PDF documents to Bloom-compatible HTML f
 ## Installation
 
 ```bash
-yarn add @pdf-to-bloom/core
+pnpm add @pdf-to-bloom/core
 ```
 
 ## Usage
@@ -19,18 +19,10 @@ import {
 } from "@pdf-to-bloom/core";
 
 // Convert PDF directly to Bloom HTML
-const bloomHtmlPath = await pdfToBloomFolder(
-  "./document.pdf",
-  "./output",
-  "your-mistral-api-key"
-);
+const bloomHtmlPath = await pdfToBloomFolder("./document.pdf", "./output", "your-mistral-api-key");
 
 // Or use individual functions
-const markdown = await makeMarkdownFromPDF(
-  "./document.pdf",
-  "./output",
-  "your-mistral-api-key"
-);
+const markdown = await makeMarkdownFromPDF("./document.pdf", "./output", "your-mistral-api-key");
 const taggedMarkdown = await tagMarkdown(markdown, "your-openrouter-api-key");
 const bloomHtml = await mdToBloomHtml(taggedMarkdown);
 ```

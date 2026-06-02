@@ -1,40 +1,38 @@
 {
   "name": "pdf-to-bloom-monorepo",
   "version": "1.0.0",
-  "description": "A monorepo for PDF to Bloom conversion tools",
   "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
+  "description": "A monorepo for PDF to Bloom conversion tools",
   "scripts": {
-    "build": "yarn workspaces foreach --all run build",
-    "build:lib": "yarn workspace @pdf-to-bloom/lib build",
-    "build:cli": "yarn workspace @pdf-to-bloom/cli build",
-    "test": "yarn workspaces foreach --all run test || true",
-    "test:watch": "yarn workspaces foreach --all run test:watch || true",
-    "test:lib": "yarn workspace @pdf-to-bloom/lib test",
-    "test:lib:watch": "yarn workspace @pdf-to-bloom/lib test:watch",
-    "test:strict": "yarn workspaces foreach --all run test",
-    "test:manual-llm": "yarn workspace @pdf-to-bloom/lib test packages/lib/src/2-llm/llmMarkdown.manual.test.ts",
-    "dev": "yarn workspaces foreach --all run dev",
-    "dev:lib": "yarn workspace @pdf-to-bloom/lib dev",
-    "dev:cli": "yarn workspace @pdf-to-bloom/cli dev",
-    "watch": "concurrently \"yarn dev:lib\" \"yarn dev:cli\" --names \"lib,cli\" --prefix-colors \"blue,green\"",
-    "cli": "yarn node packages/cli/dist/index.js",
-    "test:md-to-tagged": "yarn build:lib && yarn build:cli && node packages/cli/dist/index.js test-inputs/testme.md --target tagged",
-    "test:children": "yarn cli  test-inputs/children-come.pdf --collection 'Apalɨ Books'",
-    "test:children-stage3": "yarn cli \"C:\\Users\\hatto\\OneDrive\\Documents\\Bloom\\Apalɨ Books\\children-come\\children-come.raw-llm.md\" --collection 'Apalɨ Books'"
-  },
-  "packageManager": "yarn@1.22.22",
-  "volta": {
-    "node": "22.11.0",
-    "yarn": "1.22.22"
-  },
-  "devDependencies": {
-    "concurrently": "^9.1.2",
-    "ts-node": "^10.9.2"
+    "build": "vp run -r build",
+    "build:lib": "vp run -F @pdf-to-bloom/lib build",
+    "build:cli": "vp run -F @pdf-to-bloom/cli build",
+    "test": "vp test run",
+    "test:watch": "vp test watch",
+    "test:lib": "vp test run packages/lib",
+    "test:lib:watch": "vp test watch packages/lib",
+    "test:strict": "vp test run",
+    "test:manual-llm": "vp run -F @pdf-to-bloom/lib test packages/lib/src/2-llm/llmMarkdown.manual.test.ts",
+    "dev": "vp run -r --parallel dev",
+    "dev:lib": "vp run -F @pdf-to-bloom/lib dev",
+    "dev:cli": "vp run -F @pdf-to-bloom/cli dev",
+    "cli": "node packages/cli/dist/index.js",
+    "format": "vp fmt",
+    "lint": "vp lint",
+    "check": "vp check",
+    "test:md-to-tagged": "pnpm run build:lib && pnpm run build:cli && node packages/cli/dist/index.js test-inputs/testme.md --target tagged",
+    "test:children": "pnpm run cli test-inputs/children-come.pdf --collection 'Apalɨ Books'",
+    "test:children-stage3": "pnpm run cli \"C:\\Users\\hatto\\OneDrive\\Documents\\Bloom\\Apalɨ Books\\children-come\\children-come.raw-llm.md\" --collection 'Apalɨ Books'",
+    "prepare": "vp config"
   },
   "dependencies": {
     "sharp": "^0.34.3"
-  }
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
+  },
+  "packageManager": "pnpm@11.5.1"
 }

@@ -1,5 +1,5 @@
-/// <reference types="vitest" />
-import { defineConfig } from "vitest/config";
+/// <reference types="vite-plus/test" />
+import { defineConfig } from "vite-plus";
 import dts from "vite-plugin-dts";
 import fs from "fs";
 import path from "path";
@@ -27,7 +27,7 @@ export default defineConfig({
         try {
           const workerPath = path.resolve(
             __dirname,
-            "../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"
+            "../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
           );
           if (fs.existsSync(workerPath)) {
             const content = fs.readFileSync(workerPath);

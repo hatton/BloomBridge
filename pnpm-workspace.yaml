@@ -1,0 +1,36 @@
+packages:
+  - "packages/*"
+
+# Supply-chain guard: never resolve a package version published less than
+# 7 days ago (10080 minutes). Gives time for compromised/yanked releases to be
+# caught before they enter our lockfile.
+minimumReleaseAge: 10080
+
+# Allow these dependencies to run install/build scripts. sharp ships native
+# binaries and esbuild fetches a platform binary, so both need their scripts.
+allowBuilds:
+  esbuild: true
+  sharp: true
+catalog:
+  vite: npm:@voidzero-dev/vite-plus-core@latest
+  vitest: npm:@voidzero-dev/vite-plus-test@latest
+  vite-plus: 0.1.24
+overrides:
+  vite: "catalog:"
+  vitest: "catalog:"
+peerDependencyRules:
+  allowAny:
+    - vite
+    - vitest
+  allowedVersions:
+    vite: "*"
+    vitest: "*"
+minimumReleaseAgeExclude:
+  - vite-plus
+  - "@voidzero-dev/*"
+  - oxlint
+  - "@oxlint/*"
+  - oxlint-tsgolint
+  - "@oxlint-tsgolint/*"
+  - oxfmt
+  - "@oxfmt/*"

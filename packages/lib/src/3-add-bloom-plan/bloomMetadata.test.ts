@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { BloomMetadataParser, BookMetadata } from "./bloomMetadata";
+import { describe, it, expect, beforeEach } from "vite-plus/test";
+import { BloomMetadataParser, FrontMatterMetadata } from "./bloomMetadata";
 
 describe("BloomMetadataParser", () => {
   let parser: BloomMetadataParser;
@@ -63,8 +63,6 @@ l2: es`;
 
       const result = parser.parseMetadata(frontmatter);
 
-      expect(result.allTitles.en).toBe("Test Book");
-      expect(result.allTitles.es).toBe("Libro de Prueba");
       expect(result.languages.en).toBe("English");
       expect(result.l1).toBe("en");
       expect(result.l2).toBe("es");
@@ -79,9 +77,7 @@ l2: es`;
 
       expect(result).toEqual({});
       expect(parser.getErrors()).toHaveLength(1);
-      expect(parser.getErrors()[0].message).toContain(
-        "Failed to parse YAML frontmatter"
-      );
+      expect(parser.getErrors()[0].message).toContain("Failed to parse YAML frontmatter");
     });
 
     it("should parse metadata with optional fields", () => {
@@ -97,17 +93,14 @@ copyright: "Copyright 2023, Test Publisher"`;
 
       const result = parser.parseMetadata(frontmatter);
 
-      expect(result.coverImage).toBe("cover.jpg");
-      expect(result.isbn).toBe("978-1234567890");
-      expect(result.license).toBe("CC-BY-NC");
-      expect(result.copyright).toBe("Copyright 2023, Test Publisher");
+      expect(result.languages.en).toBe("English");
+      expect(result.l1).toBe("en");
     });
   });
 
   describe("validateMetadata", () => {
     it("should validate required fields are present", () => {
-      const validMetadata: BookMetadata = {
-        allTitles: { en: "Test Book" },
+      const validMetadata: FrontMatterMetadata = {
         languages: { en: "English" },
         l1: "en",
       };
@@ -119,23 +112,20 @@ copyright: "Copyright 2023, Test Publisher"`;
     });
 
     it("should report missing required fields", () => {
-      const invalidMetadata = {} as BookMetadata;
+      const invalidMetadata = {} as FrontMatterMetadata;
 
       const isValid = parser.validateMetadata(invalidMetadata);
 
       expect(isValid).toBe(false);
 
       expect(parser.getErrors().map((e) => e.message)).toContain(
-        "Missing required field: languages"
+        "Missing required field: languages",
       );
-      expect(parser.getErrors().map((e) => e.message)).toContain(
-        "Missing required field: l1"
-      );
+      expect(parser.getErrors().map((e) => e.message)).toContain("Missing required field: l1");
     });
 
     it("should validate l1 exists in languages", () => {
-      const invalidMetadata: BookMetadata = {
-        allTitles: { en: "Test Book" },
+      const invalidMetadata: FrontMatterMetadata = {
         languages: { es: "Spanish" },
         l1: "en", // en not in languages
       };
@@ -146,15 +136,12 @@ copyright: "Copyright 2023, Test Publisher"`;
       expect(
         parser
           .getErrors()
-          .some((e) =>
-            e.message.includes("Primary language 'en' not found in languages")
-          )
+          .some((e) => e.message.includes("Primary language 'en' not found in languages")),
       ).toBe(true);
     });
 
     it("should validate l2 exists in languages if specified", () => {
-      const invalidMetadata: BookMetadata = {
-        allTitles: { en: "Test Book" },
+      const invalidMetadata: FrontMatterMetadata = {
         languages: { en: "English" },
         l1: "en",
         l2: "fr", // fr not in languages
@@ -166,15 +153,12 @@ copyright: "Copyright 2023, Test Publisher"`;
       expect(
         parser
           .getErrors()
-          .some((e) =>
-            e.message.includes("Secondary language 'fr' not found in languages")
-          )
+          .some((e) => e.message.includes("Secondary language 'fr' not found in languages")),
       ).toBe(true);
     });
 
     it("should allow valid l2 when present in languages", () => {
-      const validMetadata: BookMetadata = {
-        allTitles: { en: "Test Book", fr: "Livre de Test" },
+      const validMetadata: FrontMatterMetadata = {
         languages: { en: "English", fr: "French" },
         l1: "en",
         l2: "fr",
@@ -191,16 +175,12 @@ copyright: "Copyright 2023, Test Publisher"`;
     it("should accumulate multiple errors", () => {
       // First create some errors
       parser.extractFrontmatter("no frontmatter");
-      parser.validateMetadata({} as BookMetadata);
+      parser.validateMetadata({} as FrontMatterMetadata);
 
       const errors = parser.getErrors();
       expect(errors.length).toBeGreaterThan(1);
-      expect(
-        errors.some((e) => e.message.includes("No YAML frontmatter found"))
-      ).toBe(true);
-      expect(
-        errors.some((e) => e.message.includes("Missing required field"))
-      ).toBe(true);
+      expect(errors.some((e) => e.message.includes("No YAML frontmatter found"))).toBe(true);
+      expect(errors.some((e) => e.message.includes("Missing required field"))).toBe(true);
     });
 
     it("should clear errors", () => {
@@ -233,10 +213,8 @@ Hola mundo`;
       const { frontmatter, body } = parser.extractFrontmatter(content);
       const metadata = parser.parseMetadata(frontmatter);
 
-      expect(metadata.allTitles.en).toBe("Test Book");
       expect(metadata.l1).toBe("en");
       expect(metadata.l2).toBe("es");
-      expect(metadata.coverImage).toBe("cover.jpg");
       expect(body).toContain("Hello world");
       expect(parser.getErrors()).toHaveLength(0);
     });

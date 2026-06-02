@@ -27,8 +27,8 @@ interface OpenRouterMessage {
  * Model aliases for easier use
  */
 const MODEL_ALIASES: Record<string, string> = {
-  gemini: "google/gemini-2.5-pro",
-  "4o": "openai/gpt-4o",
+  gemini: "google/3.1-pro-preview",
+  gpt: "openai/gpt-5.4",
 };
 
 /**
@@ -42,7 +42,7 @@ function resolveModelName(model: string): string {
  * Converts a PDF file to markdown format using OpenRouter models with simple file upload
  * @param pdfPath - Path to the PDF file
  * @param openRouterApiKey - OpenRouter API key for processing
- * @param modelName - Model name (can be alias like "gemini" or full name like "google/gemini-2.5-pro")
+ * @param modelName - Model name (can be alias like "gemini" or full name like "google/3.1-pro-preview")
  * @param logCallback - Optional callback to receive log messages
  * @param customPrompt - Optional custom prompt to override the default system prompt
  * @returns Promise resolving to markdown string
@@ -52,7 +52,7 @@ export async function pdfToMarkdown(
   openRouterApiKey: string,
   modelName: string = "gemini",
   logCallback?: (log: LogEntry) => void,
-  customPrompt?: string
+  customPrompt?: string,
 ): Promise<string> {
   if (logCallback) logger.subscribe(logCallback);
 
@@ -65,7 +65,7 @@ export async function pdfToMarkdown(
 
     const resolvedModel = resolveModelName(modelName);
     logger.info(
-      `Starting PDF to markdown conversion for: ${pdfPath} using model: ${resolvedModel}`
+      `Starting PDF to markdown conversion for: ${pdfPath} using model: ${resolvedModel}`,
     );
 
     // Check if PDF file exists
@@ -141,31 +141,24 @@ export async function pdfToMarkdown(
       max_tokens: 8000, // todo Increase max tokens for longer documents
     };
 
-    const response = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${openRouterApiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://github.com/hatton/pdf-to-bloom",
-          "X-Title": "PDF to Bloom Converter",
-        },
-        body: JSON.stringify(requestBody),
-      }
-    );
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${openRouterApiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/hatton/pdf-to-bloom",
+        "X-Title": "PDF to Bloom Converter",
+      },
+      body: JSON.stringify(requestBody),
+    });
 
     logger.info(`Response status: ${response.status}`);
 
     if (!response.ok) {
       const errorText = await response.text();
-      logger.error(
-        `OpenRouter API request failed: ${response.status} ${response.statusText}`
-      );
+      logger.error(`OpenRouter API request failed: ${response.status} ${response.statusText}`);
       logger.error(`Error details: ${errorText}`);
-      throw new Error(
-        `OpenRouter API request failed: ${response.status} ${response.statusText}`
-      );
+      throw new Error(`OpenRouter API request failed: ${response.status} ${response.statusText}`);
     }
 
     let ocrResponse: OpenRouterResponse;
@@ -173,8 +166,9 @@ export async function pdfToMarkdown(
       ocrResponse = (await response.json()) as OpenRouterResponse;
       logger.verbose("Received response from OpenRouter model");
     } catch (parseError) {
-      logger.error(`Failed to parse JSON response: ${parseError}`);
-      throw new Error(`Failed to parse OpenRouter response: ${parseError}`);
+      const message = parseError instanceof Error ? parseError.message : String(parseError);
+      logger.error(`Failed to parse JSON response: ${message}`);
+      throw new Error(`Failed to parse OpenRouter response: ${message}`);
     }
 
     if (!ocrResponse.choices || ocrResponse.choices.length === 0) {

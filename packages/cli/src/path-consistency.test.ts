@@ -52,7 +52,7 @@ Page 2 content.
       target: Artifact.HTML,
       output: testCollectionDir,
       verbose: false,
-      ocrMethod: "4o",
+      ocrMethod: "gpt",
       parserEngine: "native",
       imager: "poppler",
     };
@@ -99,7 +99,7 @@ Page 2 content.
       target: Artifact.MarkdownReadyForBloom,
       output: testCollectionDir,
       verbose: false,
-      ocrMethod: "4o",
+      ocrMethod: "gpt",
       parserEngine: "native",
       imager: "poppler",
     };
@@ -163,7 +163,7 @@ This is test content.`,
       target: Artifact.MarkdownReadyForBloom,
       collection: fakeCollectionDir,
       verbose: false,
-      ocrMethod: "4o",
+      ocrMethod: "gpt",
       parserEngine: "native",
       imager: "poppler",
     };

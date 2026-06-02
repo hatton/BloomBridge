@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi } from "vite-plus/test";
 import { llmMarkdown } from "./llmMarkdown";
 import { LogEntry } from "../logger";
 
@@ -29,11 +29,7 @@ describe("llmMarkdown", () => {
     expect(result.cleanedUpMarkdown).toBe("");
 
     expect(
-      logs.some(
-        (log) =>
-          log.level === "error" &&
-          log.message === "OpenRouter API key is required"
-      )
+      logs.some((log) => log.level === "error" && log.message === "OpenRouter API key is required"),
     ).toBe(true);
   });
   it("should log enrichment process", async () => {
@@ -44,35 +40,28 @@ describe("llmMarkdown", () => {
 
     expect(
       logs.some(
-        (log) =>
-          log.level === "info" &&
-          log.message === "Starting markdown enrichment process"
-      )
+        (log) => log.level === "info" && log.message === "Starting markdown enrichment process",
+      ),
     ).toBe(true);
     expect(
       logs.some(
         (log) =>
-          log.level === "info" &&
-          log.message === "Markdown enrichment completed... validating..."
-      )
+          log.level === "info" && log.message === "Markdown enrichment completed... validating...",
+      ),
     ).toBe(true);
 
     // Result is an object with properties, not a string
     expect(result).toHaveProperty("markdownResultFromLLM");
     expect(result).toHaveProperty("cleanedUpMarkdown");
     expect(result).toHaveProperty("valid");
-    expect(result.cleanedUpMarkdown).toContain(
-      "<!-- Tagged Content via OpenRouter -->"
-    );
+    expect(result.cleanedUpMarkdown).toContain("<!-- Tagged Content via OpenRouter -->");
   });
   it("should work without options", async () => {
     const result = await llmMarkdown("# Test", "valid-key");
     expect(result).toHaveProperty("markdownResultFromLLM");
     expect(result).toHaveProperty("cleanedUpMarkdown");
     expect(result).toHaveProperty("valid");
-    expect(result.cleanedUpMarkdown).toContain(
-      "<!-- Tagged Content via OpenRouter -->"
-    );
+    expect(result.cleanedUpMarkdown).toContain("<!-- Tagged Content via OpenRouter -->");
   });
 
   it("should work with partial options", async () => {
@@ -83,8 +72,6 @@ describe("llmMarkdown", () => {
     expect(result).toHaveProperty("markdownResultFromLLM");
     expect(result).toHaveProperty("cleanedUpMarkdown");
     expect(result).toHaveProperty("valid");
-    expect(result.cleanedUpMarkdown).toContain(
-      "<!-- Tagged Content via OpenRouter -->"
-    );
+    expect(result.cleanedUpMarkdown).toContain("<!-- Tagged Content via OpenRouter -->");
   });
 });

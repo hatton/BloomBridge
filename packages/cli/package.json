@@ -2,21 +2,21 @@
   "name": "@pdf-to-bloom/cli",
   "version": "1.0.0",
   "description": "CLI tool for PDF to Bloom conversion",
-  "type": "module",
-  "main": "dist/index.js",
   "bin": {
     "pdf-to-bloom": "./dist/index.js"
   },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "main": "dist/index.js",
   "scripts": {
-    "build": "vite build",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "dev": "vite build --watch",
+    "build": "vp build",
+    "test": "vp test run",
+    "test:watch": "vp test",
+    "dev": "vp build --watch",
     "start": "node dist/index.js",
-    "prepublishOnly": "yarn build"
+    "prepublishOnly": "vp build"
   },
   "dependencies": {
     "@pdf-to-bloom/lib": "workspace:*",
@@ -28,7 +28,8 @@
   "devDependencies": {
     "@types/node": "^22.15.24",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5",
-    "vitest": "^2.1.8"
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
   }
 }

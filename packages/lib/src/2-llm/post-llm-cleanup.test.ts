@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vite-plus/test";
 import { attemptCleanup } from "./post-llm-cleanup";
 
 const validFrontmatter = `---
@@ -23,7 +23,7 @@ describe("attemptCleanup", () => {
   });
 
   it("fixes missing opening yaml delimiter", () => {
-    const input = `allTitles:\n  en: Book\nlanguages:\n  en: English\nl1: en\n<!-- text lang=\"en\" -->\nText`;
+    const input = `allTitles:\n  en: Book\nlanguages:\n  en: English\nl1: en\n<!-- text lang="en" -->\nText`;
     const result = attemptCleanup(input);
     expect(result.valid).toBe(true);
     expect(result.cleaned.startsWith("---")).toBe(true);
@@ -31,19 +31,15 @@ describe("attemptCleanup", () => {
   });
 
   it("reorders language comments after images", () => {
-    const input = wrapWithFrontmatter(
-      `<!-- text lang="en" -->\n![img](img.png){width=150}`
-    );
+    const input = wrapWithFrontmatter(`<!-- text lang="en" -->\n![img](img.png){width=150}`);
     const result = attemptCleanup(input);
     expect(result.valid).toBe(true);
-    expect(result.cleaned).toMatch(
-      /!\[img\]\(img.png\)\{width=150\}\n<!-- text lang="en" -->/
-    );
+    expect(result.cleaned).toMatch(/!\[img\]\(img.png\)\{width=150\}\n<!-- text lang="en" -->/);
   });
 
   it("removes code blocks from content", () => {
     const input = wrapWithFrontmatter(
-      `<!-- text lang="en" -->\nHere is code:\n\`\`\`js\nconsole.log('hi');\n\`\`\``
+      `<!-- text lang="en" -->\nHere is code:\n\`\`\`js\nconsole.log('hi');\n\`\`\``,
     );
     const result = attemptCleanup(input);
     expect(result.valid).toBe(true);
@@ -59,7 +55,7 @@ describe("attemptCleanup", () => {
 
   it("removes code block lines while preserving content", () => {
     const input = wrapWithFrontmatter(
-      `<!-- text lang="en" -->\nHere is some text:\n\`\`\`bash\necho "hello"\nls -la\n\`\`\`\n\nAnd more text:\n\`\`\`\nsome plain code\nmore code\n\`\`\``
+      `<!-- text lang="en" -->\nHere is some text:\n\`\`\`bash\necho "hello"\nls -la\n\`\`\`\n\nAnd more text:\n\`\`\`\nsome plain code\nmore code\n\`\`\``,
     );
     const result = attemptCleanup(input);
     expect(result.valid).toBe(true);
@@ -109,12 +105,8 @@ Next page content.
 100`);
     const result = attemptCleanup(input);
     expect(result.valid).toBe(true);
-    expect(result.cleaned).toContain(
-      '<!-- text lang="zxx" field="pageNumber" -->\n42'
-    );
-    expect(result.cleaned).toContain(
-      '<!-- text lang="zxx" field="pageNumber" -->\n100'
-    );
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n42');
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n100');
     expect(result.cleaned).toContain("This is page content.");
     expect(result.cleaned).toContain("Next page content.");
   });
@@ -135,12 +127,8 @@ More content.
 3.14`);
     const result = attemptCleanup(input);
     expect(result.valid).toBe(true);
-    expect(result.cleaned).toContain(
-      '<!-- text lang="zxx" field="pageNumber" -->\n- 15 -'
-    );
-    expect(result.cleaned).toContain(
-      '<!-- text lang="zxx" field="pageNumber" -->\n3.14'
-    );
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n- 15 -');
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n3.14');
     expect(result.cleaned).toContain("Content here.");
     expect(result.cleaned).toContain("More content.");
   });
@@ -193,12 +181,8 @@ Mixed content 42 with text`);
 ٤٢`);
     const result = attemptCleanup(input);
     expect(result.valid).toBe(true);
-    expect(result.cleaned).toContain(
-      '<!-- text lang="zxx" field="pageNumber" -->\n२५'
-    );
-    expect(result.cleaned).toContain(
-      '<!-- text lang="zxx" field="pageNumber" -->\n٤٢'
-    );
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n२५');
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n٤٢');
     expect(result.cleaned).toContain("हिंदी में सामग्री।");
     expect(result.cleaned).toContain("محتوى عربي.");
   });
@@ -224,9 +208,7 @@ Learning about numbers:
     expect(result.cleaned).toContain('<!-- text lang="zxx" -->\n1');
     expect(result.cleaned).toContain('<!-- text lang="zxx" -->\n2');
     expect(result.cleaned).toContain('<!-- text lang="zxx" -->\n3');
-    expect(result.cleaned).toContain(
-      '<!-- text lang="zxx" field="pageNumber" -->\n42'
-    );
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n42');
   });
 
   it("marks page numbers followed by images", () => {
@@ -248,12 +230,8 @@ Next page content.
 ![another-image](image-7-1.png)`);
     const result = attemptCleanup(input);
     expect(result.valid).toBe(true);
-    expect(result.cleaned).toContain(
-      '<!-- text lang="zxx" field="pageNumber" -->\n4'
-    );
-    expect(result.cleaned).toContain(
-      '<!-- text lang="zxx" field="pageNumber" -->\n5'
-    );
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n4');
+    expect(result.cleaned).toContain('<!-- text lang="zxx" field="pageNumber" -->\n5');
     expect(result.cleaned).toContain("![image](image-6-1.png)");
     expect(result.cleaned).toContain("![another-image](image-7-1.png)");
     expect(result.cleaned).toContain("Next page content.");

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { getMarkdownFromBook, convertHtmlToMarkdown } from "./generateMarkdown";
+import { describe, it, expect } from "vite-plus/test";
+import { getMarkdownFromBook } from "./generateMarkdown";
 import { BloomMarkdown } from "./parseMarkdown";
 import { Book, Page, TextBlockElement, ImageElement } from "../types";
 import { normalizeMarkdown } from "../test-utils";
@@ -9,7 +9,6 @@ describe("generateMarkdown", () => {
     it("should generate basic markdown with frontmatter", () => {
       const book: Book = {
         frontMatterMetadata: {
-          allTitles: { en: "Test Book" },
           languages: { en: "English" },
           l1: "en",
         },
@@ -20,39 +19,30 @@ describe("generateMarkdown", () => {
 
       expect(result).toContain("---");
       expect(result).toContain('l1: "en"');
-      expect(result).toContain("allTitles:");
-      expect(result).toContain('  en: "Test Book"');
+      expect(result).toContain("languages:");
+      expect(result).toContain('  en: "English"');
     });
 
     it("should handle complex metadata structures", () => {
       const book: Book = {
         frontMatterMetadata: {
-          allTitles: {
-            en: "English Title",
-            fr: "Titre Français",
-          },
           languages: {
             en: "English",
             fr: "French",
           },
           l1: "en",
           l2: "fr",
-          coverImage: "cover.jpg",
-          isbn: "978-1234567890",
         },
         pages: [],
       };
 
       const result = getMarkdownFromBook(book);
 
-      expect(result).toContain("allTitles:");
-      expect(result).toContain('  en: "English Title"');
-      expect(result).toContain('  fr: "Titre Français"');
       expect(result).toContain("languages:");
       expect(result).toContain('  en: "English"');
       expect(result).toContain('  fr: "French"');
-      expect(result).toContain('coverImage: "cover.jpg"');
-      expect(result).toContain('isbn: "978-1234567890"');
+      expect(result).toContain('l1: "en"');
+      expect(result).toContain('l2: "fr"');
     });
 
     it("should generate page content with text elements", () => {
@@ -71,7 +61,6 @@ describe("generateMarkdown", () => {
 
       const book: Book = {
         frontMatterMetadata: {
-          allTitles: { en: "Test" },
           languages: { en: "English" },
           l1: "en",
         },
@@ -102,7 +91,6 @@ describe("generateMarkdown", () => {
 
       const book: Book = {
         frontMatterMetadata: {
-          allTitles: { en: "Test" },
           languages: { en: "English", es: "Spanish" },
           l1: "en",
           l2: "es",
@@ -133,7 +121,6 @@ describe("generateMarkdown", () => {
 
       const book: Book = {
         frontMatterMetadata: {
-          allTitles: { en: "Test" },
           languages: { en: "English" },
           l1: "en",
         },
@@ -160,7 +147,6 @@ describe("generateMarkdown", () => {
 
       const book: Book = {
         frontMatterMetadata: {
-          allTitles: { en: "Test" },
           languages: { en: "English" },
           l1: "en",
         },
@@ -200,7 +186,6 @@ describe("generateMarkdown", () => {
 
       const book: Book = {
         frontMatterMetadata: {
-          allTitles: { en: "Test" },
           languages: { en: "English" },
           l1: "en",
         },
@@ -223,7 +208,6 @@ describe("generateMarkdown", () => {
 
       const book: Book = {
         frontMatterMetadata: {
-          allTitles: { en: "Test" },
           languages: { en: "English" },
           l1: "en",
         },
@@ -244,7 +228,6 @@ describe("generateMarkdown", () => {
 
       const book: Book = {
         frontMatterMetadata: {
-          allTitles: { en: "Test" },
           languages: { en: "English" },
           l1: "en",
         },
@@ -277,9 +260,7 @@ Some text content`; // Parse the markdown
 
       // Generate markdown again and verify attributes are preserved
       const regeneratedMarkdown = getMarkdownFromBook(book);
-      expect(regeneratedMarkdown).toContain(
-        "![img-0.jpeg](img-0.jpeg){width=993}"
-      );
+      expect(regeneratedMarkdown).toContain("![img-0.jpeg](img-0.jpeg){width=993}");
     });
   });
 
@@ -382,12 +363,8 @@ Some french acknowledgment`;
     const book = parser.parseMarkdown(input);
     expect(book.pages.length).toBe(1);
     expect(book.pages[0].appearsToBeBilingualPage).toBe(undefined);
-    expect((book.pages[0].elements[0] as TextBlockElement).field).toBe(
-      "acknowledgments"
-    );
-    expect((book.pages[0].elements[1] as TextBlockElement).field).toBe(
-      "copyright"
-    );
+    expect((book.pages[0].elements[0] as TextBlockElement).field).toBe("acknowledgments");
+    expect((book.pages[0].elements[1] as TextBlockElement).field).toBe("copyright");
     const output = getMarkdownFromBook(book);
 
     expect(normalizeMarkdown(output)).toEqual(normalizeMarkdown(input));

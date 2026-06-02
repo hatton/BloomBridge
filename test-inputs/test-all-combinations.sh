@@ -25,7 +25,7 @@ if [ ! -f "$INPUT_FILE" ]; then
 fi
 
 # Array of OCR methods and parser engines
-OCR_METHODS=("gemini" "4o")
+OCR_METHODS=("gemini" "gpt")
 PARSER_ENGINES=("pdf-text" "native" "mistral-ocr")
 
 # Counter for progress
@@ -46,7 +46,7 @@ for ocr in "${OCR_METHODS[@]}"; do
         
         # Run the conversion
         cd "$ROOT_DIR"
-        yarn cli "$INPUT_FILE" \
+        pnpm cli "$INPUT_FILE" \
             --output "$OUTPUT_BASE/$OUTPUT_DIR" \
             --target ocr \
             --ocr "$ocr" \

@@ -11,7 +11,7 @@
 
 ## Bad
 
-## yarn cli test-inputs/tiger.pdf --target ocr --ocr 4o --output test-outputs/4o-tiger
+## pnpm cli test-inputs/tiger.pdf --target ocr --ocr 4o --output test-outputs/4o-tiger
 
 - Tiger (images only) basically fails. Like, it can do it, but it is quiet resistant.
 - tiger gave: "If you need more pages or specific sections, let me know!"

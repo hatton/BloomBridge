@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vite-plus/test";
 import os from "os";
 import path from "path";
 
@@ -25,12 +25,8 @@ describe("Collection Path Enhancement", () => {
     });
 
     it("should identify full paths correctly", () => {
-      expect(
-        isSimpleDirectoryName("/home/user/Documents/Bloom/Collection")
-      ).toBe(false);
-      expect(
-        isSimpleDirectoryName("C:\\Users\\User\\Documents\\Bloom\\Collection")
-      ).toBe(false);
+      expect(isSimpleDirectoryName("/home/user/Documents/Bloom/Collection")).toBe(false);
+      expect(isSimpleDirectoryName("C:\\Users\\User\\Documents\\Bloom\\Collection")).toBe(false);
       expect(isSimpleDirectoryName("./collections/MyCollection")).toBe(false);
       expect(isSimpleDirectoryName("../MyCollection")).toBe(false);
       expect(isSimpleDirectoryName("subfolder/Collection")).toBe(false);
@@ -63,12 +59,7 @@ describe("Collection Path Enhancement", () => {
 
       for (const testCase of testCases) {
         if (isSimpleDirectoryName(testCase.input)) {
-          const expandedPath = path.join(
-            homeDir,
-            "Documents",
-            "Bloom",
-            testCase.input
-          );
+          const expandedPath = path.join(homeDir, "Documents", "Bloom", testCase.input);
           expect(expandedPath).toBe(testCase.expected);
         }
       }

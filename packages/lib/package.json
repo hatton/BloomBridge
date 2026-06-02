@@ -2,27 +2,25 @@
   "name": "@pdf-to-bloom/lib",
   "version": "1.0.0",
   "description": "Core Node.js library for PDF to Bloom conversion",
-  "main": "dist/index.cjs",
-  "module": "dist/index.mjs",
-  "types": "dist/index.d.ts",
   "files": [
     "dist"
   ],
-  "scripts": {
-    "build": "vite build",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "dev": "vite build --watch",
-    "prepublishOnly": "yarn build"
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
   },
-  "devDependencies": {
-    "@types/escape-html": "^1.0.4",
-    "@types/js-yaml": "^4.0.9",
-    "@types/node": "^22.15.24",
-    "typescript": "^5.8.3",
-    "vite": "^6.3.5",
-    "vite-plugin-dts": "^4.5.4",
-    "vitest": "^2.1.8"
+  "scripts": {
+    "build": "vp build",
+    "test": "vp test run",
+    "test:watch": "vp test",
+    "dev": "vp build --watch",
+    "prepublishOnly": "vp build"
   },
   "dependencies": {
     "@mistralai/mistralai": "^1.7.1",
@@ -34,5 +32,15 @@
     "sharp": "^0.34.3",
     "unpdf": "^1.1.0",
     "zod": "^3.25.33"
+  },
+  "devDependencies": {
+    "@types/escape-html": "^1.0.4",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.15.24",
+    "typescript": "^5.8.3",
+    "vite": "catalog:",
+    "vite-plugin-dts": "^4.5.4",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
   }
 }

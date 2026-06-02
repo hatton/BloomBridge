@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vite-plus/test";
 import { llmMarkdown } from "@pdf-to-bloom/lib";
 import fs from "fs/promises";
 import path from "path";
@@ -7,7 +7,7 @@ import { LogEntry } from "../logger";
 
 // This test file is designed to run manually to validate LLM prompt processing
 // It will NOT run as part of the regular test suite due to the .manual.test.ts naming
-// Run manually with: yarn test packages/lib/src/2-llm/llmMarkdown.manual.test.ts
+// Run manually with: pnpm test:manual-llm
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,10 +15,7 @@ const __dirname = path.dirname(__filename);
 describe("Manual LLM Prompt Test", () => {
   it.skip("should process testme.ocr.md through LLM and validate output", async () => {
     // Path to the testme.ocr.md file
-    const testmeOcrPath = path.resolve(
-      __dirname,
-      "../../../../testme/testme.ocr.md"
-    );
+    const testmeOcrPath = path.resolve(__dirname, "../../../../testme/testme.ocr.md");
 
     // Read the OCR markdown file
     const ocrContent = await fs.readFile(testmeOcrPath, "utf-8");
@@ -36,9 +33,7 @@ describe("Manual LLM Prompt Test", () => {
 
     if (!openRouterApiKey) {
       console.warn("⚠️ OPENROUTER_KEY not found in environment variables");
-      console.log(
-        "To run this test manually, set OPENROUTER_KEY environment variable"
-      );
+      console.log("To run this test manually, set OPENROUTER_KEY environment variable");
       console.log("Skipping test...");
       return;
     }
@@ -95,10 +90,7 @@ describe("Manual LLM Prompt Test", () => {
     // Write output files for manual inspection
     const outputDir = path.resolve(__dirname, "../../../../testme");
     const rawOutputPath = path.join(outputDir, "testme.manual-test-raw.md");
-    const cleanedOutputPath = path.join(
-      outputDir,
-      "testme.manual-test-cleaned.md"
-    );
+    const cleanedOutputPath = path.join(outputDir, "testme.manual-test-cleaned.md");
 
     await fs.writeFile(rawOutputPath, result.markdownResultFromLLM);
     await fs.writeFile(cleanedOutputPath, result.cleanedUpMarkdown);

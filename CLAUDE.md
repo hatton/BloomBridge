@@ -1,83 +1,135 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working in this repository.
 
 ## Project Overview
 
-This is a **Yarn workspaces monorepo** for converting PDF documents to Bloom-compatible HTML format through intelligent markdown processing. The conversion pipeline uses OCR, LLM processing, and HTML generation to create bilingual educational content.
+pnpm workspaces monorepo converting PDF documents to Bloom-compatible HTML through OCR, LLM processing, and HTML generation. Produces bilingual educational content.
 
-## Package Manager & Build Tools
+**Two packages:**
 
-- **Yarn Classic v1.22.22** - Use `yarn` commands, not `npm`
-- **Node.js 22.11.0** - Runtime managed by Volta
-- **TypeScript** - Primary language with Vite for lib package, tsc for CLI
-- **Vitest** - Testing framework
+- `packages/lib` (`@pdf-to-bloom/lib`) — core TypeScript library, dual ESM/CJS build
+- `packages/cli` (`@pdf-to-bloom/cli`) — Commander.js CLI that imports the lib
 
-## Core Architecture
+## Toolchain
 
-The conversion pipeline follows a 4-stage process:
+- **[Vite+](https://viteplus.dev) (`vp`)** — unified toolchain bundling Vite, Vitest, oxfmt, oxlint. Install once globally: `npm install -g vite-plus-cli`
+- **pnpm** — package manager, pinned via `packageManager` field, provisioned by Vite+/Corepack. Do not use `npm` or `yarn`.
+- **Node.js 22+** — no pin; install your own.
+- **Supply-chain guard** — `pnpm-workspace.yaml` sets `minimumReleaseAge: 10080` (7 days). pnpm will refuse to resolve any package version newer than 7 days old. Vite+ toolchain packages are excluded from this guard. Do not bump package versions to the very latest just because it exists.
 
-1. **OCR Stage** (`1-ocr/`): PDF → Markdown + images using Mistral AI
-2. **LLM Stage** (`2-llm/`): Enriches markdown with language detection and content structuring  
-3. **Bloom Planning** (`3-add-bloom-plan/`): Adds Bloom-specific metadata and page planning
-4. **HTML Generation** (`4-generate-html/`): Creates final Bloom HTML with Origami CSS
+## Install
 
-Key packages:
-- `@pdf-to-bloom/lib` - Core TypeScript library (dual ESM/CJS build via Vite)
-- `@pdf-to-bloom/cli` - Command-line tool with Commander.js
-
-## Common Commands
-
-### Development
 ```bash
-# Install dependencies
-yarn install
-
-# Development with watch mode
-yarn watch                    # Both lib and CLI in parallel
-yarn dev:lib                  # Library only
-yarn dev:cli                  # CLI only
-
-# Build all packages
-yarn build
-yarn build:lib               # Library only  
-yarn build:cli               # CLI only
+vp install   # installs deps and sets up the pre-commit hook
 ```
 
-### Testing
+## Build
+
+Build order matters: lib must be built before cli (cli imports lib).
+
 ```bash
-yarn test                    # All packages (continues on failure)
-yarn test:strict            # All packages (fails on first error)
-yarn test:lib               # Library only
-yarn test:lib:watch         # Library with watch mode
+pnpm build         # builds both packages in dependency order
+pnpm build:lib     # lib only
+pnpm build:cli     # cli only (requires lib already built)
 ```
 
-### CLI Usage
+Builds are run via `vp run -r build` under the hood. Each package's `vp build` call compiles TypeScript via Vite with `vite-plugin-dts` for type declarations.
+
+**Output:**
+
+- `packages/lib/dist/index.mjs` + `index.cjs` + type declarations
+- `packages/cli/dist/index.js` (ESM, with `#!/usr/bin/env node` banner)
+
+The lib package has an `exports` map that routes ESM imports to `.mjs` and CJS require to `.cjs`. This is load-bearing — do not remove it.
+
+## Test
+
 ```bash
-yarn cli input.pdf                           # Convert PDF to Bloom HTML
-yarn cli input.pdf --target markdown         # OCR only
-yarn cli input.pdf --target tagged          # Through LLM processing
-yarn test:md-to-tagged                       # Test markdown conversion
+vp test run          # all packages, run once
+vp test watch        # all packages, watch mode
+pnpm test:lib        # lib only (vp test run packages/lib)
+pnpm test:lib:watch  # lib only, watch mode
 ```
+
+`vp test` discovers both packages via `test.projects: ['packages/*']` in the root `vite.config.ts`. Each package has its own `vitest.config.ts`.
+
+Test imports use `vite-plus/test`, not `vitest` directly:
+
+```ts
+import { describe, it, expect } from "vite-plus/test";
+```
+
+Many tests require missing test fixtures (PDFs) or live API keys (`MISTRAL_API_KEY`, `OPENROUTER_KEY`) and will fail without them — this is expected. Focus on the tests that don't require external resources.
+
+To run a single test file manually:
+
+```bash
+vp run -F @pdf-to-bloom/lib test packages/lib/src/2-llm/llmMarkdown.manual.test.ts
+```
+
+## Format, Lint, Type-check
+
+```bash
+vp fmt       # format with oxfmt (Vite+'s default formatter)
+vp lint      # lint with oxlint
+vp check     # format + lint + type-check (run this before committing)
+```
+
+The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged` which calls `vp check --fix` on staged files automatically. The formatter settings live in `vite.config.ts` under `fmt: {}` (oxfmt defaults).
+
+## Development Watch Mode
+
+```bash
+vp run dev     # both packages in parallel watch mode
+pnpm dev:lib   # lib only
+pnpm dev:cli   # cli only
+```
+
+Note: `vp dev` is the Vite dev server (not useful for this library-only monorepo). Use `vp run dev` instead, which runs the `dev` npm script.
+
+## Run the CLI
+
+The CLI must be built first.
+
+```bash
+pnpm cli input.pdf                          # convert PDF → Bloom HTML
+pnpm cli input.pdf --target ocr            # OCR only (markdown + images)
+pnpm cli input.pdf --target tagged         # through LLM processing
+pnpm cli input.pdf --collection recent     # use most recently opened Bloom collection
+pnpm cli input.pdf --output test-outputs/  # write to a specific directory
+pnpm test:md-to-tagged                      # build both packages then run a test conversion
+```
+
+When running ad-hoc tests, use `--output test-outputs/...` so output lands in the gitignored directory.
 
 ## API Keys Required
 
-- `MISTRAL_API_KEY` - For PDF OCR and general LLM processing
-- `OPENROUTER_KEY` - For content enrichment and advanced processing
+Set these in your environment before running OCR/LLM stages:
 
-## File Structure Patterns
+- `MISTRAL_API_KEY` — PDF OCR and general LLM processing
+- `OPENROUTER_KEY` — content enrichment and advanced processing
 
-- Test files: `*.test.ts` using Vitest
-- TypeScript config: Separate `tsconfig.json` per package
-- Build outputs: `packages/lib/dist/` (dual format), `packages/cli/dist/`
-- Import statements: No extensions needed in TypeScript
+## Pipeline Architecture
 
-## Key Types & Interfaces
+4-stage conversion:
 
-Core data structures in `packages/lib/src/types.ts`:
-- `Book` - Complete document with pages and metadata
-- `Page` - Individual page with elements and type classification
-- `PageElement` - Text blocks or images with language mappings
-- `FrontMatterMetadata` - Bloom-specific metadata structure
+1. **OCR** (`packages/lib/src/1-ocr/`) — PDF → Markdown + images via Mistral AI or OpenRouter
+2. **LLM** (`packages/lib/src/2-llm/`) — enriches markdown with language detection and content structuring
+3. **Bloom Planning** (`packages/lib/src/3-add-bloom-plan/`) — adds Bloom-specific metadata and page layout
+4. **HTML Generation** (`packages/lib/src/4-generate-html/`) — produces final Bloom HTML with Origami CSS
 
-The library exports pipeline functions and utilities for external integration while the CLI provides a complete conversion tool with file I/O handling.
+## Key Types (`packages/lib/src/types.ts`)
+
+- `Book` — complete document with pages and metadata
+- `Page` — individual page with elements and type classification
+- `PageElement` — text blocks or images with language mappings
+- `FrontMatterMetadata` — Bloom-specific metadata structure
+
+## Root Config Files
+
+- `vite.config.ts` — workspace root config: `staged` (pre-commit), `fmt`, `lint`, `test.projects`
+- `pnpm-workspace.yaml` — workspace packages, `minimumReleaseAge`, `allowBuilds`, `catalog` (vite/vitest/vite-plus versions)
+- `packages/lib/vite.config.ts` — lib build config (plugins: dts, copy-llm-prompt, copy-pdf-worker, copy-poppler-binaries)
+- `packages/cli/vite.config.ts` — cli build config
+- `packages/*/vitest.config.ts` — per-package test config (discovered by root `test.projects`)

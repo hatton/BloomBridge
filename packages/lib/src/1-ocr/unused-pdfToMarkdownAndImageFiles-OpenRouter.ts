@@ -40,7 +40,7 @@ interface OpenRouterResponse {
  */
 const MODEL_ALIASES: Record<string, string> = {
   gemini: "google/gemini-2.5-pro",
-  "4o": "openai/gpt-4o",
+  gpt: "openai/gpt-5.4",
 };
 
 /**
@@ -68,7 +68,7 @@ export async function pdfToMarkdownAndImageFiles(
   modelName: string = "gemini",
   parserEngine: string = "native",
   logCallback?: (log: LogEntry) => void,
-  customPrompt?: string
+  customPrompt?: string,
 ): Promise<string> {
   if (logCallback) logger.subscribe(logCallback);
 
@@ -81,7 +81,7 @@ export async function pdfToMarkdownAndImageFiles(
 
     const resolvedModel = resolveModelName(modelName);
     logger.info(
-      `Starting PDF to markdown conversion for: ${pdfPath} using model: ${resolvedModel}`
+      `Starting PDF to markdown conversion for: ${pdfPath} using model: ${resolvedModel}`,
     );
     logger.info(`Using PDF parser engine: ${parserEngine}`);
 
@@ -155,31 +155,24 @@ This book may include minority language text with unusual characters. Therefore,
       max_tokens: 4096,
     };
 
-    const response = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${openRouterApiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://github.com/hatton/pdf-to-bloom",
-          "X-Title": "PDF to Bloom Converter",
-        },
-        body: JSON.stringify(requestBody),
-      }
-    );
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${openRouterApiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/hatton/pdf-to-bloom",
+        "X-Title": "PDF to Bloom Converter",
+      },
+      body: JSON.stringify(requestBody),
+    });
 
     logger.info(`🔍 DEBUG: Response status: ${response.status}`);
 
     if (!response.ok) {
       const errorText = await response.text();
-      logger.error(
-        `OpenRouter API request failed: ${response.status} ${response.statusText}`
-      );
+      logger.error(`OpenRouter API request failed: ${response.status} ${response.statusText}`);
       logger.error(`Error details: ${errorText}`);
-      throw new Error(
-        `OpenRouter API request failed: ${response.status} ${response.statusText}`
-      );
+      throw new Error(`OpenRouter API request failed: ${response.status} ${response.statusText}`);
     }
 
     let ocrResponse: OpenRouterResponse;
@@ -190,8 +183,9 @@ This book may include minority language text with unusual characters. Therefore,
       logger.info("Full OpenRouter API response structure:");
       logger.info(JSON.stringify(ocrResponse, null, 2));
     } catch (parseError) {
-      logger.error(`Failed to parse JSON response: ${parseError}`);
-      throw new Error(`Failed to parse OpenRouter response: ${parseError}`);
+      const message = parseError instanceof Error ? parseError.message : String(parseError);
+      logger.error(`Failed to parse JSON response: ${message}`);
+      throw new Error(`Failed to parse OpenRouter response: ${message}`);
     }
 
     if (!ocrResponse.choices || ocrResponse.choices.length === 0) {
@@ -215,25 +209,20 @@ This book may include minority language text with unusual characters. Therefore,
               // Extract and save image if it's base64 data
               if (item.image_url.url.startsWith("data:image/")) {
                 try {
-                  const base64Match = item.image_url.url.match(
-                    /^data:image\/(\w+);base64,(.+)$/
-                  );
+                  const base64Match = item.image_url.url.match(/^data:image\/(\w+);base64,(.+)$/);
                   if (base64Match) {
                     const imageExtension = base64Match[1];
                     const base64Data = base64Match[2];
                     const imagePath = `${imageOutputDir}/image${imageCounter}.${imageExtension}`;
 
-                    logger.info(
-                      `Saving extracted image: image${imageCounter}.${imageExtension}`
-                    );
-                    fs.writeFileSync(
-                      imagePath,
-                      Buffer.from(base64Data, "base64")
-                    );
+                    logger.info(`Saving extracted image: image${imageCounter}.${imageExtension}`);
+                    fs.writeFileSync(imagePath, Buffer.from(base64Data, "base64"));
                     imageCounter++;
                   }
                 } catch (imageError) {
-                  logger.error(`Failed to save image: ${imageError}`);
+                  logger.error(
+                    `Failed to save image: ${imageError instanceof Error ? imageError.message : String(imageError)}`,
+                  );
                 }
               }
             }
@@ -242,46 +231,38 @@ This book may include minority language text with unusual characters. Therefore,
       });
 
       if (imageCounter > 1) {
-        logger.info(
-          `✅ Successfully extracted ${imageCounter - 1} images from annotations`
-        );
+        logger.info(`✅ Successfully extracted ${imageCounter - 1} images from annotations`);
       }
     } else {
-      logger.info(
-        "No annotations found - checking for embedded images in markdown content"
-      );
+      logger.info("No annotations found - checking for embedded images in markdown content");
     }
 
     let markdown = choice.message.content;
 
     logger.info("Extracting markdown from API response structure:");
-    logger.info(
-      `- choices[0].message.content length: ${markdown.length} characters`
-    );
+    logger.info(`- choices[0].message.content length: ${markdown.length} characters`);
 
     // Extract markdown from code blocks if wrapped
     const codeBlockMatch = markdown.match(/```markdown\n([\s\S]*?)\n```/);
     if (codeBlockMatch) {
       markdown = codeBlockMatch[1];
-      logger.info(
-        "✅ Extracted markdown content from code block in choices[0].message.content"
-      );
+      logger.info("✅ Extracted markdown content from code block in choices[0].message.content");
       logger.info(`- Extracted markdown length: ${markdown.length} characters`);
     } else {
       logger.info(
-        "No markdown code block found, using raw content from choices[0].message.content"
+        "No markdown code block found, using raw content from choices[0].message.content",
       );
     }
 
     // Also log any annotations structure if present
     if (choice.message.annotations) {
       logger.info(
-        `- Found ${choice.message.annotations.length} annotation(s) in choices[0].message.annotations`
+        `- Found ${choice.message.annotations.length} annotation(s) in choices[0].message.annotations`,
       );
       choice.message.annotations.forEach((annotation, index) => {
         if (annotation.file?.content) {
           logger.info(
-            `  - Annotation ${index}: file.content array with ${annotation.file.content.length} items`
+            `  - Annotation ${index}: file.content array with ${annotation.file.content.length} items`,
           );
         }
       });
@@ -302,21 +283,20 @@ This book may include minority language text with unusual characters. Therefore,
         fs.writeFileSync(imagePath, Buffer.from(base64Data, "base64"));
 
         // Replace the data URI with a file reference
-        markdown = markdown.replace(
-          fullMatch,
-          `![${altText}](${imageFilename})`
-        );
+        markdown = markdown.replace(fullMatch, `![${altText}](${imageFilename})`);
 
         imageCounter++;
         extractedFromMarkdown++;
       } catch (imageError) {
-        logger.error(`Failed to save image from markdown: ${imageError}`);
+        logger.error(
+          `Failed to save image from markdown: ${imageError instanceof Error ? imageError.message : String(imageError)}`,
+        );
       }
     }
 
     if (extractedFromMarkdown > 0) {
       logger.info(
-        `✅ Successfully extracted ${extractedFromMarkdown} images from markdown content`
+        `✅ Successfully extracted ${extractedFromMarkdown} images from markdown content`,
       );
     }
 
