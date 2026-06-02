@@ -26,9 +26,7 @@ interface UnpdfPage {
  */
 function findImageInData(xobj: any, depth: number = 0): Uint8Array | null {
   const indent = "  ".repeat(depth);
-  logger.info(
-    `${indent}[DEBUG] findImageInData depth=${depth}: Analyzing XObject...`
-  );
+  logger.info(`${indent}[DEBUG] findImageInData depth=${depth}: Analyzing XObject...`);
 
   if (!xobj) {
     logger.info(`${indent}[DEBUG] XObject is null or undefined`);
@@ -46,22 +44,15 @@ function findImageInData(xobj: any, depth: number = 0): Uint8Array | null {
   // Base Case 1: This is a direct Image XObject. We found it.
   if (xobj && xobj.data && xobj.kind === 1) {
     // kind 1 is Image
-    logger.info(
-      `${indent}[DEBUG] ✅ Found Image XObject! data length: ${xobj.data.length}`
-    );
+    logger.info(`${indent}[DEBUG] ✅ Found Image XObject! data length: ${xobj.data.length}`);
     return xobj.data;
   }
 
   // Base Case 2: This might be an XObject with image data but different kind
-  if (
-    xobj &&
-    xobj.data &&
-    (xobj.kind === 2 || xobj.kind === 3) &&
-    !xobj.opList
-  ) {
+  if (xobj && xobj.data && (xobj.kind === 2 || xobj.kind === 3) && !xobj.opList) {
     // kind 2/3 with data but no opList = direct image data, not a form to recurse into
     logger.info(
-      `${indent}[DEBUG] ✅ Found XObject with image data (kind=${xobj.kind})! data length: ${xobj.data.length}`
+      `${indent}[DEBUG] ✅ Found XObject with image data (kind=${xobj.kind})! data length: ${xobj.data.length}`,
     );
     return xobj.data;
   }
@@ -69,7 +60,7 @@ function findImageInData(xobj: any, depth: number = 0): Uint8Array | null {
   // Check if this might be an image with different structure
   if (xobj.data && typeof xobj.kind === "undefined") {
     logger.info(
-      `${indent}[DEBUG] Found XObject with data but no kind - might be image: data length ${xobj.data.length}`
+      `${indent}[DEBUG] Found XObject with data but no kind - might be image: data length ${xobj.data.length}`,
     );
     // Try to detect if this looks like image data
     if (xobj.data instanceof Uint8Array && xobj.data.length > 100) {
@@ -82,7 +73,7 @@ function findImageInData(xobj: any, depth: number = 0): Uint8Array | null {
   if (!xobj || xobj.kind !== 2 || !xobj.opList) {
     // kind 2 is Form (only recurse if it has opList)
     logger.info(
-      `${indent}[DEBUG] Not a Form XObject (kind !== 2 or no opList), stopping recursion`
+      `${indent}[DEBUG] Not a Form XObject (kind !== 2 or no opList), stopping recursion`,
     );
     return null;
   }
@@ -97,15 +88,13 @@ function findImageInData(xobj: any, depth: number = 0): Uint8Array | null {
     const fn = fnArray[i];
     const args = argsArray[i];
 
-    logger.info(
-      `${indent}[DEBUG] Operation ${i}: ${fn} with args: ${JSON.stringify(args)}`
-    );
+    logger.info(`${indent}[DEBUG] Operation ${i}: ${fn} with args: ${JSON.stringify(args)}`);
 
     // Look for paint operators within the form
     if (fn === PDFJSOps.paintImageXObject || fn === PDFJSOps.paintXObject) {
       const imageName = args[0];
       logger.info(
-        `${indent}[DEBUG] Found paint operation for '${imageName}', looking in form.resources...`
+        `${indent}[DEBUG] Found paint operation for '${imageName}', looking in form.resources...`,
       );
 
       if (!form.resources) {
@@ -115,24 +104,18 @@ function findImageInData(xobj: any, depth: number = 0): Uint8Array | null {
 
       // IMPORTANT: Resources for a form are in `form.resources`, not `page.objs`
       const innerXObj = form.resources.get(imageName);
-      logger.info(
-        `${indent}[DEBUG] Retrieved inner XObject for '${imageName}': ${!!innerXObj}`
-      );
+      logger.info(`${indent}[DEBUG] Retrieved inner XObject for '${imageName}': ${!!innerXObj}`);
 
       const imageData = findImageInData(innerXObj, depth + 1); // Recursive call
       if (imageData) {
-        logger.info(
-          `${indent}[DEBUG] ✅ Found image data in recursion, bubbling up`
-        );
+        logger.info(`${indent}[DEBUG] ✅ Found image data in recursion, bubbling up`);
         return imageData; // Found the image, bubble it up.
       }
     }
   }
 
   // If the loop finishes without finding an image.
-  logger.info(
-    `${indent}[DEBUG] ❌ No image found after checking all operations`
-  );
+  logger.info(`${indent}[DEBUG] ❌ No image found after checking all operations`);
   return null;
 }
 
@@ -160,20 +143,18 @@ function findImageInData(xobj: any, depth: number = 0): Uint8Array | null {
 export async function pdfToMarkdownWithUnpdf(
   pdfPath: string,
   imageOutputDir: string,
-  logCallback?: (log: LogEntry) => void
+  logCallback?: (log: LogEntry) => void,
 ): Promise<string> {
   if (logCallback) logger.subscribe(logCallback);
 
   try {
     logger.info(`Starting PDF to markdown conversion for: ${pdfPath}`);
-    if (!fs.existsSync(pdfPath))
-      throw new Error(`PDF file not found: ${pdfPath}`);
+    if (!fs.existsSync(pdfPath)) throw new Error(`PDF file not found: ${pdfPath}`);
 
     const pdfBuffer = new Uint8Array(fs.readFileSync(pdfPath));
     logger.info(`PDF file size: ${pdfBuffer.length} bytes`);
     logger.info("Processing PDF with unpdf");
-    if (!fs.existsSync(imageOutputDir))
-      fs.mkdirSync(imageOutputDir, { recursive: true });
+    if (!fs.existsSync(imageOutputDir)) fs.mkdirSync(imageOutputDir, { recursive: true });
 
     const pages = await processPages(pdfBuffer, imageOutputDir);
 
@@ -197,10 +178,7 @@ export async function pdfToMarkdownWithUnpdf(
  * @param imageOutputDir - Directory to save images
  * @returns Array of processed pages
  */
-async function processPages(
-  pdfBuffer: Uint8Array,
-  imageOutputDir: string
-): Promise<UnpdfPage[]> {
+async function processPages(pdfBuffer: Uint8Array, imageOutputDir: string): Promise<UnpdfPage[]> {
   // Polyfill DOMMatrix for Node.js environment
   if (typeof globalThis !== "undefined" && !(globalThis as any).DOMMatrix) {
     // Simple identity matrix polyfill
@@ -271,9 +249,7 @@ async function processPages(
     };
 
     const { fnArray, argsArray } = opList;
-    logger.verbose(
-      `Page ${p}: Found ${fnArray.length} operations in operator list`
-    );
+    logger.verbose(`Page ${p}: Found ${fnArray.length} operations in operator list`);
 
     // Log all text-related operations for debugging
     const textOperations = [];
@@ -289,9 +265,7 @@ async function processPages(
         textOperations.push({ fn, args: argsArray[i], index: i });
       }
     }
-    logger.verbose(
-      `Page ${p}: Found ${textOperations.length} text-related operations`
-    );
+    logger.verbose(`Page ${p}: Found ${textOperations.length} text-related operations`);
 
     for (let i = 0; i < fnArray.length; i++) {
       const fn = fnArray[i];
@@ -321,7 +295,7 @@ async function processPages(
           // Text rendering modes: 0-2 are visible, 3 is invisible
           isTextVisible = textRenderingMode !== 3;
           logger.verbose(
-            `Page ${p}: Text rendering mode changed to ${textRenderingMode} (visible: ${isTextVisible})`
+            `Page ${p}: Text rendering mode changed to ${textRenderingMode} (visible: ${isTextVisible})`,
           );
           break;
 
@@ -361,13 +335,13 @@ async function processPages(
             const maskData = args[0] as any;
             imageName = maskData?.data || "unknown_mask";
             logger.info(
-              `Page ${p}: Found paintImageMaskXObject operation with imageName: '${imageName}', width: ${maskData?.width}, height: ${maskData?.height}`
+              `Page ${p}: Found paintImageMaskXObject operation with imageName: '${imageName}', width: ${maskData?.width}, height: ${maskData?.height}`,
             );
           } else {
             // For paintImageXObject and paintXObject, args[0] is the image name directly
             imageName = args[0];
             logger.info(
-              `Page ${p}: Found paint operation for XObject '${imageName}' with type: ${fn === OPS.paintImageXObject ? "paintImageXObject" : "paintXObject"}.`
+              `Page ${p}: Found paint operation for XObject '${imageName}' with type: ${fn === OPS.paintImageXObject ? "paintImageXObject" : "paintXObject"}.`,
             );
           }
 
@@ -376,20 +350,14 @@ async function processPages(
           try {
             // First try to get the object directly
             xobj = objs.get(imageName);
-            logger.info(
-              `Page ${p}: Retrieved XObject '${imageName}': ${!!xobj}`
-            );
+            logger.info(`Page ${p}: Retrieved XObject '${imageName}': ${!!xobj}`);
           } catch (error) {
             // If the object isn't resolved yet, retry with exponential backoff
             if (
               error instanceof Error &&
-              error.message.includes(
-                "Requesting object that isn't resolved yet"
-              )
+              error.message.includes("Requesting object that isn't resolved yet")
             ) {
-              logger.info(
-                `Page ${p}: XObject '${imageName}' not resolved yet, retrying...`
-              );
+              logger.info(`Page ${p}: XObject '${imageName}' not resolved yet, retrying...`);
 
               let retryCount = 0;
               const maxRetries = 10;
@@ -403,24 +371,22 @@ async function processPages(
 
                   xobj = objs.get(imageName);
                   logger.info(
-                    `Page ${p}: Successfully retrieved XObject '${imageName}' after ${retryCount + 1} retries`
+                    `Page ${p}: Successfully retrieved XObject '${imageName}' after ${retryCount + 1} retries`,
                   );
                   break;
                 } catch (retryError) {
                   retryCount++;
                   if (
                     retryError instanceof Error &&
-                    retryError.message.includes(
-                      "Requesting object that isn't resolved yet"
-                    )
+                    retryError.message.includes("Requesting object that isn't resolved yet")
                   ) {
                     logger.verbose(
-                      `Page ${p}: XObject '${imageName}' still not resolved, retry ${retryCount}/${maxRetries}`
+                      `Page ${p}: XObject '${imageName}' still not resolved, retry ${retryCount}/${maxRetries}`,
                     );
                   } else {
                     // Different error, break out of retry loop
                     logger.warn(
-                      `Page ${p}: Different error while retrying XObject '${imageName}': ${retryError instanceof Error ? retryError.message : String(retryError)}`
+                      `Page ${p}: Different error while retrying XObject '${imageName}': ${retryError instanceof Error ? retryError.message : String(retryError)}`,
                     );
                     break;
                   }
@@ -429,7 +395,7 @@ async function processPages(
 
               if (!xobj) {
                 logger.warn(
-                  `Page ${p}: Failed to retrieve XObject '${imageName}' after ${maxRetries} retries`
+                  `Page ${p}: Failed to retrieve XObject '${imageName}' after ${maxRetries} retries`,
                 );
 
                 // Add a placeholder comment indicating the missing image
@@ -445,7 +411,7 @@ async function processPages(
             } else {
               // Other type of error - log and continue
               logger.warn(
-                `Page ${p}: Failed to retrieve XObject '${imageName}': ${error instanceof Error ? error.message : String(error)}`
+                `Page ${p}: Failed to retrieve XObject '${imageName}': ${error instanceof Error ? error.message : String(error)}`,
               );
 
               // Add a placeholder comment indicating the missing image
@@ -462,9 +428,7 @@ async function processPages(
 
           // If the object is not resolved yet, skip with graceful handling
           if (!xobj) {
-            logger.warn(
-              `Page ${p}: XObject '${imageName}' not resolved yet, skipping...`
-            );
+            logger.warn(`Page ${p}: XObject '${imageName}' not resolved yet, skipping...`);
 
             // Add a placeholder comment indicating the missing image
             pageContent.push({
@@ -479,17 +443,13 @@ async function processPages(
 
           // Successfully retrieved XObject, process it
           const objKeys = Object.keys(xobj);
-          logger.info(
-            `Page ${p}: XObject '${imageName}' properties: ${objKeys.join(", ")}`
-          );
+          logger.info(`Page ${p}: XObject '${imageName}' properties: ${objKeys.join(", ")}`);
 
           // Log width/height information for debugging
           const width = xobj.width || xobj.Width;
           const height = xobj.height || xobj.Height;
           if (width && height) {
-            logger.verbose(
-              `Page ${p}: XObject '${imageName}' dimensions: ${width}x${height}`
-            );
+            logger.verbose(`Page ${p}: XObject '${imageName}' dimensions: ${width}x${height}`);
           }
 
           const imageData = findImageInData(xobj); // Use the recursive helper
@@ -498,9 +458,7 @@ async function processPages(
             const imageId = `page${p}-img${orderIndex}.png`;
             const imagePath = path.join(imageOutputDir, imageId);
             fs.writeFileSync(imagePath, imageData);
-            logger.verbose(
-              `✅ Saved image: ${imagePath} from XObject '${imageName}'.`
-            );
+            logger.verbose(`✅ Saved image: ${imagePath} from XObject '${imageName}'.`);
 
             // Extract width information from XObject if available
             const width = xobj.width || xobj.Width;
@@ -516,7 +474,7 @@ async function processPages(
             });
           } else {
             logger.warn(
-              `❌ Could not extract image data from XObject '${imageName}' on page ${p}.`
+              `❌ Could not extract image data from XObject '${imageName}' on page ${p}.`,
             );
             pageContent.push({
               type: "image",
@@ -541,7 +499,7 @@ async function processPages(
           // Debug output for page 1
           if (p === 1) {
             logger.verbose(
-              `Page ${p}: setTextMatrix args=${JSON.stringify(args)}, textMatrix=${JSON.stringify(textMatrix)}, Y=${currentTextY}, lastY=${lastTextY}, diff=${Math.abs(currentTextY - lastTextY)}`
+              `Page ${p}: setTextMatrix args=${JSON.stringify(args)}, textMatrix=${JSON.stringify(textMatrix)}, Y=${currentTextY}, lastY=${lastTextY}, diff=${Math.abs(currentTextY - lastTextY)}`,
             );
           }
 
@@ -553,13 +511,10 @@ async function processPages(
           // - Large movements (>25 points) are likely line breaks
           // - Medium movements (>12 points) with some text are likely line breaks
           // - Small movements (<12 points) are likely styled text positioning
-          if (
-            hasTextBeenPlaced &&
-            (yDiff > 25 || (yDiff > 12 && hasMinimalText))
-          ) {
+          if (hasTextBeenPlaced && (yDiff > 25 || (yDiff > 12 && hasMinimalText))) {
             // Flush accumulated text as a separate text block
             logger.verbose(
-              `Page ${p}: Line break detected - Y changed from ${lastTextY} to ${currentTextY} (diff: ${yDiff}), text length: ${textAccumulator.trim().length}`
+              `Page ${p}: Line break detected - Y changed from ${lastTextY} to ${currentTextY} (diff: ${yDiff}), text length: ${textAccumulator.trim().length}`,
             );
             flushText();
           } else if (
@@ -580,7 +535,7 @@ async function processPages(
           const [, ty] = args;
           if (p === 1) {
             logger.verbose(
-              `Page ${p}: moveText args=${JSON.stringify(args)}, dy=${ty}, textLength=${textAccumulator.trim().length}`
+              `Page ${p}: moveText args=${JSON.stringify(args)}, dy=${ty}, textLength=${textAccumulator.trim().length}`,
             );
           }
           // Use balanced thresholds for moveText operations:
@@ -591,12 +546,9 @@ async function processPages(
           const absMovement = Math.abs(ty);
           const hasEnoughText = textAccumulator.trim().length > 15;
 
-          if (
-            ty !== 0 &&
-            (absMovement > 25 || (absMovement > 12 && hasEnoughText))
-          ) {
+          if (ty !== 0 && (absMovement > 25 || (absMovement > 12 && hasEnoughText))) {
             logger.verbose(
-              `Page ${p}: Text move line break - dy=${ty}, flushing text (length: ${textAccumulator.trim().length})`
+              `Page ${p}: Text move line break - dy=${ty}, flushing text (length: ${textAccumulator.trim().length})`,
             );
             flushText();
           } else if (
@@ -613,9 +565,7 @@ async function processPages(
     }
 
     // HYBRID APPROACH: Use getTextContent() for text with operator list for line breaks
-    logger.verbose(
-      `Page ${p}: Using hybrid approach - getTextContent() + operator positioning`
-    );
+    logger.verbose(`Page ${p}: Using hybrid approach - getTextContent() + operator positioning`);
 
     // Step 1: Get all text content with positioning information
     const textContent = await page.getTextContent();
@@ -642,7 +592,7 @@ async function processPages(
           // Detect significant line breaks (using same logic as original)
           if (yDiff > 25 || yDiff > 12) {
             logger.verbose(
-              `Page ${p}: Line break Y position detected: ${currentTextY} (diff: ${yDiff} from ${lastTextY})`
+              `Page ${p}: Line break Y position detected: ${currentTextY} (diff: ${yDiff} from ${lastTextY})`,
             );
             lineBreakYPositions.push(currentTextY);
           }
@@ -654,19 +604,40 @@ async function processPages(
     }
 
     // Step 3: Group text items by Y position, using line break positions as boundaries
+    // Joins items within a line using X-position gaps to determine word boundaries.
+    // This avoids inserting spaces between adjacent glyphs (e.g. Telugu complex script).
     if (textItems.length > 0) {
-      const textLines = [];
-      let currentLine = [];
+      type LineItem = { str: string; x: number; width: number };
+      const textLines: string[] = [];
+      let currentLineItems: LineItem[] = [];
       let currentLineY: number | null = null;
+
+      const joinLineItems = (items: LineItem[]): string => {
+        if (items.length === 0) return "";
+        if (items.length === 1) return items[0].str;
+        let result = items[0].str;
+        let prevEndX = items[0].x + items[0].width;
+        for (let i = 1; i < items.length; i++) {
+          const item = items[i];
+          // Gap between end of previous item and start of current item.
+          // A gap > 1 pt indicates a word boundary; ≤ 1 pt means adjacent glyphs.
+          const gap = item.x - prevEndX;
+          result += gap > 1 ? " " + item.str : item.str;
+          prevEndX = item.x + item.width;
+        }
+        return result.trim();
+      };
 
       for (const item of textItems) {
         if ("str" in item && "transform" in item) {
           const itemY = item.transform[5];
+          const itemX = item.transform[4];
+          const itemWidth = "width" in item ? (item as any).width : 0;
 
           // Check if this item is at a significantly different Y position (new line)
           if (currentLineY === null) {
             currentLineY = itemY;
-            currentLine.push(item.str);
+            currentLineItems.push({ str: item.str, x: itemX, width: itemWidth });
           } else {
             const yDiff = Math.abs(itemY - currentLineY);
 
@@ -674,35 +645,32 @@ async function processPages(
             const crossesLineBreak =
               currentLineY !== null &&
               lineBreakYPositions.some(
-                (breakY) =>
-                  Math.abs(breakY - itemY) < Math.abs(breakY - currentLineY!)
+                (breakY) => Math.abs(breakY - itemY) < Math.abs(breakY - currentLineY!),
               );
 
             if (yDiff > 12 || crossesLineBreak) {
               // Finish current line and start new one
-              if (currentLine.length > 0) {
-                textLines.push(currentLine.join(" ").trim());
-                currentLine = [];
+              if (currentLineItems.length > 0) {
+                textLines.push(joinLineItems(currentLineItems));
+                currentLineItems = [];
               }
               currentLineY = itemY;
             }
 
-            currentLine.push(item.str);
+            currentLineItems.push({ str: item.str, x: itemX, width: itemWidth });
           }
         }
       }
 
       // Add remaining text
-      if (currentLine.length > 0) {
-        textLines.push(currentLine.join(" ").trim());
+      if (currentLineItems.length > 0) {
+        textLines.push(joinLineItems(currentLineItems));
       }
 
       // Add each line as a separate text block
       textLines.forEach((line, index) => {
         if (line) {
-          logger.verbose(
-            `Page ${p}: Text line ${index + 1}: ${line.substring(0, 50)}...`
-          );
+          logger.verbose(`Page ${p}: Text line ${index + 1}: ${line.substring(0, 50)}...`);
           pageContent.push({
             type: "text",
             content: line,

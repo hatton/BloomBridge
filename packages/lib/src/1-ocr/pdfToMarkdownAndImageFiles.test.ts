@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+/// <reference types="node" />
+import { describe, it, expect, beforeEach, afterEach, vi } from "vite-plus/test";
 import { pdfToMarkdownAndImageFiles } from "./pdfToMarkdownAndImageFiles-Mistral";
 import { LogEntry } from "../logger";
 import fs from "fs";
@@ -6,36 +7,41 @@ import path from "path";
 import os from "os";
 
 // Mock the Mistral client
+// Note: mockImplementation must use a regular function (not arrow function) because
+// vite-plus/test uses Reflect.construct() when the mock is called with `new`, and
+// arrow functions cannot be used as constructors.
 vi.mock("@mistralai/mistralai", () => ({
-  Mistral: vi.fn().mockImplementation(() => ({
-    ocr: {
-      process: vi.fn().mockResolvedValue({
-        pages: [
-          {
-            index: 0,
-            markdown:
-              "# Document from /testme.pdf\n\nSample content with an image:\n\n![image1](image1)",
-            images: [
-              {
-                id: "image1.png",
-                topLeftX: 100,
-                topLeftY: 50,
-                bottomRightX: 300,
-                bottomRightY: 150,
-                imageBase64: "cHJldGVuZCBpbWFnZSBjb250ZW50", // base64 for "pretend image content"
-                imageAnnotation: "Sample image",
+  Mistral: vi.fn().mockImplementation(function () {
+    return {
+      ocr: {
+        process: vi.fn().mockResolvedValue({
+          pages: [
+            {
+              index: 0,
+              markdown:
+                "# Document from /testme.pdf\n\nSample content with an image:\n\n![image1](image1)",
+              images: [
+                {
+                  id: "image1.png",
+                  topLeftX: 100,
+                  topLeftY: 50,
+                  bottomRightX: 300,
+                  bottomRightY: 150,
+                  imageBase64: "cHJldGVuZCBpbWFnZSBjb250ZW50",
+                  imageAnnotation: "Sample image",
+                },
+              ],
+              dimensions: {
+                dpi: 72,
+                height: 792,
+                width: 612,
               },
-            ],
-            dimensions: {
-              dpi: 72,
-              height: 792,
-              width: 612,
             },
-          },
-        ],
-      }),
-    },
-  })),
+          ],
+        }),
+      },
+    };
+  }),
 }));
 
 describe("pdfToMarkdownAndImageFiles", () => {
@@ -48,7 +54,7 @@ describe("pdfToMarkdownAndImageFiles", () => {
     // Create a mock PDF file for testing
     const testPdfPath = path.join(tempDir, "testme.pdf");
     // Create a minimal PDF content (just enough to pass file existence check)
-    fs.writeFileSync(testPdfPath, Buffer.from("Mock PDF content for testing"));
+    fs.writeFileSync(testPdfPath, "Mock PDF content for testing");
   });
 
   afterEach(() => {
@@ -61,20 +67,13 @@ describe("pdfToMarkdownAndImageFiles", () => {
     const logs: LogEntry[] = [];
 
     await expect(
-      pdfToMarkdownAndImageFiles(
-        path.join(tempDir, "testme.pdf"),
-        tempDir,
-        "",
-        (log) => logs.push(log)
-      )
+      pdfToMarkdownAndImageFiles(path.join(tempDir, "testme.pdf"), tempDir, "", (log) =>
+        logs.push(log),
+      ),
     ).rejects.toThrow("MistralAI API key is required");
 
     expect(
-      logs.some(
-        (log) =>
-          log.level === "error" &&
-          log.message === "MistralAI API key is required"
-      )
+      logs.some((log) => log.level === "error" && log.message === "MistralAI API key is required"),
     ).toBe(true);
   });
   it("should log conversion process", async () => {
@@ -83,23 +82,22 @@ describe("pdfToMarkdownAndImageFiles", () => {
       path.join(tempDir, "testme.pdf"),
       tempDir,
       "valid-key",
-      (log) => logs.push(log)
+      (log) => logs.push(log),
     );
 
     expect(
       logs.some(
         (log) =>
-          log.level === "info" &&
-          log.message.includes("Starting PDF to markdown conversion")
-      )
+          log.level === "info" && log.message.includes("Starting PDF to markdown conversion"),
+      ),
     ).toBe(true);
     expect(logs.some((log) => log.level === "verbose")).toBe(true);
     expect(
       logs.some(
         (log) =>
           log.level === "info" &&
-          log.message === "PDF to markdown conversion completed successfully"
-      )
+          log.message === "PDF to markdown conversion completed successfully",
+      ),
     ).toBe(true);
     expect(result).toContain("# Document from /testme.pdf");
   });
@@ -109,7 +107,7 @@ describe("pdfToMarkdownAndImageFiles", () => {
       path.join(tempDir, "testme.pdf"),
       tempDir,
       "valid-key",
-      (log) => logs.push(log)
+      (log) => logs.push(log),
     );
 
     // Verify that the image file was created in the temp directory
@@ -128,7 +126,7 @@ describe("pdfToMarkdownAndImageFiles", () => {
       path.join(tempDir, "testme.pdf"),
       tempDir,
       "test-api-key",
-      (log) => logs.push(log)
+      (log) => logs.push(log),
     );
 
     // Verify Mistral client was created with the API key
@@ -189,20 +187,19 @@ describe("pdfToMarkdownAndImageFiles", () => {
 
     // Reset and create a new mock for this specific test
     vi.clearAllMocks();
-    vi.mocked(Mistral).mockImplementation(
-      () =>
-        ({
-          ocr: {
-            process: vi.fn().mockResolvedValue(mockMultiPageResponse),
-          },
-        }) as any
-    );
+    vi.mocked(Mistral).mockImplementation(function () {
+      return {
+        ocr: {
+          process: vi.fn().mockResolvedValue(mockMultiPageResponse),
+        },
+      } as any;
+    });
 
     const result = await pdfToMarkdownAndImageFiles(
       path.join(tempDir, "testme.pdf"),
       tempDir,
       "valid-key",
-      (log) => logs.push(log)
+      (log) => logs.push(log),
     );
 
     // Verify the result contains content from both pages

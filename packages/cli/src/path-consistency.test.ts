@@ -1,13 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+/// <reference types="node" />
+import { describe, it, expect, beforeEach, afterEach } from "vite-plus/test";
 import * as fs from "fs/promises";
 import * as path from "path";
+import { fileURLToPath } from "node:url";
 import { processConversion, Arguments, Artifact } from "./process";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 describe("Path consistency between PDF and non-PDF inputs", () => {
-  const testInputDir = path.resolve("../../test-inputs");
-  const testCollectionDir = path.resolve(
-    "../../test-outputs/path-consistency-test"
-  );
+  const testInputDir = path.resolve(__dirname, "../../../test-inputs");
+  const testCollectionDir = path.resolve(__dirname, "../../../test-outputs/path-consistency-test");
 
   beforeEach(async () => {
     // Create test collection directory
@@ -31,10 +34,7 @@ This is test content.
 Page 2 content.
 `;
 
-    await fs.writeFile(
-      path.join(testInputDir, "children-come.raw-llm.md"),
-      testMarkdownContent
-    );
+    await fs.writeFile(path.join(testInputDir, "children-come.raw-llm.md"), testMarkdownContent);
   });
 
   afterEach(async () => {
@@ -42,7 +42,7 @@ Page 2 content.
     try {
       await fs.rm(testCollectionDir, { recursive: true, force: true });
       await fs.unlink(path.join(testInputDir, "children-come.raw-llm.md"));
-    } catch (error) {
+    } catch {
       // Ignore cleanup errors
     }
   });
@@ -140,14 +140,11 @@ Page 2 content.
     // Create a .bloomCollection file
     await fs.writeFile(
       path.join(fakeCollectionDir, "fake-collection.bloomCollection"),
-      "fake collection content"
+      "fake collection content",
     );
 
     // Create the input file in the existing book directory
-    const inputFilePath = path.join(
-      existingBookDir,
-      "children-come.raw-llm.md"
-    );
+    const inputFilePath = path.join(existingBookDir, "children-come.raw-llm.md");
     await fs.writeFile(
       inputFilePath,
       `---
@@ -159,7 +156,7 @@ l1: en
 ---
 
 <!-- text lang="en" -->
-This is test content.`
+This is test content.`,
     );
 
     const baseArgs: Omit<Arguments, "input"> = {
