@@ -6,10 +6,7 @@ export {
 export { pdfToMarkdownAndImageFiles as pdfToMarkdownWithOpenRouter } from "./1-ocr/unused-pdfToMarkdownAndImageFiles-OpenRouter";
 export { pdfToMarkdown } from "./1-ocr/pdfToMarkdown";
 export { pdfToMarkdownWithUnpdf } from "./1-ocr/pdfToMarkdownWithUnpdf";
-export {
-  extractImagesWithPdfImages,
-  extractAndSaveImagesWithPdfImages,
-} from "./1-ocr/pdfToImages";
+export { extractImagesWithPdfImages, extractAndSaveImagesWithPdfImages } from "./1-ocr/pdfToImages";
 export type { PdfImage } from "./1-ocr/pdfToImages";
 export { llmMarkdown } from "./2-llm/llmMarkdown";
 export { attemptCleanup } from "./2-llm/post-llm-cleanup";
@@ -20,6 +17,11 @@ export { BloomMarkdown as Parser } from "./bloom-markdown/parseMarkdown";
 export { BloomMetadataParser } from "./3-add-bloom-plan/bloomMetadata";
 
 export { HtmlGenerator } from "./4-generate-html/html-generator";
+export { buildBookMetaData, writeMetaJson } from "./4-generate-html/metaJson";
+export type { BookMetaData } from "./4-generate-html/metaJson";
+
+export { notifyBloomOfBook } from "./5-notify-bloom/notifyBloom";
+export type { NotifyBloomResult } from "./5-notify-bloom/notifyBloom";
 export type {
   Book,
   Page as PageContent,

@@ -11,6 +11,8 @@ import {
   pdfToMarkdown,
   extractImagesWithPdfImages,
   extractAndSaveImagesWithPdfImages,
+  writeMetaJson,
+  notifyBloomOfBook,
 } from "@pdf-to-bloom/lib"; // Assuming these functions are async and return/handle as described
 import {
   createLogCallback,
@@ -84,11 +86,7 @@ const artifactNames = {
 /**
  * Extracts images from a PDF using the specified method
  */
-async function extractImages(
-  pdfPath: string,
-  outputDir: string,
-  method: string
-): Promise<void> {
+async function extractImages(pdfPath: string, outputDir: string, method: string): Promise<void> {
   if (method === "poppler") {
     logger.info("Using Poppler pdfimages for image extraction");
     const images = await extractImagesWithPdfImages(pdfPath, outputDir);
@@ -96,9 +94,7 @@ async function extractImages(
     if (method !== "pdfjs") {
       logger.warn(`Unknown imager method '${method}', defaulting to 'poppler'`);
     }
-    logger.info(
-      "Using Poppler pdfimages for image extraction (PDF.js method removed)"
-    );
+    logger.info("Using Poppler pdfimages for image extraction (PDF.js method removed)");
     await extractAndSaveImagesWithPdfImages(pdfPath, outputDir);
   }
 }
@@ -111,7 +107,7 @@ export async function processConversion(inputPath: string, options: Arguments) {
 
   try {
     logger.info(
-      `Starting conversion from "${artifactNames[plan.inputArtifact]}" to "${artifactNames[plan.targetArtifact]}"`
+      `Starting conversion from "${artifactNames[plan.inputArtifact]}" to "${artifactNames[plan.targetArtifact]}"`,
     );
 
     let latestArtifact = plan.inputArtifact; // Start with the input type
@@ -119,10 +115,7 @@ export async function processConversion(inputPath: string, options: Arguments) {
     // ------------------------------------------------------------------------------
     // Step 0.5: Extract Images from PDF (if target is Images)
     // ------------------------------------------------------------------------------
-    if (
-      latestArtifact === Artifact.PDF &&
-      plan.targetArtifact === Artifact.Images
-    ) {
+    if (latestArtifact === Artifact.PDF && plan.targetArtifact === Artifact.Images) {
       logger.info(`-> Extracting images from PDF...`);
 
       await extractImages(plan.pdfPath!, plan.bookFolderPath!, plan.imager);
@@ -145,7 +138,7 @@ export async function processConversion(inputPath: string, options: Arguments) {
         markdownContent = await pdfToMarkdownWithUnpdf(
           plan.pdfPath!,
           plan.bookFolderPath!,
-          logCallback
+          logCallback,
         );
       } else if (plan.ocrMethod === "mistral") {
         logger.info(`Using Mistral AI for PDF processing`);
@@ -155,7 +148,7 @@ export async function processConversion(inputPath: string, options: Arguments) {
           plan.pdfPath!,
           plan.bookFolderPath!,
           plan.mistralKey!,
-          logCallback
+          logCallback,
         );
       } else {
         // Read custom prompt if provided
@@ -165,9 +158,7 @@ export async function processConversion(inputPath: string, options: Arguments) {
             customPrompt = await fs.readFile(plan.promptPath, "utf-8");
             logger.info(`Using custom prompt from: ${plan.promptPath} for OCR`);
           } catch (error) {
-            logger.error(
-              `Failed to read custom prompt file: ${plan.promptPath}`
-            );
+            logger.error(`Failed to read custom prompt file: ${plan.promptPath}`);
             throw error;
           }
         }
@@ -177,7 +168,7 @@ export async function processConversion(inputPath: string, options: Arguments) {
           plan.openrouterKey!,
           plan.ocrMethod,
           logCallback,
-          customPrompt
+          customPrompt,
         );
         // After writing markdown, extract images from the PDF to match markdown references
         await extractImages(plan.pdfPath!, plan.bookFolderPath!, plan.imager);
@@ -196,23 +187,19 @@ export async function processConversion(inputPath: string, options: Arguments) {
     // ------------------------------------------------------------------------------
     if (latestArtifact === Artifact.MarkdownFromOCR) {
       logger.info(`-> Giving Markdown to LLM...`);
-      const markdownContentToEnrich = await fs.readFile(
-        plan.markdownFromOCRPath!,
-        "utf-8"
-      );
+      const markdownContentToEnrich = await fs.readFile(plan.markdownFromOCRPath!, "utf-8");
       // For markdown enrichment, if the input is from a Bloom collection, try to get language info from collection settings
-      const inputFolder =
-        plan.collectionFolderPath || path.dirname(plan.bookFolderPath!);
+      const inputFolder = plan.collectionFolderPath || path.dirname(plan.bookFolderPath!);
       const langs = await readBloomCollectionSettingsIfFound(inputFolder);
       if (langs) {
         const formatLang = (lang?: { tag: string; name: string }) =>
           lang ? `${lang.name} (${lang.tag})` : "undefined";
         logger.info(
-          `Supplying info from Bloom Collection settings: L1: ${formatLang(langs.l1)}, L2: ${formatLang(langs.l2)}, L3: ${formatLang(langs.l3)}`
+          `Supplying info from Bloom Collection settings: L1: ${formatLang(langs.l1)}, L2: ${formatLang(langs.l2)}, L3: ${formatLang(langs.l3)}`,
         );
       } else {
         logger.warn(
-          `No Bloom Collection settings found in ${inputFolder} or parent directories, so LLM may not use the correct language codes.`
+          `No Bloom Collection settings found in ${inputFolder} or parent directories, so LLM may not use the correct language codes.`,
         );
       }
 
@@ -224,63 +211,44 @@ export async function processConversion(inputPath: string, options: Arguments) {
           logger.info(`Using custom prompt from: ${plan.promptPath}`);
         } catch (error) {
           logger.error(`Failed to read custom prompt file: ${error}`);
-          throw new Error(
-            `Failed to read custom prompt file: ${plan.promptPath}`
-          );
+          throw new Error(`Failed to read custom prompt file: ${plan.promptPath}`);
         }
       }
 
-      const llmResult = await llmMarkdown(
-        markdownContentToEnrich,
-        plan.openrouterKey!,
-        {
-          logCallback,
-          l1: langs?.l1,
-          l2: langs?.l2,
-          l3: langs?.l3,
-          overridePrompt: customPrompt,
-          overrideModel: plan.modelName,
-        }
-      );
-      logger.info(
-        `Writing llm-tagged markdown to: ${plan.markdownFromLLMPath}`
-      );
+      const llmResult = await llmMarkdown(markdownContentToEnrich, plan.openrouterKey!, {
+        logCallback,
+        l1: langs?.l1,
+        l2: langs?.l2,
+        l3: langs?.l3,
+        overridePrompt: customPrompt,
+        overrideModel: plan.modelName,
+      });
+      logger.info(`Writing llm-tagged markdown to: ${plan.markdownFromLLMPath}`);
 
       // Check if LLM processing failed
       if (llmResult.error) {
         // Save the invalid markdown for inspection
-        await fs.writeFile(
-          plan.markdownFromLLMPath!,
-          llmResult.markdownResultFromLLM
-        );
+        await fs.writeFile(plan.markdownFromLLMPath!, llmResult.markdownResultFromLLM);
         logger.error(`LLM processing failed: ${llmResult.error}`);
         logger.info(`Invalid markdown saved to: ${plan.markdownFromLLMPath!}`);
         throw new Error(
-          `LLM processing failed: ${llmResult.error}. Check the saved markdown at "${plan.markdownFromLLMPath!}" for details.`
+          `LLM processing failed: ${llmResult.error}. Check the saved markdown at "${plan.markdownFromLLMPath!}" for details.`,
         );
       }
 
-      await fs.writeFile(
-        plan.markdownFromLLMPath!,
-        llmResult.markdownResultFromLLM
-      );
-      logger.info(
-        `Writing cleaned up markdown to: ${plan.markdownCleanedAfterLLMPath}`
-      );
-      await fs.writeFile(
-        plan.markdownCleanedAfterLLMPath!,
-        llmResult.cleanedUpMarkdown
-      );
+      await fs.writeFile(plan.markdownFromLLMPath!, llmResult.markdownResultFromLLM);
+      logger.info(`Writing cleaned up markdown to: ${plan.markdownCleanedAfterLLMPath}`);
+      await fs.writeFile(plan.markdownCleanedAfterLLMPath!, llmResult.cleanedUpMarkdown);
 
       if (!llmResult.valid) {
         throw new Error(
-          `Enrichment process returned invalid content. This can be a result of the mode/prompt. You may be able to see errors in the file "${plan.markdownCleanedAfterLLMPath!}" for details.`
+          `Enrichment process returned invalid content. This can be a result of the mode/prompt. You may be able to see errors in the file "${plan.markdownCleanedAfterLLMPath!}" for details.`,
         );
       }
 
       latestArtifact = Artifact.MarkdownFromLLMCleaned;
       console.log(
-        `latestArtifact is now MarkdownFromLLM. target is ${artifactNames[plan.targetArtifact]}`
+        `latestArtifact is now MarkdownFromLLM. target is ${artifactNames[plan.targetArtifact]}`,
       );
       if (plan.targetArtifact === Artifact.MarkdownFromLLMCleaned) {
         return; // If Markdown was the final target, we're done here
@@ -294,21 +262,16 @@ export async function processConversion(inputPath: string, options: Arguments) {
       logger.info(`-> Processing raw LLM markdown...`);
 
       // Read the raw LLM output
-      const rawLLMContent = await fs.readFile(
-        plan.markdownFromLLMPath!,
-        "utf-8"
-      );
+      const rawLLMContent = await fs.readFile(plan.markdownFromLLMPath!, "utf-8");
 
       // For now, just pass through the content as-is
       // Any cleaning should be handled by the existing post-llm-cleanup.ts logic
-      logger.info(
-        `Writing raw LLM content to cleaned path: ${plan.markdownCleanedAfterLLMPath}`
-      );
+      logger.info(`Writing raw LLM content to cleaned path: ${plan.markdownCleanedAfterLLMPath}`);
       await fs.writeFile(plan.markdownCleanedAfterLLMPath!, rawLLMContent);
 
       latestArtifact = Artifact.MarkdownFromLLMCleaned;
       console.log(
-        `latestArtifact is now MarkdownFromLLMCleaned. target is ${artifactNames[plan.targetArtifact]}`
+        `latestArtifact is now MarkdownFromLLMCleaned. target is ${artifactNames[plan.targetArtifact]}`,
       );
       if (plan.targetArtifact === Artifact.MarkdownFromLLMCleaned) {
         return; // If Markdown was the final target, we're done here
@@ -324,14 +287,9 @@ export async function processConversion(inputPath: string, options: Arguments) {
       // then it is easier for a human to inspect the plan. Later we're going to HTML and by then
       // it's really hard to wade through what was done.
 
-      const input = await fs.readFile(
-        plan.markdownCleanedAfterLLMPath!,
-        "utf-8"
-      );
+      const input = await fs.readFile(plan.markdownCleanedAfterLLMPath!, "utf-8");
       const finalMarkdown = addBloomPlanToMarkdown(input);
-      logger.info(
-        `Writing ready-for-bloom markdown to: ${plan.markdownForBloomPath!}`
-      );
+      logger.info(`Writing ready-for-bloom markdown to: ${plan.markdownForBloomPath!}`);
 
       await fs.writeFile(plan.markdownForBloomPath!, finalMarkdown);
 
@@ -346,26 +304,27 @@ export async function processConversion(inputPath: string, options: Arguments) {
     // ------------------------------------------------------------------------------
     if (latestArtifact === Artifact.MarkdownReadyForBloom) {
       logger.info(`-> Converting Markdown to Bloom HTML...`);
-      const taggedMarkdownContent = await fs.readFile(
-        plan.markdownForBloomPath!,
-        "utf-8"
-      );
+      const taggedMarkdownContent = await fs.readFile(plan.markdownForBloomPath!, "utf-8");
 
       const book = new Parser().parseMarkdown(taggedMarkdownContent);
 
-      const bloomHtmlContent = await HtmlGenerator.generateHtmlDocument(
-        book,
-        logCallback
-      );
+      const bloomHtmlContent = await HtmlGenerator.generateHtmlDocument(book, logCallback);
 
       // Ensure the output directory exists
       await fs.mkdir(plan.bookFolderPath!, { recursive: true });
-      await fs.writeFile(
-        path.join(plan.bookFolderPath!, "index.html"),
-        bloomHtmlContent
-      );
+      await fs.writeFile(path.join(plan.bookFolderPath!, "index.html"), bloomHtmlContent);
+
+      // Write meta.json (creating a new bookInstanceId, or preserving the
+      // existing one when updating a book already in a Bloom collection). The id
+      // is what lets a running Bloom add/refresh the right book.
+      await writeMetaJson(plan.bookFolderPath!, book);
+
       logger.info(`Bloom book should be at: ${plan.bookFolderPath}`);
       logger.info("✅ Conversion to Bloom HTML completed successfully!");
+
+      // Final step: tell a running Bloom (if any) to add or refresh this book in
+      // its collection. This is best-effort and never fails the conversion.
+      await notifyBloomOfBook(plan.bookFolderPath!);
       return;
     }
   } catch (error: any) {
@@ -386,16 +345,13 @@ export async function processConversion(inputPath: string, options: Arguments) {
   }
 }
 
-async function makeThePlan(
-  inputPath: string,
-  cliArguments: Arguments
-): Promise<Plan> {
+async function makeThePlan(inputPath: string, cliArguments: Arguments): Promise<Plan> {
   const fullInputPath = path.resolve(inputPath);
 
   // Validate that collection and output are not both specified
   if (cliArguments.collection && cliArguments.output) {
     throw new Error(
-      "Cannot specify both --collection and --output options. Use --collection for better language detection, or --output for custom directory placement."
+      "Cannot specify both --collection and --output options. Use --collection for better language detection, or --output for custom directory placement.",
     );
   }
 
@@ -431,7 +387,7 @@ async function makeThePlan(
       break;
     default:
       throw new Error(
-        `Unsupported input file type: ${ext}. Supported types: .pdf, .md, .ocr.md, .raw-llm.md, .llm.md, .bloom.md`
+        `Unsupported input file type: ${ext}. Supported types: .pdf, .md, .ocr.md, .raw-llm.md, .llm.md, .bloom.md`,
       );
   }
 
@@ -443,14 +399,10 @@ async function makeThePlan(
 
   const { mistralKey, openrouterKey } = getApiKeys(cliArguments);
 
-  if (
-    inputType === Artifact.PDF &&
-    cliArguments.ocrMethod === "mistral" &&
-    !mistralKey
-  ) {
+  if (inputType === Artifact.PDF && cliArguments.ocrMethod === "mistral" && !mistralKey) {
     // we are going to have to do OCR, need the key
     throw new Error(
-      "Mistral API key is required for PDF to Bloom conversion. Provide --mistral-api-key or set MISTRAL_API_KEY environment variable, or use --ocr unpdf for local processing."
+      "Mistral API key is required for PDF to Bloom conversion. Provide --mistral-api-key or set MISTRAL_API_KEY environment variable, or use --ocr unpdf for local processing.",
     );
   }
 
@@ -462,7 +414,7 @@ async function makeThePlan(
   ) {
     // we are going to use OpenRouter for OCR, need the key
     throw new Error(
-      "OpenRouter API key is required for OpenRouter OCR models. Provide --openrouter-key or set OPENROUTER_KEY environment variable."
+      "OpenRouter API key is required for OpenRouter OCR models. Provide --openrouter-key or set OPENROUTER_KEY environment variable.",
     );
   }
   if (
@@ -472,12 +424,12 @@ async function makeThePlan(
   ) {
     // we are going to have to do call the LLM, need the key
     throw new Error(
-      "OpenRouter API key is required for PDF to Bloom conversion. Provide --openrouter-key or set OPENROUTER_KEY environment variable."
+      "OpenRouter API key is required for PDF to Bloom conversion. Provide --openrouter-key or set OPENROUTER_KEY environment variable.",
     );
   }
 
   logger.verbose(
-    `fullInputPath: ${fullInputPath} cliOutput: ${cliArguments.output} cliCollection: ${cliArguments.collection}`
+    `fullInputPath: ${fullInputPath} cliOutput: ${cliArguments.output} cliCollection: ${cliArguments.collection}`,
   );
 
   // Handle collection path validation and setup
@@ -486,8 +438,9 @@ async function makeThePlan(
 
   if (cliArguments.collection) {
     // Validate and resolve collection path
-    const { collectionFolderPath: resolvedCollectionPath } =
-      await validateAndResolveCollectionPath(cliArguments.collection);
+    const { collectionFolderPath: resolvedCollectionPath } = await validateAndResolveCollectionPath(
+      cliArguments.collection,
+    );
     collectionFolderPath = resolvedCollectionPath;
     baseOutputDir = collectionFolderPath;
     logger.info(`Using Bloom collection folder: ${collectionFolderPath}`);
@@ -497,32 +450,21 @@ async function makeThePlan(
   } else {
     // No collection or output specified - default to recent collection
     try {
-      logger.info(
-        "No --collection or --output specified, using most recent Bloom collection"
-      );
+      logger.info("No --collection or --output specified, using most recent Bloom collection");
       const { collectionFolderPath: resolvedCollectionPath } =
         await validateAndResolveCollectionPath("recent");
       collectionFolderPath = resolvedCollectionPath;
       baseOutputDir = collectionFolderPath;
-      logger.info(
-        `Using most recent Bloom collection folder: ${collectionFolderPath}`
-      );
+      logger.info(`Using most recent Bloom collection folder: ${collectionFolderPath}`);
     } catch (error) {
       // Fall back to the old logic if recent collection lookup fails
-      logger.warn(
-        `Could not find recent collection (${error}), falling back to current directory`
-      );
-      baseOutputDir =
-        inputType === Artifact.PDF
-          ? process.cwd()
-          : path.dirname(fullInputPath);
+      logger.warn(`Could not find recent collection (${error}), falling back to current directory`);
+      baseOutputDir = inputType === Artifact.PDF ? process.cwd() : path.dirname(fullInputPath);
     }
   }
 
   logger.verbose(`Output directory: ${baseOutputDir}`);
-  const baseName = getFileNameWithoutExtension(
-    getFileNameWithoutExtension(fullInputPath)
-  );
+  const baseName = getFileNameWithoutExtension(getFileNameWithoutExtension(fullInputPath));
 
   // Determine the book directory
   let bookDir: string;
