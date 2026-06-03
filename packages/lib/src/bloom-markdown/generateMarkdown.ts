@@ -86,6 +86,10 @@ export function getMarkdownFromBook(book: Book): string {
       if (page.backgroundColor) {
         pageComment += `background-color="${page.backgroundColor}" `;
       }
+      if (page.canvasTextBox) {
+        const b = page.canvasTextBox;
+        pageComment += `canvas-text-box="${b.x},${b.y},${b.w},${b.h}" `;
+      }
       pageComment = pageComment.trimEnd() + " -->"; // Generate page content
       let pageContent = "";
       for (const element of page.elements) {

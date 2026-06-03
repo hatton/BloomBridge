@@ -118,6 +118,30 @@ describe("generateHtmlDocument", () => {
       expect(contentPageMatches).toHaveLength(2);
     });
 
+    it("applies the detected font size/family to both normal-style and Bubble-style", () => {
+      const book = {
+        frontMatterMetadata: {
+          languages: { en: "English" },
+          l1: "en",
+          normalFontSizePt: 18,
+          normalFontFamily: "Andika",
+        },
+        pages: [
+          {
+            type: "content" as const,
+            appearsToBeBilingualPage: false,
+            elements: [{ type: "text" as const, content: { en: "<p>Hi</p>" } }],
+          },
+        ],
+      };
+      const html = HtmlGenerator.generateHtmlDocument(book);
+      expect(html).toContain(".normal-style { font-size: 18pt !important; }");
+      expect(html).toContain(".Bubble-style { font-size: 18pt !important; }");
+      expect(html).toContain(
+        '.Bubble-style[lang="en"] { font-size: 18pt !important; font-family: Andika !important; }',
+      );
+    });
+
     it("uses just the organization as copyright, stripping a 'Published by' prefix", () => {
       const book = {
         frontMatterMetadata: { languages: { en: "English" }, l1: "en" },

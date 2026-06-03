@@ -15,6 +15,7 @@ import {
   prepareCovers,
   addVisionFormatting,
   detectNormalStyle,
+  detectCanvasPages,
   writeMetaJson,
   notifyBloomOfBook,
   type CoverMode,
@@ -236,6 +237,18 @@ export async function processConversion(inputPath: string, options: Arguments) {
         if (normalStyle.fontFamily) attrs += ` normal-font-family="${normalStyle.fontFamily}"`;
         if (normalStyle.pageSize) attrs += ` page-size="${normalStyle.pageSize}"`;
         markdownContent = `<!-- book${attrs} -->\n\n${markdownContent}`;
+      }
+
+      // Detect "canvas" pages (full-page background image with text floating on top)
+      // and record where the text sits as a fraction of the page, baked into the
+      // page comment so HTML generation can reproduce the layout.
+      const canvasPages = await detectCanvasPages(plan.pdfPath!);
+      for (const [pageNum, box] of canvasPages) {
+        const re = new RegExp(`(<!--\\s*page\\s+index=${pageNum}\\b)([^>]*?)(\\s*-->)`);
+        markdownContent = markdownContent.replace(
+          re,
+          `$1$2 canvas-text-box="${box.x},${box.y},${box.w},${box.h}"$3`,
+        );
       }
 
       logger.info(`Writing OCR'd markdown to: ${plan.markdownFromOCRPath}`);

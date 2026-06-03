@@ -42,6 +42,8 @@ export { addVisionFormatting } from "./1-ocr/visionFormatting";
 export type { VisionFormattingOptions } from "./1-ocr/visionFormatting";
 export { detectNormalStyle } from "./1-ocr/detectNormalStyle";
 export type { NormalStyle } from "./1-ocr/detectNormalStyle";
+export { detectCanvasPages } from "./1-ocr/detectCanvasPages";
+export type { TextBoxFraction } from "./1-ocr/detectCanvasPages";
 
 // Export logger utilities for callers to access log messages
 export { logger } from "./logger";

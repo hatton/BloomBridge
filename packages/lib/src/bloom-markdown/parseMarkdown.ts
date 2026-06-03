@@ -324,6 +324,7 @@ export class BloomMarkdown {
       verticalAlign: pageAttributes.verticalAlign,
       horizontalAlign: pageAttributes.horizontalAlign,
       backgroundColor: pageAttributes.backgroundColor,
+      canvasTextBox: pageAttributes.canvasTextBox,
     };
   }
 
@@ -336,6 +337,7 @@ export class BloomMarkdown {
     verticalAlign?: VerticalAlign;
     horizontalAlign?: HorizontalAlign;
     backgroundColor?: string;
+    canvasTextBox?: { x: number; y: number; w: number; h: number };
   } {
     const attributes: {
       type?: string;
@@ -343,6 +345,7 @@ export class BloomMarkdown {
       verticalAlign?: VerticalAlign;
       horizontalAlign?: HorizontalAlign;
       backgroundColor?: string;
+      canvasTextBox?: { x: number; y: number; w: number; h: number };
     } = {};
 
     // Extract type attribute
@@ -382,6 +385,20 @@ export class BloomMarkdown {
     const backgroundMatch = pageComment.match(/background-color=["']?([^"'\s>]+)["']?/);
     if (backgroundMatch) {
       attributes.backgroundColor = backgroundMatch[1];
+    }
+
+    // Canvas text box: four page-fractions "x,y,w,h" marking where a text block
+    // floats over a full-page background image (a Bloom Canvas page).
+    const canvasMatch = pageComment.match(
+      /canvas-text-box=["']([\d.]+),([\d.]+),([\d.]+),([\d.]+)["']/,
+    );
+    if (canvasMatch) {
+      attributes.canvasTextBox = {
+        x: Number(canvasMatch[1]),
+        y: Number(canvasMatch[2]),
+        w: Number(canvasMatch[3]),
+        h: Number(canvasMatch[4]),
+      };
     }
 
     return attributes;

@@ -17,7 +17,7 @@ import {
   type OrigamiItem,
   type TextOrigamiItem,
 } from "./origami.js";
-import { inlineMarkdownToHtml } from "./markdownToHtml.js";
+import { inlineMarkdownToHtml, blockMarkdownToHtml } from "./markdownToHtml.js";
 import { LogEntry, logger } from "../logger";
 
 // A note about bloom-monolingual, bloom-bilingual, and bloom-trilingual
@@ -81,30 +81,32 @@ export class HtmlGenerator {
   }
 
   /**
-   * Emit Bloom's `userModifiedStyles` block defining the "normal" style (the body
-   * text style) from the font size/family detected in the source PDF
-   * (see 1-ocr/detectNormalStyle.ts). Bloom stores body styling here and applies
-   * it to `.normal-style` editables. The font-family is set per-language on the
-   * primary language; size applies to all. Bloom tolerates a family it doesn't
-   * have installed (it falls back), so we emit the detected name regardless.
+   * Emit Bloom's `userModifiedStyles` block defining the body text style from the
+   * font size/family detected in the source PDF (see 1-ocr/detectNormalStyle.ts).
+   * Bloom applies these to editables by style class. We set the same size/family on
+   * both `.normal-style` (ordinary text blocks) and `.Bubble-style` (text floating
+   * on canvas pages) so canvas captions match the body. The font-family is set
+   * per-language on the primary language; size applies to all. Bloom tolerates a
+   * family it doesn't have installed (it falls back), so we emit it regardless.
    */
   private static generateUserModifiedStyles(book: Book): string {
     const size = book.frontMatterMetadata.normalFontSizePt;
     const family = book.frontMatterMetadata.normalFontFamily;
     if (!size && !family) return "";
 
+    const decls = [
+      size ? `font-size: ${size}pt !important;` : "",
+      family ? `font-family: ${escapeHtml(family)} !important;` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
     const rules: string[] = [];
-    if (size) {
-      rules.push(`.normal-style { font-size: ${size}pt !important; }`);
-    }
-    if (size || family) {
-      const decls = [
-        size ? `font-size: ${size}pt !important;` : "",
-        family ? `font-family: ${escapeHtml(family)} !important;` : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      rules.push(`.normal-style[lang="${book.frontMatterMetadata.l1}"] { ${decls} }`);
+    for (const styleName of ["normal-style", "Bubble-style"]) {
+      if (size) {
+        rules.push(`.${styleName} { font-size: ${size}pt !important; }`);
+      }
+      rules.push(`.${styleName}[lang="${book.frontMatterMetadata.l1}"] { ${decls} }`);
     }
 
     return `<style type="text/css" title="userModifiedStyles">
@@ -420,6 +422,77 @@ export class HtmlGenerator {
   }
 
   /**
+   * Emit a Bloom "Canvas" page: a full-page background image with one text block
+   * floating on top, positioned where it sits in the source PDF (page.canvasTextBox,
+   * a fraction of the page). The canvas matches the page aspect ratio so the
+   * full-bleed image fills it with no letterbox, and the text fractions map straight
+   * to px. Mirrors the hand-made reference (data-tool-id="canvas", bloom-combinedPage,
+   * a bloom-backgroundImage canvas-element + a positioned text canvas-element).
+   * Returns null if the page isn't actually image-plus-text (caller falls back).
+   */
+  private static generateCanvasPage(page: Page, metadata: FrontMatterMetadata): string | null {
+    const tb = page.canvasTextBox;
+    if (!tb) return null;
+    const imageEl = page.elements.find((e): e is ImageElement => e.type === "image");
+    const textEl = page.elements.find(
+      (e): e is TextBlockElement =>
+        e.type === "text" &&
+        e.field !== "pageNumber" &&
+        Object.values(e.content).some((v) => v && v.trim() !== ""),
+    );
+    if (!imageEl || !textEl) return null;
+
+    const pageSize = metadata.pageSize || "A5Portrait";
+    const { pageW, pageH, canvasW } = this.pagePx(pageSize);
+    const canvasH = Math.round(canvasW * (pageH / pageW));
+    const tx = Math.round(tb.x * canvasW);
+    const ty = Math.round(tb.y * canvasH);
+    const tw = Math.round(tb.w * canvasW);
+    const th = Math.round(tb.h * canvasH);
+    const posStyle = `left: ${tx}px; top: ${ty}px; width: ${tw}px; height: ${th}px;`;
+
+    const pageId = randomUUID();
+    const bgBubble = this.COVER_DATA_BUBBLE; // level 1
+    const textBubble = this.COVER_DATA_BUBBLE.replace("`level`:1", "`level`:2");
+    const fontPx = metadata.normalFontSizePt
+      ? Math.round((metadata.normalFontSizePt * 96) / 72)
+      : 16;
+    const l1 = metadata.l1;
+    const altBubble = `{\`lang\`:\`${l1}\`,\`style\`:\`${posStyle}\`,\`tails\`:[]}`;
+
+    const editables = Object.keys(textEl.content)
+      .filter((lang) => textEl.content[lang] && textEl.content[lang].trim())
+      .map((lang) => {
+        const html = blockMarkdownToHtml(textEl.content[lang]) || "<p></p>";
+        const visibility =
+          lang === l1 ? " bloom-visibility-code-on bloom-content1 bloom-contentNational1" : "";
+        return `<div class="bloom-editable Bubble-style${visibility}" lang="${lang}" contenteditable="true" data-bubble-alternate="${altBubble}">${html}</div>`;
+      })
+      .join("\n");
+
+    return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang="">
+      <div class="pageLabel" data-i18n="TemplateBooks.PageLabel.Canvas">Canvas</div>
+      <div class="pageDescription"></div>
+      <div class="marginBox">
+        <div class="split-pane-component-inner">
+          <div class="bloom-canvas bloom-has-canvas-element" data-tool-id="canvas" data-imgsizebasedon="${canvasW},${canvasH}" title="">
+            <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${canvasW}px; height: ${canvasH}px; top: 0px; left: 0px;" data-bubble="${bgBubble}">
+              <div class="bloom-imageContainer" data-tool-id="canvas" style="direction: ltr;">
+                <img src="${escapeHtml(imageEl.src)}" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
+              </div>
+            </div>
+            <div class="bloom-canvas-element" style="${posStyle}" data-bubble="${textBubble}">
+              <div class="bloom-translationGroup bloom-leadingElement" data-default-languages="V" style="font-size: ${fontPx}px;">
+                ${editables}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /**
    * The inner canvas markup for a full-bleed cover image. This same markup goes
    * both into the visible cover page's `.marginBox` AND the dataDiv
    * `customOutside*Cover` entry that Bloom reads to (re)generate the xMatter cover.
@@ -491,6 +564,14 @@ export class HtmlGenerator {
         coverImage.src,
         metadata.pageSize || "A5Portrait",
       );
+    }
+
+    // A canvas page: full-page background image with text floating on top, at the
+    // position it had in the source PDF. Falls through to origami if it can't be
+    // built (e.g. no image or no text).
+    if (page.canvasTextBox) {
+      const canvas = this.generateCanvasPage(page, metadata);
+      if (canvas) return canvas;
     }
 
     const origamiItems: OrigamiItem[] = [];

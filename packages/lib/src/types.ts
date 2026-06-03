@@ -73,6 +73,18 @@ export type VerticalAlign = "top" | "center" | "bottom";
 /** Horizontal alignment of the text within the text block. */
 export type HorizontalAlign = "left" | "center" | "right";
 
+/**
+ * Position of a text block over a full-page background image, as a fraction of the
+ * page (0..1, origin top-left). Set by canvas-page detection (1-ocr/detectCanvasPages.ts)
+ * to drive a Bloom "Canvas" page where text floats on top of the image.
+ */
+export interface TextBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface Page {
   appearsToBeBilingualPage?: boolean;
   elements: PageElement[];
@@ -82,6 +94,9 @@ export interface Page {
   verticalAlign?: VerticalAlign;
   horizontalAlign?: HorizontalAlign;
   backgroundColor?: string; // CSS color, e.g. "#fff3e0"
+  // When set, this page is a full-page background image with text floating on top
+  // (a Bloom "Canvas" page); the box is where the text sits over the image.
+  canvasTextBox?: TextBox;
 }
 
 export interface Book {
