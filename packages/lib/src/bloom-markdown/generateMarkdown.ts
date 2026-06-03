@@ -74,7 +74,19 @@ export function getMarkdownFromBook(book: Book): string {
       if (page.appearsToBeBilingualPage) {
         pageComment += `bilingual="true" `;
       }
-      pageComment += `type="${page.type || "content"}" -->`; // Generate page content
+      pageComment += `type="${page.type || "content"}" `;
+      // Layout hints from the vision-formatting step must be re-emitted here or
+      // they are lost on the round-trip through the Book object (stages 3 and 4).
+      if (page.verticalAlign) {
+        pageComment += `vertical-align="${page.verticalAlign}" `;
+      }
+      if (page.horizontalAlign) {
+        pageComment += `horizontal-align="${page.horizontalAlign}" `;
+      }
+      if (page.backgroundColor) {
+        pageComment += `background-color="${page.backgroundColor}" `;
+      }
+      pageComment = pageComment.trimEnd() + " -->"; // Generate page content
       let pageContent = "";
       for (const element of page.elements) {
         if (element.type === "image") {
@@ -105,7 +117,28 @@ export function getMarkdownFromBook(book: Book): string {
     .join("\n\n");
   //    .join("\n\n<!-- page -->\n");
 
-  return `---\n${frontmatter}---\n\n${body}`;
+  // Re-emit the book-level normal-style hint as a comment so it survives the
+  // round-trip through the Book object (parsed back in parseMarkdown).
+  let bookComment = "";
+  if (
+    book.frontMatterMetadata.normalFontSizePt ||
+    book.frontMatterMetadata.normalFontFamily ||
+    book.frontMatterMetadata.pageSize
+  ) {
+    let attrs = "";
+    if (book.frontMatterMetadata.normalFontSizePt) {
+      attrs += ` normal-font-size="${book.frontMatterMetadata.normalFontSizePt}"`;
+    }
+    if (book.frontMatterMetadata.normalFontFamily) {
+      attrs += ` normal-font-family="${book.frontMatterMetadata.normalFontFamily}"`;
+    }
+    if (book.frontMatterMetadata.pageSize) {
+      attrs += ` page-size="${book.frontMatterMetadata.pageSize}"`;
+    }
+    bookComment = `<!-- book${attrs} -->\n\n`;
+  }
+
+  return `---\n${frontmatter}---\n\n${bookComment}${body}`;
 }
 
 /**

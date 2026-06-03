@@ -11,6 +11,10 @@ export interface TextOrigamiItem {
   type: "text";
   content: Record<string, string>;
   translationGroupDefaultLangVariables?: ("*" | "auto" | "V" | "L1" | "N1")[];
+  /** Vertical position of the text within the page (Bloom translationGroup class). */
+  verticalAlign?: "top" | "center" | "bottom";
+  /** Horizontal alignment of the text (applied as text-align on the editables). */
+  horizontalAlign?: "left" | "center" | "right";
 }
 
 export interface ImageOrigamiItem {
@@ -109,10 +113,17 @@ function buildSplitPane(
 function generateTextBlock(
   textBlocks: Record<string, string>,
   translationGroupDefaultLangVariables?: string[],
+  verticalAlign?: "top" | "center" | "bottom",
+  horizontalAlign?: "left" | "center" | "right",
 ): string {
   logger.verbose(`Generating text block with languages: ${JSON.stringify(textBlocks, null, 2)}`);
 
   const bloomEditableDivs: string[] = [];
+
+  // Horizontal alignment is applied as a text-align style on each editable;
+  // CSS inheritance carries it down to the paragraphs inside.
+  const editableStyleAttr =
+    horizontalAlign && horizontalAlign !== "left" ? ` style="text-align: ${horizontalAlign};"` : "";
 
   // iterate over the languages and create a bloom-editable div for each
   for (const lang of Object.keys(textBlocks)) {
@@ -124,7 +135,7 @@ function generateTextBlock(
 
     bloomEditableDivs.push(
       `
-<div class="bloom-editable" lang="${lang}">
+<div class="bloom-editable normal-style" lang="${lang}"${editableStyleAttr}>
   ${html}
 </div>`.trim(),
     );
@@ -134,8 +145,15 @@ function generateTextBlock(
     ? ` data-default-languages="${translationGroupDefaultLangVariables.join(",")}"`
     : "";
 
+  // Vertical positioning of the text within the page uses Bloom's
+  // bloom-vertical-align-* classes on the translationGroup.
+  const groupClasses = ["bloom-translationGroup"];
+  if (verticalAlign) {
+    groupClasses.push(`bloom-vertical-align-${verticalAlign}`);
+  }
+
   return `
-<div class="bloom-translationGroup"${defLangsAttr}>
+<div class="${groupClasses.join(" ")}"${defLangsAttr}>
   ${bloomEditableDivs.join("\n")}
 </div>`.trim();
 }
@@ -164,7 +182,12 @@ function generateImageBlock(src: string | undefined): string {
  */
 function generateItemHtml(item: OrigamiItem): string {
   if (item.type === "text") {
-    return generateTextBlock(item.content, item.translationGroupDefaultLangVariables);
+    return generateTextBlock(
+      item.content,
+      item.translationGroupDefaultLangVariables,
+      item.verticalAlign,
+      item.horizontalAlign,
+    );
   } else if (item.type === "image") {
     return generateImageBlock(item.src);
   }

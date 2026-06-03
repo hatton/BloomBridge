@@ -34,7 +34,14 @@ export type {
   ImageElement,
   ValidationError,
   ConversionStats,
+  VerticalAlign,
+  HorizontalAlign,
 } from "./types";
+
+export { addVisionFormatting } from "./1-ocr/visionFormatting";
+export type { VisionFormattingOptions } from "./1-ocr/visionFormatting";
+export { detectNormalStyle } from "./1-ocr/detectNormalStyle";
+export type { NormalStyle } from "./1-ocr/detectNormalStyle";
 
 // Export logger utilities for callers to access log messages
 export { logger } from "./logger";

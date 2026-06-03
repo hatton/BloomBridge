@@ -68,10 +68,20 @@ export interface TextBlockElement {
 
 export type PageElement = ImageElement | TextBlockElement;
 
+/** Vertical position of the text block within the page, as seen in the source PDF. */
+export type VerticalAlign = "top" | "center" | "bottom";
+/** Horizontal alignment of the text within the text block. */
+export type HorizontalAlign = "left" | "center" | "right";
+
 export interface Page {
   appearsToBeBilingualPage?: boolean;
   elements: PageElement[];
   type: "front-matter" | "back-matter" | "content" | "empty";
+  // Layout hints, optionally detected by the "vision-formatting" step (see
+  // 1-ocr/visionFormatting.ts) and carried through the markdown page comment.
+  verticalAlign?: VerticalAlign;
+  horizontalAlign?: HorizontalAlign;
+  backgroundColor?: string; // CSS color, e.g. "#fff3e0"
 }
 
 export interface Book {

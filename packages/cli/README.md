@@ -114,3 +114,25 @@ For example, to convert PDF to markdown only:
 To extract only images from a PDF:
 
 `pdf-to-bloom mybook.pdf --target=images`
+
+## Vision formatting (optional)
+
+Add `--vision-formatting` to have a vision model look at each rendered page and detect
+its text alignment (vertical: top/center/bottom, horizontal: left/center/right) and
+background color. These are baked into the `.ocr.md` page comments and carried through to
+the Bloom HTML (e.g. `bloom-vertical-align-center`, an inline `text-align`, and a page
+`background-color`). Requires a PDF input and `OPENROUTER_KEY`.
+
+Results are cached in the `.ocr.md`, so re-running later stages does not re-pay for the
+vision calls. To regenerate, re-run starting from the PDF.
+
+```bash
+pdf-to-bloom mybook.pdf --collection recent --vision-formatting
+```
+
+By default the vision pass uses a capable Google Gemini model. Override it independently
+of the `--model` (LLM enrichment) option with `--vision-model`:
+
+```bash
+pdf-to-bloom mybook.pdf --vision-formatting --vision-model "openai/gpt-5.4"
+```

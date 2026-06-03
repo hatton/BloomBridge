@@ -23,7 +23,7 @@ describe("generateBloomHTML", () => {
     const expected = `
       <div class="split-pane-component-inner">
         <div class="bloom-translationGroup">
-          <div class="bloom-editable" lang="en">
+          <div class="bloom-editable normal-style" lang="en">
             <p>Hello</p>
           </div>
         </div>
@@ -50,7 +50,7 @@ describe("generateBloomHTML", () => {
     const expected = `
       <div class="split-pane-component-inner">
         <div class="bloom-translationGroup">
-          <div class="bloom-editable" lang="en">
+          <div class="bloom-editable normal-style" lang="en">
             <p>test</p>
           </div>
         </div>
@@ -88,7 +88,7 @@ describe("generateBloomHTML", () => {
         <div class="split-pane-component position-top">
           <div class="split-pane-component-inner">
             <div class="bloom-translationGroup">
-              <div class="bloom-editable" lang="en">
+              <div class="bloom-editable normal-style" lang="en">
                 <p>test</p>
               </div>
             </div>
@@ -132,7 +132,7 @@ describe("generateBloomHTML", () => {
         <div class="split-pane-component position-right">
           <div class="split-pane-component-inner">
             <div class="bloom-translationGroup">
-              <div class="bloom-editable" lang="en">
+              <div class="bloom-editable normal-style" lang="en">
                 <p>test</p>
               </div>
             </div>
@@ -156,7 +156,7 @@ describe("generateBloomHTML", () => {
         <div class="split-pane-component position-left">
           <div class="split-pane-component-inner">
             <div class="bloom-translationGroup">
-              <div class="bloom-editable" lang="en">
+              <div class="bloom-editable normal-style" lang="en">
                 <p>test</p>
               </div>
             </div>
@@ -181,7 +181,7 @@ describe("generateBloomHTML", () => {
               <div class="split-pane-component position-right">
                 <div class="split-pane-component-inner">
                   <div class="bloom-translationGroup">
-                    <div class="bloom-editable" lang="en">
+                    <div class="bloom-editable normal-style" lang="en">
                       <p>test</p>
                     </div>
                   </div>
@@ -222,7 +222,7 @@ describe("generateBloomHTML", () => {
               <div class="split-pane-component position-top">
                 <div class="split-pane-component-inner">
                   <div class="bloom-translationGroup">
-                    <div class="bloom-editable" lang="en">
+                    <div class="bloom-editable normal-style" lang="en">
                       <p>test</p>
                     </div>
                   </div>
@@ -261,7 +261,7 @@ describe("generateBloomHTML", () => {
         <div class="split-pane-component position-left">
           <div class="split-pane-component-inner">
             <div class="bloom-translationGroup">
-              <div class="bloom-editable" lang="en">
+              <div class="bloom-editable normal-style" lang="en">
                 <p>test</p>
               </div>
             </div>
@@ -289,7 +289,7 @@ describe("generateBloomHTML", () => {
                     <div class="split-pane-component position-left">
                       <div class="split-pane-component-inner">
                         <div class="bloom-translationGroup">
-                          <div class="bloom-editable" lang="en">
+                          <div class="bloom-editable normal-style" lang="en">
                             <p>test</p>
                           </div>
                         </div>
@@ -317,5 +317,42 @@ describe("generateBloomHTML", () => {
     expect(normalizeHTML(generateOrigamiHtml(sequence, Orientation.Landscape))).toBe(
       normalizeHTML(expected),
     );
+  });
+
+  // --- Alignment (vision-formatting) ---
+  it("adds bloom-vertical-align-center to the translationGroup when verticalAlign is center", () => {
+    const sequence: OrigamiItem[] = [
+      { type: "text", content: { en: "Hello" }, verticalAlign: "center" },
+    ];
+    const html = generateOrigamiHtml(sequence);
+    expect(normalizeHTML(html)).toContain(
+      '<div class="bloom-translationGroup bloom-vertical-align-center">',
+    );
+  });
+
+  it("supports top and bottom vertical alignment", () => {
+    const top = generateOrigamiHtml([{ type: "text", content: { en: "x" }, verticalAlign: "top" }]);
+    const bottom = generateOrigamiHtml([
+      { type: "text", content: { en: "x" }, verticalAlign: "bottom" },
+    ]);
+    expect(top).toContain("bloom-vertical-align-top");
+    expect(bottom).toContain("bloom-vertical-align-bottom");
+  });
+
+  it("applies text-align style on the editable for non-left horizontal alignment", () => {
+    const html = generateOrigamiHtml([
+      { type: "text", content: { en: "Hi" }, horizontalAlign: "center" },
+    ]);
+    expect(normalizeHTML(html)).toContain(
+      '<div class="bloom-editable normal-style" lang="en" style="text-align: center;">',
+    );
+  });
+
+  it("omits alignment markup when no alignment is given (left/none)", () => {
+    const html = generateOrigamiHtml([
+      { type: "text", content: { en: "Hi" }, horizontalAlign: "left" },
+    ]);
+    expect(html).not.toContain("text-align");
+    expect(html).not.toContain("bloom-vertical-align");
   });
 });

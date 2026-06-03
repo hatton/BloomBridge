@@ -99,20 +99,55 @@ describe("generateHtmlDocument", () => {
 
       const html = HtmlGenerator.generateHtmlDocument(book);
 
-      // Should contain all page content
-      expect(html).toContain("Title Page");
+      // Content pages are rendered.
       expect(html).toContain("First content page");
       expect(html).toContain("Second content page");
-      expect(html).toContain("Back matter");
       expect(html).toContain("image1.jpg");
 
-      // Should have correct page classes
-      expect(html).toContain('class="bloom-page customPage bloom-frontMatter"');
-      expect(html).toContain('class="bloom-page customPage bloom-backMatter"');
+      // Front-matter and back-matter pages are NOT rendered as pages — their
+      // metadata goes into the dataDiv and Bloom regenerates the xMatter pages.
+      // (The bookTitle still appears, but in the dataDiv, not as a content page.)
+      expect(html).not.toContain("<p>Title Page</p>");
+      expect(html).not.toContain("Back matter");
+      expect(html).not.toContain("bloom-frontMatter");
+      expect(html).not.toContain("bloom-backMatter");
+      expect(html).toContain('data-book="bookTitle"'); // title preserved as metadata
 
-      // Should have multiple content pages without special matter classes
-      const contentPageMatches = html.match(/class="bloom-page customPage"(?! bloom-)/g);
-      expect(contentPageMatches).toHaveLength(2); // Two content pages
+      // Only the two content pages are rendered (now carrying the default page-size class).
+      const contentPageMatches = html.match(/class="bloom-page customPage A5Portrait"/g);
+      expect(contentPageMatches).toHaveLength(2);
+    });
+
+    it("drops a picture on the title page (Bloom does not support title-page images)", () => {
+      const book = {
+        frontMatterMetadata: { languages: { en: "English" }, l1: "en" },
+        pages: [
+          // Content page first (its image becomes the coverImage), mirroring thief
+          // where page 1 is the cover — so the title image isn't used as a fallback cover.
+          {
+            type: "content" as const,
+            appearsToBeBilingualPage: false,
+            elements: [
+              { type: "image" as const, src: "cover-art.png" },
+              { type: "text" as const, content: { en: "<p>Story</p>" } },
+            ],
+          },
+          // Title page with a picture — Bloom can't show a title-page image, so drop it.
+          {
+            type: "front-matter" as const,
+            appearsToBeBilingualPage: false,
+            elements: [
+              { type: "text" as const, field: "bookTitle", content: { en: "My Title" } },
+              { type: "image" as const, src: "title-pic.png" },
+            ],
+          },
+        ],
+      };
+
+      const html = HtmlGenerator.generateHtmlDocument(book);
+      // The title page (front-matter) is not rendered, so its picture is gone entirely.
+      expect(html).not.toContain("title-pic.png");
+      expect(html).toContain("Story");
     });
 
     it("should handle bilingual pages correctly", () => {
@@ -298,7 +333,7 @@ describe("generateHtmlDocument", () => {
       const html = HtmlGenerator.generateHtmlDocument(book);
 
       // Should still generate a page with an empty text block
-      expect(html).toContain('class="bloom-page customPage"');
+      expect(html).toContain('class="bloom-page customPage A5Portrait"');
       expect(html).toContain("marginBox");
     });
   });

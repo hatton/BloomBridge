@@ -8,6 +8,13 @@ export interface FrontMatterMetadata {
   languages: Record<string, string>;
   l1: string; // primary language
   l2?: string; // secondary language
+  // Body text style detected from the source PDF's interior pages (see
+  // 1-ocr/detectNormalStyle.ts). Emitted as Bloom's "normal-style" rule.
+  normalFontSizePt?: number;
+  normalFontFamily?: string;
+  // Bloom page-size class matching the source PDF, e.g. "A4Portrait" (see
+  // 1-ocr/detectNormalStyle.ts). Defaults to A5Portrait when absent.
+  pageSize?: string;
   //coverImage?: string;
   // isbn?: string;
   // license?: string;

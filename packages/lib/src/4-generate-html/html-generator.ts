@@ -68,12 +68,67 @@ export class HtmlGenerator {
     <meta name="Generator" content="PDF-to-Bloom Converter" />
     <meta name="BloomFormatVersion" content="2.1" />
     <title>${escapeHtml(titleRecord![l1Lang])}</title>
+    ${this.generateUserModifiedStyles(book)}
     </head>
     <body>
     ${this.generateBloomDataDiv(book)}
-    ${book.pages.map((page) => this.generatePage(page, book.frontMatterMetadata)).join("\n")}
+    ${book.pages
+      .filter((page) => this.shouldRenderPage(page))
+      .map((page) => this.generatePage(page, book.frontMatterMetadata))
+      .join("\n")}
     </body>
   </html>`;
+  }
+
+  /**
+   * Emit Bloom's `userModifiedStyles` block defining the "normal" style (the body
+   * text style) from the font size/family detected in the source PDF
+   * (see 1-ocr/detectNormalStyle.ts). Bloom stores body styling here and applies
+   * it to `.normal-style` editables. The font-family is set per-language on the
+   * primary language; size applies to all. Bloom tolerates a family it doesn't
+   * have installed (it falls back), so we emit the detected name regardless.
+   */
+  private static generateUserModifiedStyles(book: Book): string {
+    const size = book.frontMatterMetadata.normalFontSizePt;
+    const family = book.frontMatterMetadata.normalFontFamily;
+    if (!size && !family) return "";
+
+    const rules: string[] = [];
+    if (size) {
+      rules.push(`.normal-style { font-size: ${size}pt !important; }`);
+    }
+    if (size || family) {
+      const decls = [
+        size ? `font-size: ${size}pt !important;` : "",
+        family ? `font-family: ${escapeHtml(family)} !important;` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      rules.push(`.normal-style[lang="${book.frontMatterMetadata.l1}"] { ${decls} }`);
+    }
+
+    return `<style type="text/css" title="userModifiedStyles">
+    /*<![CDATA[*/
+    ${rules.join("\n    ")}
+    /*]]>*/
+    </style>`;
+  }
+
+  /**
+   * Front-matter and back-matter pages (title, credits, copyright, etc.) are NOT
+   * rendered as pages: their content has already been collected into the dataDiv
+   * metadata, and Bloom regenerates those xMatter pages from it at runtime
+   * (rendering them here would insert duplicate title/credits pages). The one
+   * exception is a cover page, whose full-bleed custom layout we do emit.
+   */
+  private static shouldRenderPage(page: Page): boolean {
+    const isCover = page.elements.some(
+      (element): element is ImageElement =>
+        element.type === "image" &&
+        (element.src === FRONT_COVER_IMAGE_FILENAME || element.src === BACK_COVER_IMAGE_FILENAME),
+    );
+    if (isCover) return true;
+    return page.type !== "front-matter" && page.type !== "back-matter";
   }
 
   private static generateBloomDataDiv(book: Book): string {
@@ -127,6 +182,32 @@ export class HtmlGenerator {
       );
     } else {
       logger.warn("No cover image found anywhere in the book.");
+    }
+
+    // Full-bleed custom-layout covers: Bloom regenerates the xMatter cover pages
+    // from these dataDiv entries (the obsolete data-book="coverImage" no longer
+    // drives the cover). Emit them whenever a cover page was captured as full-page
+    // art (see 1-ocr/prepareCovers.ts, which injects cover.jpg / back-cover.jpg).
+    const findCoverSrc = (filename: string): string | undefined => {
+      for (const page of book.pages) {
+        const img = page.elements.find(
+          (el): el is ImageElement => el.type === "image" && el.src === filename,
+        );
+        if (img) return img.src;
+      }
+      return undefined;
+    };
+    const frontCoverSrc = findCoverSrc(FRONT_COVER_IMAGE_FILENAME);
+    const backCoverSrc = findCoverSrc(BACK_COVER_IMAGE_FILENAME);
+    if (frontCoverSrc) {
+      elements.push(
+        `      <div data-book="customOutsideFrontCover" lang="*">${this.coverCanvasHtml(frontCoverSrc, true)}</div>`,
+      );
+    }
+    if (backCoverSrc) {
+      elements.push(
+        `      <div data-book="customOutsideBackCover" lang="*">${this.coverCanvasHtml(backCoverSrc, false)}</div>`,
+      );
     }
 
     // hack for now
@@ -294,34 +375,57 @@ export class HtmlGenerator {
    * `bloom-customLayout` — preserving our full-page art. (See Bloom's
    * BookData.cs / XMatterHelper.cs custom-layout round-trip.)
    */
-  private static generateFullPageCoverPage(kind: "front" | "back", imageSrc: string): string {
+  // Bloom's data-bubble marker for a background-image canvas element.
+  private static readonly COVER_DATA_BUBBLE =
+    "{`version`:`1.0`,`style`:`none`,`tails`:[],`level`:1,`backgroundColors`:[`transparent`],`shadowOffset`:0}";
+
+  /**
+   * The inner canvas markup for a full-bleed cover image. This same markup goes
+   * both into the visible cover page's `.marginBox` AND the dataDiv
+   * `customOutside*Cover` entry that Bloom reads to (re)generate the xMatter cover.
+   * It mirrors what Bloom itself writes so the custom layout round-trips on import.
+   *
+   * `data-imgsizebasedon` and the px sizing are for A5Portrait; Bloom recomputes
+   * them when the book is edited. `bloom-imageObjectFit-cover` on the img makes the
+   * art fill the page (cropping bleed) rather than letterboxing.
+   */
+  private static coverCanvasHtml(imageSrc: string, isFront: boolean): string {
+    // The front cover image doubles as the book's coverImage, but that data-book
+    // binding is INACTIVE — the custom layout drives the cover now (a plain
+    // data-book="coverImage" produces Bloom's small positioned default cover).
+    const inactiveCoverImage = isFront ? ' data-book-inactive="coverImage"' : "";
+    return `<div class="bloom-canvas bloom-has-canvas-element" data-imgsizebasedon="559,794" title="">
+          <div class="bloom-canvas-element bloom-backgroundImage" style="width: 559px; top: 0px; left: 0px; height: 794px;" data-bubble="${this.COVER_DATA_BUBBLE}">
+            <div class="bloom-imageContainer" style="direction: ltr;">
+              <img src="${escapeHtml(imageSrc)}" class="bloom-imageObjectFit-cover" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt=""${inactiveCoverImage} />
+            </div>
+          </div>
+        </div>`;
+  }
+
+  private static generateFullPageCoverPage(
+    kind: "front" | "back",
+    imageSrc: string,
+    pageSize: string = "A5Portrait",
+  ): string {
     const pageId = randomUUID();
     const isFront = kind === "front";
     const pageClasses = isFront
-      ? "bloom-page cover coverColor bloom-frontMatter frontCover outsideFrontCover A5Portrait bloom-customLayout"
-      : "bloom-page cover coverColor bloom-backMatter outsideBackCover A5Portrait bloom-customLayout";
+      ? `bloom-page cover coverColor bloom-frontMatter frontCover outsideFrontCover bloom-customLayout ${pageSize}`
+      : `bloom-page cover coverColor outsideBackCover bloom-backMatter bloom-customLayout ${pageSize}`;
     const dataExport = isFront ? "front-matter-cover" : "back-matter-back-cover";
     const xmatterPage = isFront ? "frontCover" : "outsideBackCover";
     const customLayoutId = isFront ? "customOutsideFrontCover" : "customOutsideBackCover";
-    // The front cover's image is also the book's coverImage; the back cover image
-    // is not a standard data-book field, so it is only the background here.
-    const dataBookAttr = isFront ? ' data-book="coverImage"' : "";
-
-    // `bloom-imageObjectFit-cover` makes the art fill the page (cropping bleed)
-    // rather than letterboxing. The data-bubble marks this as a canvas element so
-    // Bloom's canvas tooling recognizes it.
-    const dataBubble =
-      "{`version`:`1.0`,`style`:`none`,`tails`:[],`level`:1,`backgroundColors`:[`transparent`],`shadowOffset`:0}";
+    const label = isFront ? "Front Cover" : "Outside Back Cover";
+    const i18n = isFront
+      ? "TemplateBooks.PageLabel.Front Cover"
+      : "TemplateBooks.PageLabel.Outside Back Cover";
 
     return `    <div class="${pageClasses}" data-page="required singleton" data-export="${dataExport}" data-xmatter-page="${xmatterPage}" data-custom-layout-id="${customLayoutId}" id="${pageId}">
+      <div class="pageLabel" data-i18n="${i18n}">${label}</div>
+      <div class="pageDescription"></div>
       <div class="marginBox">
-        <div class="bloom-canvas bloom-has-canvas-element bloom-imageObjectFit-cover">
-          <div class="bloom-canvas-element bloom-backgroundImage" style="width:100%;height:100%;left:0;top:0;" data-bubble="${dataBubble}">
-            <div class="bloom-imageContainer">
-              <img src="${escapeHtml(imageSrc)}" class="bloom-imageObjectFit-cover" alt=""${dataBookAttr} />
-            </div>
-          </div>
-        </div>
+        ${this.coverCanvasHtml(imageSrc, isFront)}
       </div>
     </div>`;
   }
@@ -340,35 +444,50 @@ export class HtmlGenerator {
       return this.generateFullPageCoverPage(
         coverImage.src === FRONT_COVER_IMAGE_FILENAME ? "front" : "back",
         coverImage.src,
+        metadata.pageSize || "A5Portrait",
       );
     }
 
     const origamiItems: OrigamiItem[] = [];
 
+    // Build the list of elements that actually contribute to the layout. We drop:
+    //  - page-number text blocks (Bloom renders these in its xMatter, not here), and
+    //  - EMPTY text blocks. The LLM enrichment adds a `<!-- text -->` comment under
+    //    every page, so an image-only page ends up carrying an empty text element.
+    //    If we kept it, the page would render as an origami split — image on top and
+    //    a blank translationGroup below. Dropping it lets the image stand alone.
+    const isPageNumber = (element: PageElement): boolean =>
+      element.type === "text" && (element as TextBlockElement).field === "pageNumber";
+    const isEmptyText = (element: PageElement): boolean =>
+      element.type === "text" &&
+      !Object.values((element as TextBlockElement).content).some((v) => v && v.trim() !== "");
+
+    const layoutElements = page.elements.filter(
+      (element) => !isPageNumber(element) && !isEmptyText(element),
+    );
+
     // Determine if the page structure matches a [Text, Image, Text] sequence
     // This is relevant for assigning "V" and "N1" for bilingual T-I-T pages.
     const isTITSequence =
-      page.elements.length === 3 &&
-      page.elements[0].type === "text" &&
-      page.elements[1].type === "image" &&
-      page.elements[2].type === "text";
+      layoutElements.length === 3 &&
+      layoutElements[0].type === "text" &&
+      layoutElements[1].type === "image" &&
+      layoutElements[2].type === "text";
 
-    page.elements.forEach((element: PageElement, index: number) => {
-      // Skip page number elements
-      if (element.type === "text" && (element as TextBlockElement).field === "pageNumber") {
-        return;
-      }
-
+    layoutElements.forEach((element: PageElement, index: number) => {
       if (element.type === "text") {
         const textElement = element as TextBlockElement;
         const textItem: TextOrigamiItem = {
           type: "text",
           content: textElement.content,
+          // Layout hints detected for the whole page apply to its text block(s).
+          verticalAlign: page.verticalAlign,
+          horizontalAlign: page.horizontalAlign,
         };
 
         // Condition for a page that is solely L2 text
         if (
-          page.elements.length === 1 && // Only one element on the page
+          layoutElements.length === 1 && // Only one element on the page
           metadata.l2 &&
           Object.keys(textElement.content).length === 1 && // Text element has content for only one language
           textElement.content[metadata.l2] // And that language is L2
@@ -407,7 +526,9 @@ export class HtmlGenerator {
     // to 'bloom-page' div based on page properties (e.g., page.type) if available/needed.
     // For now, 'customPage' is used as a general class.
     // The `page.type` property could be used here.
-    let pageClasses = "bloom-page customPage";
+    // The page-size class (e.g. A4Portrait) matches the source PDF; Bloom keys the
+    // book's paper size off this class. Defaults to A5Portrait.
+    let pageClasses = `bloom-page customPage ${metadata.pageSize || "A5Portrait"}`;
 
     // TODO: think about this... it appears that Bloom is deleting these. Ultimately
     // we do want to get rid of them because Bloom regenerates them based on its
@@ -423,7 +544,14 @@ export class HtmlGenerator {
     // its validator). Bloom uses GUIDs; generate one per page.
     const pageId = randomUUID();
 
-    return `    <div class="${pageClasses.trim()}" id="${pageId}">
+    // A page background color detected by vision formatting is set via Bloom's
+    // `--page-background-color` custom property (consumed by basePage.css). A plain
+    // `background-color` inline style does NOT survive Bloom's import — it strips it.
+    const pageStyleAttr = page.backgroundColor
+      ? ` style="--page-background-color: ${page.backgroundColor}"`
+      : "";
+
+    return `    <div class="${pageClasses.trim()}" id="${pageId}"${pageStyleAttr}>
       <div class="marginBox">
         ${origamiContent}
       </div>

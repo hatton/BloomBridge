@@ -13,6 +13,8 @@ import {
   extractImagesWithPdfImages,
   extractAndSaveImagesWithPdfImages,
   prepareCovers,
+  addVisionFormatting,
+  detectNormalStyle,
   writeMetaJson,
   notifyBloomOfBook,
   type CoverMode,
@@ -54,6 +56,8 @@ export type Arguments = {
   parserEngine: string; // PDF parsing engine for OpenRouter: native, mistral-ocr, or pdf-text
   imager: string; // Image extraction method: pdfjs or poppler
   cover?: string; // Full-page cover handling: auto (default), render, or none
+  visionFormatting?: boolean; // Use a vision model to detect per-page alignment + background color
+  visionModelName?: string; // OpenRouter model for the vision-formatting pass (independent of modelName)
 };
 
 type Plan = {
@@ -75,6 +79,8 @@ type Plan = {
   parserEngine: string;
   imager: string;
   coverMode: CoverMode;
+  visionFormatting: boolean;
+  visionModelName?: string;
 };
 
 // Convert numeric enum value to readable string
@@ -205,6 +211,32 @@ export async function processConversion(inputPath: string, options: Arguments) {
         plan.bookFolderPath!,
         plan.coverMode,
       );
+
+      // Optionally use a vision model to detect per-page alignment and background
+      // color, baking the results into the page comments. We do this here, while
+      // the PDF is in hand and before .ocr.md is written, so the results persist
+      // in .ocr.md and aren't re-paid for on later runs.
+      if (plan.visionFormatting) {
+        logger.info(`-> Detecting page layout with vision model...`);
+        markdownContent = await addVisionFormatting(
+          plan.pdfPath!,
+          markdownContent,
+          plan.openrouterKey!,
+          { logCallback, overrideModel: plan.visionModelName },
+        );
+      }
+
+      // Detect the body-text style (font size + family) from the PDF and bake it
+      // into a top-of-file `<!-- book ... -->` comment so it persists in the .ocr.md
+      // and flows through to Bloom's "normal" style. Local pdfjs, no API cost.
+      const normalStyle = await detectNormalStyle(plan.pdfPath!);
+      if (normalStyle.fontSizePt || normalStyle.fontFamily || normalStyle.pageSize) {
+        let attrs = "";
+        if (normalStyle.fontSizePt) attrs += ` normal-font-size="${normalStyle.fontSizePt}"`;
+        if (normalStyle.fontFamily) attrs += ` normal-font-family="${normalStyle.fontFamily}"`;
+        if (normalStyle.pageSize) attrs += ` page-size="${normalStyle.pageSize}"`;
+        markdownContent = `<!-- book${attrs} -->\n\n${markdownContent}`;
+      }
 
       logger.info(`Writing OCR'd markdown to: ${plan.markdownFromOCRPath}`);
       await fs.writeFile(plan.markdownFromOCRPath!, markdownContent); // Write the markdown content to file
@@ -467,6 +499,21 @@ async function makeThePlan(inputPath: string, cliArguments: Arguments): Promise<
       "OpenRouter API key is required for OpenRouter OCR models. Provide --openrouter-key or set OPENROUTER_KEY environment variable.",
     );
   }
+  if (cliArguments.visionFormatting && inputType === Artifact.PDF && !openrouterKey) {
+    // Vision formatting runs during the PDF stage and calls OpenRouter.
+    throw new Error(
+      "OpenRouter API key is required for --vision-formatting. Provide --openrouter-key or set OPENROUTER_KEY environment variable.",
+    );
+  }
+
+  if (cliArguments.visionFormatting && inputType !== Artifact.PDF) {
+    // The vision step needs the PDF to render pages; results are cached into the
+    // .ocr.md, so regeneration requires starting from the PDF.
+    logger.warn(
+      "--vision-formatting only runs when the input is a PDF; ignoring it for this non-PDF input.",
+    );
+  }
+
   if (
     inputType < Artifact.MarkdownFromLLMCleaned &&
     targetType >= Artifact.MarkdownFromLLMCleaned &&
@@ -571,6 +618,8 @@ async function makeThePlan(inputPath: string, cliArguments: Arguments): Promise<
     parserEngine: cliArguments.parserEngine,
     imager: cliArguments.imager,
     coverMode: normalizeCoverMode(cliArguments.cover),
+    visionFormatting: cliArguments.visionFormatting ?? false,
+    visionModelName: cliArguments.visionModelName,
   };
   //console.log(`Plan created:`, JSON.stringify(plan, null, 2));
 

@@ -24,6 +24,8 @@ export interface BookMetaData {
   summary?: string;
   formatVersion: string;
   suitableForMakingShells: boolean;
+  /** When true, Bloom keeps the book's folder name instead of deriving it from the title. */
+  nameLocked?: boolean;
   pageCount: number;
   // Preserve any fields Bloom wrote that we don't model.
   [key: string]: unknown;
@@ -108,6 +110,10 @@ export function buildBookMetaData(book: Book, existing?: Partial<BookMetaData>):
     bookInstanceId: existing?.bookInstanceId || randomUUID(),
     formatVersion: "2.1",
     suitableForMakingShells: false,
+    // Keep the folder name we ship: Bloom otherwise renames the book folder (and
+    // its .htm) to the sanitized <title> on import/save, appending " - <id>" when
+    // a book of that title already exists. nameLocked suppresses that rename.
+    nameLocked: true,
     pageCount: book.pages.filter((p) => p.type === "content").length,
   };
 }

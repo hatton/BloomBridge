@@ -46,7 +46,7 @@ Your task in this part of the instructions to enrich the file by annotating it w
 Where To Add Text Block Comments:
 
 Introduce a new text block comment any time one or more of three things occurs at any point in the text:
-1: If you encounter a “<!-- page index=x -->" add a text block directly below it.
+1: If you encounter a “<!-- page index=x -->" add a text block directly below it. Important: copy each "<!-- page ... -->" comment through to your output exactly as it appears, preserving every attribute on it (such as type, bilingual, vertical-align, horizontal-align, and background-color). Do not drop, reorder, or modify these attributes.
 2: Any time the language of some text does not match the language of the text directly above it.
 3: Directly above the location of one of the pieces of metadata information you are required to annotate.
 
@@ -99,7 +99,7 @@ Just like in this example, always list the language field to the leftmost side o
 
 Clarifications:
 1:  Treat image tags like ![img-5.jpeg](img-5.jpeg){width=532} as non-linguistic elements. You must copy them into the output exactly as they appear in the original file, without altering the alt text, path, or attributes in any way. Do not add a language comment for the image tag itself.
-2: Except for the text block annotations, your output should be an exact replica of the markdown file. This means you shouldn't introduce any extra changes, including but not limted to spelling, convention, language, or headers.
+2: Except for the text block annotations, your output should be an exact replica of the markdown file. This means you shouldn't introduce any extra changes, including but not limted to spelling, convention, language, or headers. If the file begins with a "<!-- book ... -->" comment, copy it through to the very top of your output exactly as-is (you may place it just below the YAML front matter), preserving all of its attributes.
 3: If an item on from the metadata field list is absent from the book, you may ignore it.
 4: The file content may be wrapped by delimiter lines like --- START OF FILE --- or --- END OF FILE ---. These delimiter lines are for context only and must be excluded from your final output.
 5: Non-linguistic elements should be treated as having the language tag "zxx".

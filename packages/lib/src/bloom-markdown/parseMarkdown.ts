@@ -1,5 +1,13 @@
 import { BloomMetadataParser, FrontMatterMetadata } from "../3-add-bloom-plan/bloomMetadata";
-import type { Book, Page, PageElement, TextBlockElement, ValidationError } from "../types";
+import type {
+  Book,
+  HorizontalAlign,
+  Page,
+  PageElement,
+  TextBlockElement,
+  ValidationError,
+  VerticalAlign,
+} from "../types";
 
 export class BloomMarkdown {
   private errors: ValidationError[] = [];
@@ -18,7 +26,25 @@ export class BloomMarkdown {
     // Merge metadata parser errors with our errors
     this.errors.push(...this.metadataParser.getErrors());
 
-    const pages = this.createPageObjects(body, metadata);
+    // Book-level layout hints carried in a `<!-- book ... -->` comment (injected
+    // during the PDF stage by detectNormalStyle). Survives the LLM as a comment.
+    const bookComment = markdown.match(/<!--\s*book\b([^>]*)-->/);
+    if (bookComment) {
+      const sizeMatch = bookComment[1].match(/normal-font-size=["']?([\d.]+)["']?/);
+      if (sizeMatch) metadata.normalFontSizePt = Number(sizeMatch[1]);
+      const familyMatch = bookComment[1].match(/normal-font-family=["']([^"']+)["']/);
+      if (familyMatch) metadata.normalFontFamily = familyMatch[1];
+      const pageSizeMatch = bookComment[1].match(/page-size=["']?([A-Za-z0-9]+)["']?/);
+      if (pageSizeMatch) metadata.pageSize = pageSizeMatch[1];
+    }
+
+    // Strip the book comment out of the body before splitting into pages. If left
+    // in, it makes the pre-first-page segment non-empty, which throws off the
+    // page-comment↔content alignment in createPageObjects (shifting every page's
+    // attributes — type, background-color, alignment — onto the wrong page).
+    const bodyWithoutBookComment = body.replace(/<!--\s*book\b[^>]*-->/g, "");
+
+    const pages = this.createPageObjects(bodyWithoutBookComment, metadata);
 
     if (this.errors.some((e) => e.type === "error")) {
       throw new Error(
@@ -295,6 +321,9 @@ export class BloomMarkdown {
       elements,
       type: (pageAttributes.type as any) || "content", // Default to content type
       appearsToBeBilingualPage: pageAttributes.bilingual,
+      verticalAlign: pageAttributes.verticalAlign,
+      horizontalAlign: pageAttributes.horizontalAlign,
+      backgroundColor: pageAttributes.backgroundColor,
     };
   }
 
@@ -304,8 +333,17 @@ export class BloomMarkdown {
   private parsePageAttributes(pageComment: string): {
     type?: string;
     bilingual?: boolean;
+    verticalAlign?: VerticalAlign;
+    horizontalAlign?: HorizontalAlign;
+    backgroundColor?: string;
   } {
-    const attributes: { type?: string; bilingual?: boolean } = {};
+    const attributes: {
+      type?: string;
+      bilingual?: boolean;
+      verticalAlign?: VerticalAlign;
+      horizontalAlign?: HorizontalAlign;
+      backgroundColor?: string;
+    } = {};
 
     // Extract type attribute
     const typeMatch = pageComment.match(/type=["']?([^"'\s>]+)["']?/);
@@ -317,6 +355,33 @@ export class BloomMarkdown {
     const bilingualMatch = pageComment.match(/bilingual=["']?(true|false)["']?/);
     if (bilingualMatch) {
       attributes.bilingual = bilingualMatch[1] === "true";
+    }
+
+    // Layout hints (added by the vision-formatting step). Validate against the
+    // known enum values and warn + drop anything unexpected.
+    const verticalMatch = pageComment.match(/vertical-align=["']?([^"'\s>]+)["']?/);
+    if (verticalMatch) {
+      const value = verticalMatch[1];
+      if (value === "top" || value === "center" || value === "bottom") {
+        attributes.verticalAlign = value;
+      } else {
+        this.addWarning(`Ignoring unknown vertical-align value "${value}"`);
+      }
+    }
+
+    const horizontalMatch = pageComment.match(/horizontal-align=["']?([^"'\s>]+)["']?/);
+    if (horizontalMatch) {
+      const value = horizontalMatch[1];
+      if (value === "left" || value === "center" || value === "right") {
+        attributes.horizontalAlign = value;
+      } else {
+        this.addWarning(`Ignoring unknown horizontal-align value "${value}"`);
+      }
+    }
+
+    const backgroundMatch = pageComment.match(/background-color=["']?([^"'\s>]+)["']?/);
+    if (backgroundMatch) {
+      attributes.backgroundColor = backgroundMatch[1];
     }
 
     return attributes;

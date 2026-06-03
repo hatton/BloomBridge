@@ -62,6 +62,14 @@ program
     "Full-page cover handling: 'auto' (default, render front/back cover to an image only when the page is detected as full-bleed art), 'render' (always render the first and last pages as cover images), or 'none' (leave covers to OCR/Bloom's default xMatter).",
     "auto",
   )
+  .option(
+    "--vision-formatting",
+    "Use a vision model to detect per-page text alignment (vertical/horizontal) and background color, cached into the .ocr.md so it isn't re-run on later passes. Requires a PDF input and an OpenRouter key.",
+  )
+  .option(
+    "--vision-model <model>",
+    "OpenRouter model for the --vision-formatting pass (defaults to a cheap vision model). e.g. 'google/gemini-3.1-pro-preview'. Independent of --model.",
+  )
   .option("--verbose", "Enable verbose logging to see detailed process steps")
   .action(async (input, options) => {
     if (input) {
@@ -79,6 +87,8 @@ program
         parserEngine: options.parser || "native",
         imager: options.imager || "poppler",
         cover: options.cover || "auto",
+        visionFormatting: options.visionFormatting || false,
+        visionModelName: options.visionModel,
       };
 
       await processConversion(input, args);
