@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code when working in this repository.
 
+> **Working on the conversion pipeline? Read [`conversion-process.md`](conversion-process.md) first.**
+> It is the architecture reference: what each stage does, how every CLI parameter
+> influences each stage, the intermediate Markdown format, the variety of inputs we
+> handle, and known issues. This file (CLAUDE.md) is just toolchain/build/test guidance.
+
 ## Project Overview
 
 pnpm workspaces monorepo converting PDF documents to Bloom-compatible HTML through OCR, LLM processing, and HTML generation. Produces bilingual educational content.
@@ -107,24 +112,21 @@ When running ad-hoc tests, use `--output test-outputs/...` so output lands in th
 
 Set these in your environment before running OCR/LLM stages:
 
-- `MISTRAL_API_KEY` — PDF OCR and general LLM processing
-- `OPENROUTER_KEY` — content enrichment and advanced processing
+- `OPENROUTER_KEY` — GPT/OpenRouter OCR (the default), LLM enrichment, and vision-formatting
+- `MISTRAL_API_KEY` — only needed for `--ocr mistral`
 
 ## Pipeline Architecture
 
-4-stage conversion:
+A 4-stage conversion (Stage 1 OCR → Stage 2 LLM enrichment → Stage 3 Bloom plan →
+Stage 4 HTML), with the Markdown artifact between stages doubling as a cache. Stage
+code lives in `packages/lib/src/{1-ocr,2-llm,3-add-bloom-plan,4-generate-html,5-notify-bloom}`;
+the Markdown contract is in `packages/lib/src/bloom-markdown/` and core types
+(`Book`, `Page`, `PageElement`, `FrontMatterMetadata`) in `packages/lib/src/types.ts`.
 
-1. **OCR** (`packages/lib/src/1-ocr/`) — PDF → Markdown + images via Mistral AI or OpenRouter
-2. **LLM** (`packages/lib/src/2-llm/`) — enriches markdown with language detection and content structuring
-3. **Bloom Planning** (`packages/lib/src/3-add-bloom-plan/`) — adds Bloom-specific metadata and page layout
-4. **HTML Generation** (`packages/lib/src/4-generate-html/`) — produces final Bloom HTML with Origami CSS
-
-## Key Types (`packages/lib/src/types.ts`)
-
-- `Book` — complete document with pages and metadata
-- `Page` — individual page with elements and type classification
-- `PageElement` — text blocks or images with language mappings
-- `FrontMatterMetadata` — Bloom-specific metadata structure
+**See [`conversion-process.md`](conversion-process.md) for the full reference** — every
+stage in depth, the CLI-option-to-stage mapping, the intermediate Markdown format, the
+variety of inputs and how each is handled, and vestigial code / known issues. Read it
+before changing anything in the pipeline.
 
 ## Root Config Files
 
