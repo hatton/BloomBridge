@@ -87,6 +87,7 @@ Entry point: `packages/cli/src/index.ts` (Commander) → `Arguments` → `makeTh
 | `--vision-model <model>` | `google/gemini-3.1-pro-preview` | Stage 1                     | Model for the vision-formatting pass, **independent of `--model`**.                                                                                                                                                                                           |
 | `--model <model>`        | `google/gemini-3.1-pro-preview` | Stage 2                     | OpenRouter model for the LLM **enrichment** stage.                                                                                                                                                                                                            |
 | `--prompt <path>`        | (built-in)                      | Stage 1 (GPT OCR) + Stage 2 | Override prompt file. Used as the per-page OCR prompt on the GPT path and/or the enrichment prompt.                                                                                                                                                           |
+| `--emit-source-hashes`   | off                             | Stage 4                     | **Master-creation mode** (see §9.7). Keeps the `data-import-source-hash` on every page and **skips** master substitution. Use it once to build a master book; off (the default) for normal imports.                                                           |
 | `--verbose`              | off                             | all                         | Verbose logging via the log callback.                                                                                                                                                                                                                         |
 
 **API-key gating** (`makeThePlan`): Mistral OCR needs the Mistral key; OpenRouter
@@ -113,6 +114,11 @@ book goes:
 `Language1/2/3Name` + `Iso639Code`, producing `{ l1, l2, l3 }` `{tag,name}` objects
 that are passed to the LLM in Stage 2 as **language hints** (greatly improves
 minority-language tagging and ensures consistent BCP-47 codes).
+
+`makeThePlan` also looks for a **master book** in the collection (or `--output`
+directory): a sibling folder whose name ends in `master` (`findMasterBookFolder`,
+`master/masterPages.ts`). If found — and we're not in `--emit-source-hashes` mode —
+its hashes are loaded so matched pages can be substituted (see §9.7).
 
 ---
 
@@ -149,15 +155,23 @@ Three real paths (plus vestigial ones):
 All three emit the same page-marker convention:
 
 ```
-<!-- page index=1 -->
+<!-- page index=1 import-source-hash="…" -->
 …page 1 content (headings via #, images via ![image](image-1-1.png){width=400})…
 
-<!-- page index=2 -->
+<!-- page index=2 import-source-hash="…" -->
 …
 ```
 
 Image filename convention: `image-<page>-<indexOnPage>.png`. Page numbers are meant
 to be dropped by OCR; if they leak through they’re marked later (Stage 2 cleanup).
+
+**Per-page source hash (GPT path only).** As each page is rendered, `pageImageHash.ts`
+hashes its raster (SHA-256 of decoded pixels) and the hash is recorded on the page
+comment as `import-source-hash="…"`. This is the key for **master-page substitution**
+(§9.7): if the hash matches one provided by a master book, that page **skips OCR**
+entirely (a short placeholder body + `master-page="true"`) — its real content is
+spliced in from the master in Stage 4. The hashing is local and free; only the GPT
+path renders full pages, so Mistral/unpdf inputs don't get hashes (and can't match).
 
 Vestigial: `unused-pdfToMarkdownAndImageFiles-OpenRouter.ts` (OpenRouter file-parser
 plugin — never worked/wired; this is what `--parser` was for) and
@@ -330,7 +344,9 @@ normalFontSizePt: 28          # mirrored into the <!-- book --> comment
   before page-splitting** (leaving it in would shift the page-comment↔content
   alignment by one — a real bug we fixed).
 - **`<!-- page index=N … -->`** attributes: `type`, `bilingual`, `vertical-align`,
-  `horizontal-align`, `background-color`, `canvas-text-box`.
+  `horizontal-align`, `background-color`, `canvas-text-box`, `import-source-hash`
+  (the page-render hash, §5.1/§9.7), and `master-page` (set on a page that matched a
+  master and so skipped OCR).
 - **`<!-- text lang="X" field="Y" -->`** introduces a text block; `field` is
   optional. One block per contiguous same-lang/same-field run. A block whose content
   is multiple languages is represented as one `TextBlockElement` with a
@@ -429,6 +445,49 @@ font-family }`, and the **same rules for `.Bubble-style`** so canvas captions ma
 The book HTML is written as `<bookFolder>/<bookFolder>.htm` (the name Bloom reads),
 and a stray `index.html` from older runs is removed.
 
+### 9.7 Master-page substitution — `master/masterPages.ts`
+
+**The problem.** A publisher's books often share the same hand-built, complex pages
+(license/credits, "You're reading Level 4", "Did you enjoy this book?") that OCR
+can't reconstruct faithfully. Rather than fight them on every book, we build **one
+"master" book**, perfect those pages in Bloom, and **drop them into every other
+import** when we recognize them.
+
+**Recognition is by page-render hash.** Each source page's raster is hashed in
+Stage 1 (§5.1) and carried as `import-source-hash`. A book folder ending in `master`
+holds the canonical pages, each tagged with the `data-import-source-hash` of the
+source page it replaces. On a normal import we build a `hash → {page HTML, images}`
+map from the master (`loadMasterPages`) and, after Stage 4 generates the HTML,
+`applyMasterPages` post-processes it:
+
+- **matched page** (its `data-import-source-hash` is in the map) → the generated
+  placeholder div is replaced with the **master's exact page HTML**; the master's
+  referenced images are copied into the book folder under collision-proof names
+  (`m<hash8>-<original>`), the spliced `src`s are rewritten to match, and the page
+  gets a fresh `id`.
+- **unmatched page** → kept as-is, but its internal `data-import-source-hash` marker
+  is **stripped** (so normal books stay clean). In `--emit-source-hashes` mode the
+  whole post-process is skipped and every hash is kept.
+
+For matched pages the OCR call is also skipped in Stage 1 (cost saving), and
+`master-page="true"` forces the page to render as a splice placeholder even if it
+was classified back-matter (which `shouldRenderPage` would otherwise drop).
+
+**Building a master.** Run a representative book with `--emit-source-hashes` so every
+page carries `data-import-source-hash`; open it in Bloom, perfect the complex pages,
+delete the rest, and **rename the folder to end in `master`**. Subsequent imports
+into that collection substitute automatically.
+
+**Two caveats** (both real, seen in this session):
+
+- The hash is **exact** (the seam in `pageImageHash.ts` allows a perceptual mode
+  later). Two source PDFs must rasterize the shared page **identically** to match —
+  so build the master from a file produced by the **same export/compression
+  pipeline** as the books you'll import. (Recompressing a PDF changes every hash.)
+- The master's hashes live on the page divs in its `.htm`. Confirm your Bloom build
+  **preserves `data-import-source-hash`** on save; if a future build strips unknown
+  `data-*`, the fallback is a sidecar JSON in the master folder.
+
 ---
 
 ## 10. Stage 5 — notify a running Bloom — `notifyBloom.ts`
@@ -447,24 +506,25 @@ adds/refreshes the book live.
 
 ## 11. The variety of inputs we handle, and how
 
-| Variety                                                     | How we detect/handle it                                                                                                                                                    |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Scanned vs text PDFs**                                    | `gpt`/`mistral` OCR read rendered text (works on scans); `unpdf` reads the text layer (text PDFs only, and may surface hidden text).                                       |
-| **Page size** (A4/A5/Letter/…)                              | `detectNormalStyle` maps PDF points → Bloom size class; emitted on every page so Bloom uses the right paper.                                                               |
-| **Body font size/family**                                   | `detectNormalStyle` (char-weighted dominant) → `normal-style`/`Bubble-style` in `userModifiedStyles`. Family is best-effort; Bloom falls back if not installed.            |
-| **Full-bleed cover art**                                    | `coverDetection` (≥85% image coverage) → `prepareCovers` renders `cover.jpg`/`back-cover.jpg` → Stage 4 full-bleed custom-layout cover via dataDiv.                        |
-| **Interior full-page art + caption (canvas)**               | `detectCanvasPages` (full-page image + text bbox) → Stage 4 Canvas page with positioned Bubble text.                                                                       |
-| **Plain full-page illustration (no text)**                  | image-only page → single image block (empty LLM text blocks are dropped).                                                                                                  |
-| **Solid colored page backgrounds**                          | vision-formatting border-sampling → `--page-background-color` on the page. Only genuinely solid pages are tinted (illustrations are not).                                  |
-| **Text alignment**                                          | vision-formatting → vertical-align class + horizontal text-align.                                                                                                          |
-| **Bilingual pages**                                         | `isBilingualPage` → V/N1 ordering + `contentLanguage2` when majority bilingual.                                                                                            |
-| **Title/credits/copyright**                                 | classified as front/back-matter, **not rendered**; their fields go to the dataDiv and Bloom rebuilds xMatter. Title-page **pictures are dropped** (Bloom can’t show them). |
-| **Publisher-only copyright**                                | LLM uses publisher as copyright; Stage 4 strips “Published by”.                                                                                                            |
-| **License as name or URL**                                  | `licenses.ts` fills the missing one; `meta.json` normalizes to a Bloom token.                                                                                              |
-| **Page numbers**                                            | OCR drops them; cleanup marks stragglers `field="pageNumber"`; never rendered.                                                                                             |
-| **Untagged / unknown-language text**                        | wrapped as `lang="unk"`; doesn’t flip a page to “content”.                                                                                                                 |
-| **Non-linguistic content**                                  | `lang="zxx"`.                                                                                                                                                              |
-| **Marketing back-matter** (e.g. “Did you enjoy this book?”) | currently treated as content (no metadata fields). Dropping such boilerplate is a known open question.                                                                     |
+| Variety                                                         | How we detect/handle it                                                                                                                                                    |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Scanned vs text PDFs**                                        | `gpt`/`mistral` OCR read rendered text (works on scans); `unpdf` reads the text layer (text PDFs only, and may surface hidden text).                                       |
+| **Page size** (A4/A5/Letter/…)                                  | `detectNormalStyle` maps PDF points → Bloom size class; emitted on every page so Bloom uses the right paper.                                                               |
+| **Body font size/family**                                       | `detectNormalStyle` (char-weighted dominant) → `normal-style`/`Bubble-style` in `userModifiedStyles`. Family is best-effort; Bloom falls back if not installed.            |
+| **Full-bleed cover art**                                        | `coverDetection` (≥85% image coverage) → `prepareCovers` renders `cover.jpg`/`back-cover.jpg` → Stage 4 full-bleed custom-layout cover via dataDiv.                        |
+| **Interior full-page art + caption (canvas)**                   | `detectCanvasPages` (full-page image + text bbox) → Stage 4 Canvas page with positioned Bubble text.                                                                       |
+| **Plain full-page illustration (no text)**                      | image-only page → single image block (empty LLM text blocks are dropped).                                                                                                  |
+| **Solid colored page backgrounds**                              | vision-formatting border-sampling → `--page-background-color` on the page. Only genuinely solid pages are tinted (illustrations are not).                                  |
+| **Text alignment**                                              | vision-formatting → vertical-align class + horizontal text-align.                                                                                                          |
+| **Bilingual pages**                                             | `isBilingualPage` → V/N1 ordering + `contentLanguage2` when majority bilingual.                                                                                            |
+| **Title/credits/copyright**                                     | classified as front/back-matter, **not rendered**; their fields go to the dataDiv and Bloom rebuilds xMatter. Title-page **pictures are dropped** (Bloom can’t show them). |
+| **Publisher-only copyright**                                    | LLM uses publisher as copyright; Stage 4 strips “Published by”.                                                                                                            |
+| **License as name or URL**                                      | `licenses.ts` fills the missing one; `meta.json` normalizes to a Bloom token.                                                                                              |
+| **Page numbers**                                                | OCR drops them; cleanup marks stragglers `field="pageNumber"`; never rendered.                                                                                             |
+| **Untagged / unknown-language text**                            | wrapped as `lang="unk"`; doesn’t flip a page to “content”.                                                                                                                 |
+| **Non-linguistic content**                                      | `lang="zxx"`.                                                                                                                                                              |
+| **Marketing back-matter** (e.g. “Did you enjoy this book?”)     | treated as content; if a master book provides a matching page it is **substituted** wholesale (§9.7). Otherwise it falls through as ordinary content.                      |
+| **Shared complex/boilerplate pages across a publisher's books** | **master-page substitution** (§9.7): hash-match each source page against a `*master` book and splice in its hand-perfected HTML + images.                                  |
 
 ---
 
@@ -515,7 +575,10 @@ adds/refreshes the book live.
   but won’t clear an explicit `false`.
 - **`bloom-frontMatter`/`bloom-backMatter` page classes** are emitted but Bloom may
   delete/regenerate them (noted as TODO in code).
-- **Marketing back-matter** isn’t distinguished from content yet.
+- **Marketing back-matter** isn’t auto-distinguished from content, but a master book
+  can substitute specific such pages (§9.7).
+- **Master substitution uses exact hashes**: rebuild the master if the source export
+  pipeline changes, and verify Bloom preserves `data-import-source-hash` on save.
 
 ---
 
@@ -533,4 +596,6 @@ adds/refreshes the book live.
   `generateMarkdown.ts`; types in `packages/lib/src/types.ts`
 - Stage 4: `packages/lib/src/4-generate-html/` — `html-generator.ts`, `origami.ts`,
   `markdownToHtml.ts`, `metaJson.ts`, `licenses.ts`
+- Master substitution: `packages/lib/src/master/masterPages.ts`,
+  `packages/lib/src/1-ocr/pageImageHash.ts`
 - Stage 5: `packages/lib/src/5-notify-bloom/notifyBloom.ts`

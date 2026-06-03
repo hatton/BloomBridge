@@ -18,6 +18,10 @@ import {
   detectCanvasPages,
   writeMetaJson,
   notifyBloomOfBook,
+  findMasterBookFolder,
+  loadMasterPages,
+  readMasterHashes,
+  applyMasterPages,
   type CoverMode,
 } from "@pdf-to-bloom/lib"; // Assuming these functions are async and return/handle as described
 import {
@@ -59,6 +63,7 @@ export type Arguments = {
   cover?: string; // Full-page cover handling: auto (default), render, or none
   visionFormatting?: boolean; // Use a vision model to detect per-page alignment + background color
   visionModelName?: string; // OpenRouter model for the vision-formatting pass (independent of modelName)
+  emitSourceHashes?: boolean; // Tag pages with data-import-source-hash (master-creation mode)
 };
 
 type Plan = {
@@ -82,6 +87,8 @@ type Plan = {
   coverMode: CoverMode;
   visionFormatting: boolean;
   visionModelName?: string;
+  emitSourceHashes: boolean;
+  masterFolderPath?: string;
 };
 
 // Convert numeric enum value to readable string
@@ -192,12 +199,21 @@ export async function processConversion(inputPath: string, options: Arguments) {
           }
         }
 
+        // When a master book is present (and we're not building one), skip OCR
+        // for pages whose render matches a master page; their content is supplied
+        // by master-page substitution in Stage 4.
+        let masterHashes: Set<string> | undefined;
+        if (plan.masterFolderPath && !plan.emitSourceHashes) {
+          masterHashes = await readMasterHashes(plan.masterFolderPath);
+        }
+
         markdownContent = await pdfToMarkdown(
           plan.pdfPath!,
           plan.openrouterKey!,
           plan.ocrMethod,
           logCallback,
           customPrompt,
+          { masterHashes },
         );
         // After writing markdown, extract images from the PDF to match markdown references
         await extractImages(plan.pdfPath!, plan.bookFolderPath!, plan.imager);
@@ -391,10 +407,25 @@ export async function processConversion(inputPath: string, options: Arguments) {
 
       const book = new Parser().parseMarkdown(taggedMarkdownContent);
 
-      const bloomHtmlContent = await HtmlGenerator.generateHtmlDocument(book, logCallback);
+      let bloomHtmlContent = await HtmlGenerator.generateHtmlDocument(book, logCallback);
 
       // Ensure the output directory exists
       await fs.mkdir(plan.bookFolderPath!, { recursive: true });
+
+      // Master-page substitution. In emit mode we keep every data-import-source-hash
+      // (this run is building a master) and skip substitution. Otherwise we splice
+      // in any matching master pages and strip the internal hash marker from the rest.
+      if (!plan.emitSourceHashes) {
+        const masterPages = plan.masterFolderPath
+          ? await loadMasterPages(plan.masterFolderPath)
+          : new Map();
+        bloomHtmlContent = await applyMasterPages(bloomHtmlContent, {
+          masterPages,
+          bookFolder: plan.bookFolderPath!,
+          masterFolder: plan.masterFolderPath,
+          emitSourceHashes: false,
+        });
+      }
       // A Bloom book's HTML file is named after its folder (e.g.
       // "A Thief in the Night/A Thief in the Night.htm"). Write to that name so we
       // overwrite the file a running Bloom actually reads when it refreshes — not
@@ -598,6 +629,21 @@ async function makeThePlan(inputPath: string, cliArguments: Arguments): Promise<
 
   // All outputs will go into the book directory
   baseOutputDir = bookDir;
+
+  // Look for a sibling "*master" book in the collection (or explicit --output
+  // directory). Its complex pages are substituted into this import — unless we're
+  // building the master ourselves.
+  const emitSourceHashes = cliArguments.emitSourceHashes ?? false;
+  let masterFolderPath: string | undefined;
+  const masterSearchDir =
+    collectionFolderPath ?? (cliArguments.output ? path.resolve(cliArguments.output) : undefined);
+  if (masterSearchDir && !emitSourceHashes) {
+    masterFolderPath = await findMasterBookFolder(masterSearchDir, bookDir);
+    if (masterFolderPath) {
+      logger.info(`Using master book for page substitution: ${masterFolderPath}`);
+    }
+  }
+
   const plan = {
     pdfPath: inputType === Artifact.PDF ? fullInputPath : undefined,
     markdownFromOCRPath:
@@ -633,6 +679,8 @@ async function makeThePlan(inputPath: string, cliArguments: Arguments): Promise<
     coverMode: normalizeCoverMode(cliArguments.cover),
     visionFormatting: cliArguments.visionFormatting ?? false,
     visionModelName: cliArguments.visionModelName,
+    emitSourceHashes,
+    masterFolderPath,
   };
   //console.log(`Plan created:`, JSON.stringify(plan, null, 2));
 

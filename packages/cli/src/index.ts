@@ -70,6 +70,10 @@ program
     "--vision-model <model>",
     "OpenRouter model for the --vision-formatting pass (defaults to a cheap vision model). e.g. 'google/gemini-3.1-pro-preview'. Independent of --model.",
   )
+  .option(
+    "--emit-source-hashes",
+    "Emit a data-import-source-hash on every page (the hash of its source PDF page render) and skip master-page substitution. Use this once to build a 'master' book: run it on the publisher's sample, hand-perfect the complex pages in Bloom, then rename the folder to end in 'master'. Normal imports then substitute those pages automatically.",
+  )
   .option("--verbose", "Enable verbose logging to see detailed process steps")
   .action(async (input, options) => {
     if (input) {
@@ -89,6 +93,7 @@ program
         cover: options.cover || "auto",
         visionFormatting: options.visionFormatting || false,
         visionModelName: options.visionModel,
+        emitSourceHashes: options.emitSourceHashes || false,
       };
 
       await processConversion(input, args);

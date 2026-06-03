@@ -97,6 +97,14 @@ export interface Page {
   // When set, this page is a full-page background image with text floating on top
   // (a Bloom "Canvas" page); the box is where the text sits over the image.
   canvasTextBox?: TextBox;
+  // Hash of the source PDF page's render (see 1-ocr/pageImageHash.ts). Carried in
+  // the page comment so master-page substitution can recognize a page that
+  // matches one in a "master" book.
+  importSourceHash?: string;
+  // True when this page matched a master book page and was skipped during OCR.
+  // It renders as a minimal placeholder div that master-page substitution then
+  // replaces with the master's exact HTML.
+  isMasterPage?: boolean;
 }
 
 export interface Book {

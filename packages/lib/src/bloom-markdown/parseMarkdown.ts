@@ -325,6 +325,8 @@ export class BloomMarkdown {
       horizontalAlign: pageAttributes.horizontalAlign,
       backgroundColor: pageAttributes.backgroundColor,
       canvasTextBox: pageAttributes.canvasTextBox,
+      importSourceHash: pageAttributes.importSourceHash,
+      isMasterPage: pageAttributes.isMasterPage,
     };
   }
 
@@ -338,6 +340,8 @@ export class BloomMarkdown {
     horizontalAlign?: HorizontalAlign;
     backgroundColor?: string;
     canvasTextBox?: { x: number; y: number; w: number; h: number };
+    importSourceHash?: string;
+    isMasterPage?: boolean;
   } {
     const attributes: {
       type?: string;
@@ -346,6 +350,8 @@ export class BloomMarkdown {
       horizontalAlign?: HorizontalAlign;
       backgroundColor?: string;
       canvasTextBox?: { x: number; y: number; w: number; h: number };
+      importSourceHash?: string;
+      isMasterPage?: boolean;
     } = {};
 
     // Extract type attribute
@@ -385,6 +391,19 @@ export class BloomMarkdown {
     const backgroundMatch = pageComment.match(/background-color=["']?([^"'\s>]+)["']?/);
     if (backgroundMatch) {
       attributes.backgroundColor = backgroundMatch[1];
+    }
+
+    // Hash of the source PDF page render, used for master-page substitution.
+    const hashMatch = pageComment.match(/import-source-hash=["']?([^"'\s>]+)["']?/);
+    if (hashMatch) {
+      attributes.importSourceHash = hashMatch[1];
+    }
+
+    // Marks a page that matched a master book page and should render as a
+    // substitution placeholder regardless of its detected type.
+    const masterPageMatch = pageComment.match(/master-page=["']?(true|false)["']?/);
+    if (masterPageMatch) {
+      attributes.isMasterPage = masterPageMatch[1] === "true";
     }
 
     // Canvas text box: four page-fractions "x,y,w,h" marking where a text block

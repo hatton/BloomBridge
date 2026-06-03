@@ -124,6 +124,9 @@ export class HtmlGenerator {
    * exception is a cover page, whose full-bleed custom layout we do emit.
    */
   private static shouldRenderPage(page: Page): boolean {
+    // A page matched to the master book always renders (as a substitution
+    // placeholder), even if it was otherwise classified as back-matter.
+    if (page.isMasterPage) return true;
     const isCover = page.elements.some(
       (element): element is ImageElement =>
         element.type === "image" &&
@@ -470,7 +473,11 @@ export class HtmlGenerator {
       })
       .join("\n");
 
-    return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang="">
+    const sourceHashAttr = page.importSourceHash
+      ? ` data-import-source-hash="${page.importSourceHash}"`
+      : "";
+
+    return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang=""${sourceHashAttr}>
       <div class="pageLabel" data-i18n="TemplateBooks.PageLabel.Canvas">Canvas</div>
       <div class="pageDescription"></div>
       <div class="marginBox">
@@ -549,6 +556,17 @@ export class HtmlGenerator {
   }
 
   private static generatePage(page: Page, metadata: FrontMatterMetadata): string {
+    // A page matched to the master book renders as a minimal placeholder carrying
+    // its source hash; master-page substitution (master/masterPages.ts) replaces
+    // the whole div with the master's exact HTML. We don't bother laying out its
+    // (placeholder) content here.
+    if (page.isMasterPage && page.importSourceHash) {
+      const pageSize = metadata.pageSize || "A5Portrait";
+      return `    <div class="bloom-page customPage ${pageSize}" id="${randomUUID()}" data-import-source-hash="${page.importSourceHash}">
+      <div class="marginBox"></div>
+    </div>`;
+    }
+
     // A page whose art is a whole-page render (see 1-ocr/prepareCovers.ts) becomes
     // a full-bleed custom-layout cover: the image fills the page as a background
     // and all other elements (title, credits, etc.) are dropped, since the
@@ -689,7 +707,13 @@ export class HtmlGenerator {
       ? ` style="--page-background-color: ${page.backgroundColor}"`
       : "";
 
-    return `    <div class="${pageClasses.trim()}" id="${pageId}"${pageStyleAttr}>
+    // Internal marker keyed off by master-page substitution (process.ts /
+    // master/masterPages.ts). Stripped from the output for normal imports.
+    const sourceHashAttr = page.importSourceHash
+      ? ` data-import-source-hash="${page.importSourceHash}"`
+      : "";
+
+    return `    <div class="${pageClasses.trim()}" id="${pageId}"${pageStyleAttr}${sourceHashAttr}>
       <div class="marginBox">
         ${origamiContent}
       </div>

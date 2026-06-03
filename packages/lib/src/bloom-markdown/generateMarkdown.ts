@@ -90,6 +90,14 @@ export function getMarkdownFromBook(book: Book): string {
         const b = page.canvasTextBox;
         pageComment += `canvas-text-box="${b.x},${b.y},${b.w},${b.h}" `;
       }
+      // Master-page substitution attributes must survive the round-trip through
+      // the Book object too (stages 3 and 4), or the page can't be matched/spliced.
+      if (page.importSourceHash) {
+        pageComment += `import-source-hash="${page.importSourceHash}" `;
+      }
+      if (page.isMasterPage) {
+        pageComment += `master-page="true" `;
+      }
       pageComment = pageComment.trimEnd() + " -->"; // Generate page content
       let pageContent = "";
       for (const element of page.elements) {

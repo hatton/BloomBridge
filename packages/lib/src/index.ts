@@ -26,6 +26,16 @@ export type { BookMetaData } from "./4-generate-html/metaJson";
 
 export { notifyBloomOfBook } from "./5-notify-bloom/notifyBloom";
 export type { NotifyBloomResult } from "./5-notify-bloom/notifyBloom";
+
+export {
+  findMasterBookFolder,
+  loadMasterPages,
+  readMasterHashes,
+  applyMasterPages,
+} from "./master/masterPages";
+export type { MasterPage } from "./master/masterPages";
+export { hashPageImage } from "./1-ocr/pageImageHash";
+export type { PageHashMode } from "./1-ocr/pageImageHash";
 export type {
   Book,
   Page as PageContent,

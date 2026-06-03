@@ -28,6 +28,48 @@ Hola mundo`;
     expect((result.pages[0].elements[0] as TextBlockElement).content.es).toBe("Hola mundo");
   });
 
+  it("should parse import-source-hash and master-page from the page comment", () => {
+    const content = `---
+allTitles:
+  en: "Test Book"
+languages:
+  en: "English"
+l1: en
+---
+<!-- page index=1 import-source-hash="deadbeef" -->
+<!-- text lang="en" -->
+A normal page
+<!-- page index=2 import-source-hash="cafef00d" master-page="true" -->
+_(page provided by master book)_`;
+    const parser = new BloomMarkdown();
+    const result = parser.parseMarkdown(content);
+
+    expect(result.pages[0].importSourceHash).toBe("deadbeef");
+    expect(result.pages[0].isMasterPage).toBeUndefined();
+    expect(result.pages[1].importSourceHash).toBe("cafef00d");
+    expect(result.pages[1].isMasterPage).toBe(true);
+  });
+
+  it("round-trips import-source-hash and master-page through addBloomPlanToMarkdown", async () => {
+    const { addBloomPlanToMarkdown } = await import("../3-add-bloom-plan/addBloomPlan");
+    const content = `---
+allTitles:
+  en: "Test Book"
+languages:
+  en: "English"
+l1: en
+---
+<!-- page index=1 import-source-hash="deadbeef" -->
+<!-- text lang="en" -->
+A normal page
+<!-- page index=2 import-source-hash="cafef00d" master-page="true" -->
+_(page provided by master book)_`;
+    const planned = addBloomPlanToMarkdown(content);
+    expect(planned).toContain('import-source-hash="deadbeef"');
+    expect(planned).toContain('import-source-hash="cafef00d"');
+    expect(planned).toContain('master-page="true"');
+  });
+
   it("should detect page layouts correctly", () => {
     const content = `---
 allTitles:
