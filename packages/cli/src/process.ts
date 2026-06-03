@@ -261,10 +261,15 @@ export async function processConversion(inputPath: string, options: Arguments) {
       const canvasPages = await detectCanvasPages(plan.pdfPath!);
       for (const [pageNum, box] of canvasPages) {
         const re = new RegExp(`(<!--\\s*page\\s+index=${pageNum}\\b)([^>]*?)(\\s*-->)`);
-        markdownContent = markdownContent.replace(
-          re,
-          `$1$2 canvas-text-box="${box.x},${box.y},${box.w},${box.h}"$3`,
-        );
+        markdownContent = markdownContent.replace(re, (_m, open, attrs, close) => {
+          let addition = ` canvas-text-box="${box.x},${box.y},${box.w},${box.h}"`;
+          // Add the detected page background color so the full-bleed canvas art
+          // doesn't leave a white border, unless vision-formatting already set one.
+          if (box.backgroundColor && !/background-color=/.test(attrs)) {
+            addition += ` background-color="${box.backgroundColor}"`;
+          }
+          return `${open}${attrs}${addition}${close}`;
+        });
       }
 
       logger.info(`Writing OCR'd markdown to: ${plan.markdownFromOCRPath}`);

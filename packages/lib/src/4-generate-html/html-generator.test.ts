@@ -37,6 +37,30 @@ describe("generateHtmlDocument", () => {
     expect(result).toContain("bloom-editable");
   });
 
+  it("applies a detected background color to a canvas page (no white border)", () => {
+    const book: Book = {
+      frontMatterMetadata: { languages: { en: "English" }, l1: "en", pageSize: "A4Portrait" },
+      pages: [
+        {
+          type: "content" as const,
+          backgroundColor: "#79d3f5",
+          canvasTextBox: { x: 0.13, y: 0.07, w: 0.74, h: 0.86 },
+          elements: [
+            { type: "image" as const, src: "image-6-1.png" },
+            { type: "text" as const, content: { en: "You can use these questions" } },
+          ],
+        },
+      ],
+    };
+
+    const result = HtmlGenerator.generateHtmlDocument(book, () => {});
+
+    // The canvas page renders and carries the page background color via Bloom's
+    // custom property so the page margin matches the full-bleed art.
+    expect(result).toContain('data-tool-id="canvas"');
+    expect(result).toContain("--page-background-color: #79d3f5");
+  });
+
   describe("multiple pages", () => {
     it("should generate HTML for multiple pages with different types", () => {
       const book = {

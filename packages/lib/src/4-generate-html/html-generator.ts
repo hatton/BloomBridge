@@ -477,7 +477,15 @@ export class HtmlGenerator {
       ? ` data-import-source-hash="${page.importSourceHash}"`
       : "";
 
-    return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang=""${sourceHashAttr}>
+    // A detected solid page background fills the page margin so the full-bleed
+    // canvas art doesn't leave a white border around the marginBox. Bloom only
+    // honors the color via its `--page-background-color` custom property (a plain
+    // inline background-color is stripped on import) — same as a normal page.
+    const pageStyleAttr = page.backgroundColor
+      ? ` style="--page-background-color: ${page.backgroundColor}"`
+      : "";
+
+    return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang=""${sourceHashAttr}${pageStyleAttr}>
       <div class="pageLabel" data-i18n="TemplateBooks.PageLabel.Canvas">Canvas</div>
       <div class="pageDescription"></div>
       <div class="marginBox">
