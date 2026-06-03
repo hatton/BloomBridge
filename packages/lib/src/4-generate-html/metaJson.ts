@@ -146,7 +146,7 @@ function looksFullBleed(book: Book): boolean {
         (el.src === FRONT_COVER_IMAGE_FILENAME || el.src === BACK_COVER_IMAGE_FILENAME),
     ),
   );
-  const hasCanvasPage = book.pages.some((page) => !!page.canvasTextBox);
+  const hasCanvasPage = book.pages.some((page) => !!page.canvasTextBoxes?.length);
   return hasFullCover || hasCanvasPage;
 }
 

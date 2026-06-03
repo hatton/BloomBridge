@@ -296,9 +296,16 @@ export class BloomMarkdown {
       // Accumulate text for the current language
       if (currentTextBlock && currentLang) {
         currentText += trimmedLine + "\n"; // Accumulate text
-      } else {
-        // if the trimmed line is not empty
-        if (trimmedLine.length > 0) {
+      } else if (trimmedLine.length > 0) {
+        if (currentLang) {
+          // Untagged text after an image (the LLM tags one block per page but a
+          // canvas page can have several text chunks separated by images). Rather
+          // than drop it, start a fresh text block in the language we last saw so
+          // the chunk survives — e.g. the discussion questions on a "you can use
+          // these questions" page.
+          currentTextBlock = { type: "text", content: { [currentLang]: "" } };
+          currentText = trimmedLine + "\n";
+        } else {
           this.addWarning(
             `Found text outside of a language block (page ${pageNumber}): "${trimmedLine}"`,
           );
@@ -324,7 +331,7 @@ export class BloomMarkdown {
       verticalAlign: pageAttributes.verticalAlign,
       horizontalAlign: pageAttributes.horizontalAlign,
       backgroundColor: pageAttributes.backgroundColor,
-      canvasTextBox: pageAttributes.canvasTextBox,
+      canvasTextBoxes: pageAttributes.canvasTextBoxes,
       importSourceHash: pageAttributes.importSourceHash,
       isMasterPage: pageAttributes.isMasterPage,
     };
@@ -339,7 +346,7 @@ export class BloomMarkdown {
     verticalAlign?: VerticalAlign;
     horizontalAlign?: HorizontalAlign;
     backgroundColor?: string;
-    canvasTextBox?: { x: number; y: number; w: number; h: number };
+    canvasTextBoxes?: { x: number; y: number; w: number; h: number }[];
     importSourceHash?: string;
     isMasterPage?: boolean;
   } {
@@ -349,7 +356,7 @@ export class BloomMarkdown {
       verticalAlign?: VerticalAlign;
       horizontalAlign?: HorizontalAlign;
       backgroundColor?: string;
-      canvasTextBox?: { x: number; y: number; w: number; h: number };
+      canvasTextBoxes?: { x: number; y: number; w: number; h: number }[];
       importSourceHash?: string;
       isMasterPage?: boolean;
     } = {};
@@ -406,18 +413,29 @@ export class BloomMarkdown {
       attributes.isMasterPage = masterPageMatch[1] === "true";
     }
 
-    // Canvas text box: four page-fractions "x,y,w,h" marking where a text block
-    // floats over a full-page background image (a Bloom Canvas page).
-    const canvasMatch = pageComment.match(
-      /canvas-text-box=["']([\d.]+),([\d.]+),([\d.]+),([\d.]+)["']/,
-    );
-    if (canvasMatch) {
-      attributes.canvasTextBox = {
-        x: Number(canvasMatch[1]),
-        y: Number(canvasMatch[2]),
-        w: Number(canvasMatch[3]),
-        h: Number(canvasMatch[4]),
-      };
+    // Canvas text boxes: one or more "x,y,w,h" groups (separated by ";") marking
+    // where each text block floats over a full-page background image (a Bloom
+    // Canvas page), in reading order. Also accept the older singular
+    // `canvas-text-box="x,y,w,h"` for backward compatibility.
+    const parseBox = (s: string): { x: number; y: number; w: number; h: number } | undefined => {
+      const n = s.split(",").map(Number);
+      return n.length === 4 && n.every((v) => Number.isFinite(v))
+        ? { x: n[0], y: n[1], w: n[2], h: n[3] }
+        : undefined;
+    };
+    const boxesMatch = pageComment.match(/canvas-text-boxes=["']([^"']+)["']/);
+    const singleMatch = pageComment.match(/canvas-text-box=["']([^"']+)["']/);
+    if (boxesMatch) {
+      const boxes = boxesMatch[1].split(";").map(parseBox).filter(Boolean) as {
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+      }[];
+      if (boxes.length) attributes.canvasTextBoxes = boxes;
+    } else if (singleMatch) {
+      const box = parseBox(singleMatch[1]);
+      if (box) attributes.canvasTextBoxes = [box];
     }
 
     return attributes;

@@ -22,6 +22,45 @@ export interface CanvasPageInfo extends TextBoxFraction {
    * the canvas art (which fills only the marginBox) leaves a white border.
    */
   backgroundColor?: string;
+  /**
+   * One box per visually-separated text block (clustered by vertical gaps), in
+   * reading order. A canvas page can carry several text chunks (e.g. a heading plus
+   * a list of discussion questions); each is positioned independently. The outer
+   * `{x,y,w,h}` remains the union of all blocks.
+   */
+  textBoxes: TextBoxFraction[];
+}
+
+/** A text item's box in top-down pixel coordinates. */
+interface ItemBox {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  h: number;
+}
+
+/** Cluster text items into vertical blocks separated by gaps larger than a line. */
+function clusterIntoBlocks(items: ItemBox[]): ItemBox[] {
+  if (items.length === 0) return [];
+  const sorted = [...items].sort((a, b) => a.top - b.top || a.left - b.left);
+  const heights = sorted.map((i) => i.h).sort((a, b) => a - b);
+  const medianH = heights[Math.floor(heights.length / 2)] || 0;
+  const gapThreshold = 1.6 * medianH; // merge lines within a block; split between blocks
+  const blocks: ItemBox[] = [];
+  for (const it of sorted) {
+    const last = blocks[blocks.length - 1];
+    if (last && it.top - last.bottom <= gapThreshold) {
+      last.left = Math.min(last.left, it.left);
+      last.right = Math.max(last.right, it.right);
+      last.top = Math.min(last.top, it.top);
+      last.bottom = Math.max(last.bottom, it.bottom);
+      last.h = Math.max(last.h, it.h);
+    } else {
+      blocks.push({ ...it });
+    }
+  }
+  return blocks;
 }
 
 /**
@@ -65,13 +104,9 @@ export async function detectCanvasPages(pdfPath: string): Promise<Map<number, Ca
         const pageH = vp.height;
         const tc = await page.getTextContent();
 
-        // Bounding box of the body text (PDF origin is bottom-left). Exclude
-        // pure-numeric items (page numbers) and empty strings.
-        let minX = Infinity,
-          maxX = -Infinity,
-          topFromBottom = -Infinity,
-          bottomFromBottom = Infinity;
-        let hasBody = false;
+        // Collect each text item's box (PDF origin is bottom-left → convert to
+        // top-down). Exclude pure-numeric items (page numbers) and empty strings.
+        const items: ItemBox[] = [];
         for (const it of tc.items as any[]) {
           if (!("str" in it) || !it.str.trim()) continue;
           if (/^\d+$/.test(it.str.trim())) continue; // page number
@@ -79,28 +114,39 @@ export async function detectCanvasPages(pdfPath: string): Promise<Map<number, Ca
           const yBottom = it.transform[5];
           const w = it.width || 0;
           const h = it.height || Math.hypot(it.transform[2], it.transform[3]);
-          minX = Math.min(minX, x);
-          maxX = Math.max(maxX, x + w);
-          topFromBottom = Math.max(topFromBottom, yBottom + h);
-          bottomFromBottom = Math.min(bottomFromBottom, yBottom);
-          hasBody = true;
+          items.push({
+            left: x,
+            right: x + w,
+            top: pageH - (yBottom + h),
+            bottom: pageH - yBottom,
+            h,
+          });
         }
-        if (!hasBody) continue;
+        if (items.length === 0) continue;
 
         // Only treat it as a canvas page if a single image covers (most of) the page.
         if (!(await isFullPageArtPage(pdfPath, p, pageInfo))) continue;
 
-        const left = minX;
-        const top = pageH - topFromBottom;
-        const width = maxX - minX;
-        const height = topFromBottom - bottomFromBottom;
         const clamp = (v: number) => Math.max(0, Math.min(1, v));
-        const box: TextBoxFraction = {
-          x: clamp(left / pageW),
-          y: clamp(top / pageH),
-          w: clamp(width / pageW),
-          h: clamp(height / pageH),
+        const round3 = (v: number) => Math.round(v * 1000) / 1000;
+        const toBox = (b: ItemBox): TextBoxFraction => ({
+          x: round3(clamp(b.left / pageW)),
+          y: round3(clamp(b.top / pageH)),
+          w: round3(clamp((b.right - b.left) / pageW)),
+          h: round3(clamp((b.bottom - b.top) / pageH)),
+        });
+
+        const blocks = clusterIntoBlocks(items);
+        const textBoxes = blocks.map(toBox);
+        const union: ItemBox = {
+          left: Math.min(...blocks.map((b) => b.left)),
+          right: Math.max(...blocks.map((b) => b.right)),
+          top: Math.min(...blocks.map((b) => b.top)),
+          bottom: Math.max(...blocks.map((b) => b.bottom)),
+          h: 0,
         };
+        const box = toBox(union);
+
         // Sample the page's background color so Bloom can fill the page margin with
         // it; without this the full-bleed canvas art (which fills only the marginBox)
         // leaves a white border around the page.
@@ -114,15 +160,9 @@ export async function detectCanvasPages(pdfPath: string): Promise<Map<number, Ca
           logger.warn(`Canvas page ${p}: background-color sampling failed: ${error}`);
         }
 
-        result.set(p, {
-          x: Math.round(box.x * 1000) / 1000,
-          y: Math.round(box.y * 1000) / 1000,
-          w: Math.round(box.w * 1000) / 1000,
-          h: Math.round(box.h * 1000) / 1000,
-          backgroundColor,
-        });
+        result.set(p, { ...box, backgroundColor, textBoxes });
         logger.info(
-          `Canvas page ${p}: text box at x=${result.get(p)!.x} y=${result.get(p)!.y} w=${result.get(p)!.w} h=${result.get(p)!.h}, bg=${backgroundColor ?? "none"}`,
+          `Canvas page ${p}: ${textBoxes.length} text block(s), union x=${box.x} y=${box.y} w=${box.w} h=${box.h}, bg=${backgroundColor ?? "none"}`,
         );
       } catch (error) {
         logger.warn(`Canvas detection failed for page ${p}: ${error}`);

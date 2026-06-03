@@ -44,7 +44,7 @@ describe("generateHtmlDocument", () => {
         {
           type: "content" as const,
           backgroundColor: "#79d3f5",
-          canvasTextBox: { x: 0.13, y: 0.07, w: 0.74, h: 0.86 },
+          canvasTextBoxes: [{ x: 0.13, y: 0.07, w: 0.74, h: 0.86 }],
           elements: [
             { type: "image" as const, src: "image-6-1.png" },
             { type: "text" as const, content: { en: "You can use these questions" } },

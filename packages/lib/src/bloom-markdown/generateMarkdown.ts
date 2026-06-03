@@ -86,9 +86,9 @@ export function getMarkdownFromBook(book: Book): string {
       if (page.backgroundColor) {
         pageComment += `background-color="${page.backgroundColor}" `;
       }
-      if (page.canvasTextBox) {
-        const b = page.canvasTextBox;
-        pageComment += `canvas-text-box="${b.x},${b.y},${b.w},${b.h}" `;
+      if (page.canvasTextBoxes && page.canvasTextBoxes.length) {
+        const boxes = page.canvasTextBoxes.map((b) => `${b.x},${b.y},${b.w},${b.h}`).join(";");
+        pageComment += `canvas-text-boxes="${boxes}" `;
       }
       // Master-page substitution attributes must survive the round-trip through
       // the Book object too (stages 3 and 4), or the page can't be matched/spliced.

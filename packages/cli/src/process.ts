@@ -260,14 +260,17 @@ export async function processConversion(inputPath: string, options: Arguments) {
       // and record where the text sits as a fraction of the page, baked into the
       // page comment so HTML generation can reproduce the layout.
       const canvasPages = await detectCanvasPages(plan.pdfPath!);
-      for (const [pageNum, box] of canvasPages) {
+      for (const [pageNum, info] of canvasPages) {
         const re = new RegExp(`(<!--\\s*page\\s+index=${pageNum}\\b)([^>]*?)(\\s*-->)`);
+        const boxes = (info.textBoxes.length ? info.textBoxes : [info])
+          .map((b) => `${b.x},${b.y},${b.w},${b.h}`)
+          .join(";");
         markdownContent = markdownContent.replace(re, (_m, open, attrs, close) => {
-          let addition = ` canvas-text-box="${box.x},${box.y},${box.w},${box.h}"`;
+          let addition = ` canvas-text-boxes="${boxes}"`;
           // Add the detected page background color so the full-bleed canvas art
           // doesn't leave a white border, unless vision-formatting already set one.
-          if (box.backgroundColor && !/background-color=/.test(attrs)) {
-            addition += ` background-color="${box.backgroundColor}"`;
+          if (info.backgroundColor && !/background-color=/.test(attrs)) {
+            addition += ` background-color="${info.backgroundColor}"`;
           }
           return `${open}${attrs}${addition}${close}`;
         });

@@ -232,13 +232,16 @@ size** mapped to a Bloom class (`A3/A4/A5/A6 Portrait/Landscape`, `Letter`, `Leg
 ### 5.6 Canvas-page detection — `detectCanvasPages.ts`
 
 For interior pages (excludes first/last = covers) that are a **full-page background
-image with a floating text block** (e.g. a picture-book scene with a caption), it
-reads the body text’s bounding box from the PDF text layer (excluding pure-numeric
-page numbers) and confirms a full-page image via `isFullPageArtPage`. It records the
-box as **page fractions** in the page comment:
+image with floating text** (e.g. a picture-book scene with a caption, or a page of
+discussion questions), it reads the body text from the PDF text layer (excluding
+pure-numeric page numbers), **clusters it into vertical blocks** (separated by gaps
+larger than a line), and confirms a full-page image via `isFullPageArtPage`. It
+records one box per block (page fractions, reading order) in the page comment as a
+`;`-separated list:
 
 ```
-<!-- page index=3 … canvas-text-box="0.104,0.241,0.694,0.128" -->
+<!-- page index=3 … canvas-text-boxes="0.10,0.24,0.69,0.13" -->
+<!-- page index=6 … canvas-text-boxes="0.19,0.07,0.61,0.14;0.24,0.29,0.46,0.02;…" -->
 ```
 
 Stage 4 uses this to build a Bloom “Canvas” page (8.4). It also **renders each
@@ -250,7 +253,7 @@ vision-formatting already set a `background-color`.
 
 > Stage 1 ordering in `process.ts`: OCR → `prepareCovers` → (optional)
 > `addVisionFormatting` → `detectNormalStyle` (prepends the book comment) →
-> `detectCanvasPages` (injects `canvas-text-box`) → write `.ocr.md`.
+> `detectCanvasPages` (injects `canvas-text-boxes`) → write `.ocr.md`.
 
 ---
 
@@ -272,7 +275,7 @@ The LLM’s job (two parts):
    grouping contiguous same-language/same-field text under one comment, and
    **preserving** the `<!-- page … -->` and `<!-- book … -->` comments and all their
    attributes verbatim (the prompt explicitly lists `type`, `bilingual`,
-   `vertical-align`, `horizontal-align`, `background-color`, `canvas-text-box`).
+   `vertical-align`, `horizontal-align`, `background-color`, `canvas-text-boxes`).
 
 **Metadata field names** the LLM may tag (these become `meta.json` / dataDiv fields
 in Stage 4): `bookTitle, isbn, license, licenseUrl, licenseDescription,
@@ -341,7 +344,7 @@ normalFontSizePt: 28          # mirrored into the <!-- book --> comment
 # A Thief in the Night
 
 <!-- page index=3 type="content" vertical-align="center" horizontal-align="left"
-     background-color="#ffffff" canvas-text-box="0.10,0.24,0.69,0.13" -->
+     background-color="#ffffff" canvas-text-boxes="0.10,0.24,0.69,0.13" -->
 ![image](image-3-1.png){width=400}
 <!-- text lang="en" -->
 "Wow, Mum, look!" said Angie.
@@ -354,15 +357,20 @@ normalFontSizePt: 28          # mirrored into the <!-- book --> comment
   before page-splitting** (leaving it in would shift the page-comment↔content
   alignment by one — a real bug we fixed).
 - **`<!-- page index=N … -->`** attributes: `type`, `bilingual`, `vertical-align`,
-  `horizontal-align`, `background-color`, `canvas-text-box`, `import-source-hash`
-  (the page-render hash, §5.1/§9.7), and `master-page` (set on a page that matched a
-  master and so skipped OCR).
+  `horizontal-align`, `background-color`, `canvas-text-boxes` (a `;`-separated list of
+  `x,y,w,h` boxes — one per floating text block; the older singular `canvas-text-box`
+  is still accepted), `import-source-hash` (the page-render hash, §5.1/§9.7), and
+  `master-page` (set on a page that matched a master and so skipped OCR).
 - **`<!-- text lang="X" field="Y" -->`** introduces a text block; `field` is
   optional. One block per contiguous same-lang/same-field run. A block whose content
   is multiple languages is represented as one `TextBlockElement` with a
   `content: { lang: text }` map.
 - **Images**: standard `![alt](src){attrs}`; alt/src/attrs preserved verbatim.
 - **Untagged text** before the first comment/image becomes a `lang="unk"` block.
+  Untagged text **after** an image (mid-page) starts a fresh block in the
+  last-seen language rather than being dropped — this is how the separate text
+  chunks on a multi-text canvas page (e.g. discussion questions interleaved with
+  little figures) survive, since the LLM tags only the first chunk.
 - **Page numbers** (`field="pageNumber"`) and **empty pages** do not survive to HTML.
 
 `Book`/`Page`/`PageElement` types live in `packages/lib/src/types.ts`;
@@ -388,7 +396,7 @@ pages.
 ### 9.2 The per-page decision tree — `generatePage`
 
 1. **Cover?** page has `cover.jpg`/`back-cover.jpg` → `generateFullPageCoverPage`.
-2. **Canvas?** page has `canvasTextBox` (and an image + non-empty text) →
+2. **Canvas?** page has `canvasTextBoxes` (and an image + non-empty text) →
    `generateCanvasPage`; falls through if it can’t be built.
 3. **Otherwise → origami** (`origami.ts`): build `OrigamiItem[]` from the page’s
    elements, **dropping page-number blocks and empty text blocks** (an image-only
@@ -417,14 +425,19 @@ shows a white border.
 
 ### 9.4 Canvas pages — `generateCanvasPage`
 
-For a background image + floating caption. Emits the reference structure: a
-`bloom-page numberedPage … bloom-combinedPage` with `data-tool-id="canvas"` and the
-Canvas template `data-pagelineage`; inside, a `bloom-backgroundImage` canvas-element
-filling the canvas, plus a separately **absolutely-positioned `bloom-canvas-element`**
-(`left/top/width/height` px) holding a `bloom-translationGroup` with a `Bubble-style`
-editable. The canvas (`data-imgsizebasedon`) is sized to the page aspect ratio so the
-full-bleed image fills it with no letterbox, and the `canvasTextBox` fractions map
-straight to px. Validated on `volcano.pdf`.
+For a background image + one or more floating text blocks. Emits the reference
+structure: a `bloom-page numberedPage … bloom-combinedPage` with
+`data-tool-id="canvas"` and the Canvas template `data-pagelineage`; inside, a
+`bloom-backgroundImage` canvas-element filling the canvas, plus **one
+absolutely-positioned `bloom-canvas-element` per text block** (`left/top/width/height`
+px from that block's box), each holding a `bloom-translationGroup` with a
+`Bubble-style` editable. The canvas (`data-imgsizebasedon`) is sized to the page
+aspect ratio so the full-bleed image fills it with no letterbox, and each box's
+fractions map straight to px. When the number of detected boxes doesn't match the
+number of text blocks (e.g. starting from an older `.ocr.md` with a single box), it
+falls back to merging all the text into one box so nothing is dropped. Validated on
+`volcano.pdf` (single caption) and the LFA "discussion questions" page (heading +
+five questions + footer).
 
 If the page has a detected `background-color` (5.6), it is applied to the page div
 as Bloom’s `--page-background-color` custom property — the canvas art fills only

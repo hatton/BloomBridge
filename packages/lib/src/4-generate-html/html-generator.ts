@@ -454,45 +454,59 @@ export class HtmlGenerator {
    * Returns null if the page isn't actually image-plus-text (caller falls back).
    */
   private static generateCanvasPage(page: Page, metadata: FrontMatterMetadata): string | null {
-    const tb = page.canvasTextBox;
-    if (!tb) return null;
+    const boxes = page.canvasTextBoxes;
+    if (!boxes || boxes.length === 0) return null;
     const imageEl = page.elements.find((e): e is ImageElement => e.type === "image");
-    const textEl = page.elements.find(
+    const textEls = page.elements.filter(
       (e): e is TextBlockElement =>
         e.type === "text" &&
         e.field !== "pageNumber" &&
         Object.values(e.content).some((v) => v && v.trim() !== ""),
     );
-    if (!imageEl || !textEl) return null;
+    if (!imageEl || textEls.length === 0) return null;
 
     const pageSize = metadata.pageSize || "A5Portrait";
     const { pageW, pageH, canvasW } = this.pagePx(pageSize);
     const canvasH = Math.round(canvasW * (pageH / pageW));
-    const tx = Math.round(tb.x * canvasW);
-    const ty = Math.round(tb.y * canvasH);
-    const tw = Math.round(tb.w * canvasW);
-    const th = Math.round(tb.h * canvasH);
-    const posStyle = `left: ${tx}px; top: ${ty}px; width: ${tw}px; height: ${th}px;`;
-
-    const pageId = randomUUID();
-    const bgBubble = this.COVER_DATA_BUBBLE; // level 1
-    const textBubble = this.COVER_DATA_BUBBLE.replace("`level`:1", "`level`:2");
     const fontPx = metadata.normalFontSizePt
       ? Math.round((metadata.normalFontSizePt * 96) / 72)
       : 16;
     const l1 = metadata.l1;
-    const altBubble = `{\`lang\`:\`${l1}\`,\`style\`:\`${posStyle}\`,\`tails\`:[]}`;
+    const bgBubble = this.COVER_DATA_BUBBLE; // level 1
+    const posStyleOf = (b: { x: number; y: number; w: number; h: number }) =>
+      `left: ${Math.round(b.x * canvasW)}px; top: ${Math.round(b.y * canvasH)}px; width: ${Math.round(b.w * canvasW)}px; height: ${Math.round(b.h * canvasH)}px;`;
 
-    const editables = Object.keys(textEl.content)
-      .filter((lang) => textEl.content[lang] && textEl.content[lang].trim())
-      .map((lang) => {
-        const html = blockMarkdownToHtml(textEl.content[lang]) || "<p></p>";
-        const visibility =
-          lang === l1 ? " bloom-visibility-code-on bloom-content1 bloom-contentNational1" : "";
-        return `<div class="bloom-editable Bubble-style${visibility}" lang="${lang}" contenteditable="true" data-bubble-alternate="${altBubble}">${html}</div>`;
+    // Pair each text block with its own box when the counts line up; otherwise fall
+    // back to a single box (the union) holding all the text, so nothing is dropped.
+    const pairs: { text: TextBlockElement; box: { x: number; y: number; w: number; h: number } }[] =
+      boxes.length === textEls.length
+        ? textEls.map((text, i) => ({ text, box: boxes[i] }))
+        : [{ text: mergeTextBlocks(textEls), box: unionBox(boxes) }];
+
+    const textElementsHtml = pairs
+      .map(({ text, box }, i) => {
+        const posStyle = posStyleOf(box);
+        // bubble levels stack above the background (level 1); start text at level 2.
+        const bubble = this.COVER_DATA_BUBBLE.replace("`level`:1", `\`level\`:${i + 2}`);
+        const altBubble = `{\`lang\`:\`${l1}\`,\`style\`:\`${posStyle}\`,\`tails\`:[]}`;
+        const editables = Object.keys(text.content)
+          .filter((lang) => text.content[lang] && text.content[lang].trim())
+          .map((lang) => {
+            const html = blockMarkdownToHtml(text.content[lang]) || "<p></p>";
+            const visibility =
+              lang === l1 ? " bloom-visibility-code-on bloom-content1 bloom-contentNational1" : "";
+            return `<div class="bloom-editable Bubble-style${visibility}" lang="${lang}" contenteditable="true" data-bubble-alternate="${altBubble}">${html}</div>`;
+          })
+          .join("\n");
+        return `            <div class="bloom-canvas-element" style="${posStyle}" data-bubble="${bubble}">
+              <div class="bloom-translationGroup bloom-leadingElement" data-default-languages="V" style="font-size: ${fontPx}px;">
+                ${editables}
+              </div>
+            </div>`;
       })
       .join("\n");
 
+    const pageId = randomUUID();
     const sourceHashAttr = page.importSourceHash
       ? ` data-import-source-hash="${page.importSourceHash}"`
       : "";
@@ -516,11 +530,7 @@ export class HtmlGenerator {
                 <img src="${escapeHtml(imageEl.src)}" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
               </div>
             </div>
-            <div class="bloom-canvas-element" style="${posStyle}" data-bubble="${textBubble}">
-              <div class="bloom-translationGroup bloom-leadingElement" data-default-languages="V" style="font-size: ${fontPx}px;">
-                ${editables}
-              </div>
-            </div>
+${textElementsHtml}
           </div>
         </div>
       </div>
@@ -615,7 +625,7 @@ export class HtmlGenerator {
     // A canvas page: full-page background image with text floating on top, at the
     // position it had in the source PDF. Falls through to origami if it can't be
     // built (e.g. no image or no text).
-    if (page.canvasTextBox) {
+    if (page.canvasTextBoxes?.length) {
       const canvas = this.generateCanvasPage(page, metadata);
       if (canvas) return canvas;
     }
@@ -748,6 +758,32 @@ export class HtmlGenerator {
     </div>`;
   }
 }
+/** Merge several text blocks into one, concatenating each language's text as paragraphs. */
+function mergeTextBlocks(textEls: TextBlockElement[]): TextBlockElement {
+  const content: Record<string, string> = {};
+  for (const el of textEls) {
+    for (const [lang, value] of Object.entries(el.content)) {
+      if (!value || !value.trim()) continue;
+      content[lang] = content[lang] ? `${content[lang]}\n\n${value}` : value;
+    }
+  }
+  return { type: "text", content };
+}
+
+/** Smallest box covering all the given boxes. */
+function unionBox(boxes: { x: number; y: number; w: number; h: number }[]): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} {
+  const x = Math.min(...boxes.map((b) => b.x));
+  const y = Math.min(...boxes.map((b) => b.y));
+  const right = Math.max(...boxes.map((b) => b.x + b.w));
+  const bottom = Math.max(...boxes.map((b) => b.y + b.h));
+  return { x, y, w: right - x, h: bottom - y };
+}
+
 function fixCopyright(fields: TextBlockElement[]) {
   // When the copyright was derived from a publisher line, it can arrive as
   // "Published by Library For All Ltd". The copyright holder is just the

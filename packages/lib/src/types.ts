@@ -94,9 +94,10 @@ export interface Page {
   verticalAlign?: VerticalAlign;
   horizontalAlign?: HorizontalAlign;
   backgroundColor?: string; // CSS color, e.g. "#fff3e0"
-  // When set, this page is a full-page background image with text floating on top
-  // (a Bloom "Canvas" page); the box is where the text sits over the image.
-  canvasTextBox?: TextBox;
+  // When set, this page is a full-page background image with one or more text
+  // blocks floating on top (a Bloom "Canvas" page); each box is where one text
+  // block sits over the image, in reading order (top to bottom).
+  canvasTextBoxes?: TextBox[];
   // Hash of the source PDF page's render (see 1-ocr/pageImageHash.ts). Carried in
   // the page comment so master-page substitution can recognize a page that
   // matches one in a "master" book.
