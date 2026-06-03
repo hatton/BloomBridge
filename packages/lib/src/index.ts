@@ -21,7 +21,12 @@ export { BloomMarkdown as Parser } from "./bloom-markdown/parseMarkdown";
 export { BloomMetadataParser } from "./3-add-bloom-plan/bloomMetadata";
 
 export { HtmlGenerator } from "./4-generate-html/html-generator";
-export { buildBookMetaData, writeMetaJson } from "./4-generate-html/metaJson";
+export {
+  buildBookMetaData,
+  writeMetaJson,
+  writeAppearanceJson,
+  hasFullPageFrontCover,
+} from "./4-generate-html/metaJson";
 export type { BookMetaData } from "./4-generate-html/metaJson";
 
 export { notifyBloomOfBook } from "./5-notify-bloom/notifyBloom";

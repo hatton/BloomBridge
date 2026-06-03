@@ -406,6 +406,15 @@ Bloom’s current cover mechanism is **custom layout**, not the old
 file on import) and `data-book-inactive="coverImage"`. Bloom regenerates the visible
 cover from the dataDiv entry on import.
 
+When a full-page front cover is present we also (a) emit a head
+`appearanceCoverBackgroundColor` style forcing `--cover-background-color: white`
+(so Bloom doesn't paint the branding color around the art or behind the unused
+inside covers), and (b) write `appearance.json` (see 9.6) with
+`cover-background-color: white`. And because a full cover (or any canvas page)
+means the art runs to the edge, `appearance.json` sets `fullBleed: true` so Bloom
+drops the page margins — without it the cover sits inside the 12 mm margin and
+shows a white border.
+
 ### 9.4 Canvas pages — `generateCanvasPage`
 
 For a background image + floating caption. Emits the reference structure: a
@@ -455,6 +464,12 @@ font-family }`, and the **same rules for `.Bubble-style`** so canvas captions ma
   `nameLocked: true` (so Bloom keeps our folder name instead of renaming to the
   title), `pageCount` = **content pages only**, plus title/author/license/etc. License
   strings are normalized to Bloom tokens (`cc-by-nc-nd`, else `custom`).
+
+- **`appearance.json`** (`metaJson.writeAppearanceJson`): for full-bleed-style books
+  (a full-page cover or any canvas page) we write `{ fullBleed: true }` so Bloom
+  renders with no page margins, plus `cover-background-color: "white"` when there's a
+  full-page front cover. Merged over any `appearance.json` Bloom already wrote; a
+  no-op for ordinary bordered books.
 
 The book HTML is written as `<bookFolder>/<bookFolder>.htm` (the name Bloom reads),
 and a stray `index.html` from older runs is removed.

@@ -17,6 +17,7 @@ import {
   detectNormalStyle,
   detectCanvasPages,
   writeMetaJson,
+  writeAppearanceJson,
   notifyBloomOfBook,
   findMasterBookFolder,
   loadMasterPages,
@@ -449,6 +450,9 @@ export async function processConversion(inputPath: string, options: Arguments) {
       // existing one when updating a book already in a Bloom collection). The id
       // is what lets a running Bloom add/refresh the right book.
       await writeMetaJson(plan.bookFolderPath!, book);
+      // Tell Bloom to render full-bleed (no margins) and keep covers white behind
+      // full-page cover art, when the book calls for it.
+      await writeAppearanceJson(plan.bookFolderPath!, book);
 
       logger.info(`Bloom book should be at: ${plan.bookFolderPath}`);
       logger.info("✅ Conversion to Bloom HTML completed successfully!");

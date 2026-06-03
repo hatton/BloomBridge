@@ -69,6 +69,7 @@ export class HtmlGenerator {
     <meta name="BloomFormatVersion" content="2.1" />
     <title>${escapeHtml(titleRecord![l1Lang])}</title>
     ${this.generateUserModifiedStyles(book)}
+    ${this.generateCoverBackgroundStyle(book)}
     </head>
     <body>
     ${this.generateBloomDataDiv(book)}
@@ -134,6 +135,25 @@ export class HtmlGenerator {
     );
     if (isCover) return true;
     return page.type !== "front-matter" && page.type !== "back-matter";
+  }
+
+  /**
+   * When the book has a full-page front cover image, force the cover background to
+   * white. Bloom regenerates the xMatter covers and would otherwise paint the
+   * collection/branding cover color around our full-page art (and behind the
+   * unused inside covers). This matches Bloom's own `appearanceCoverBackgroundColor`
+   * style block, which it keys off `appearance.json`'s `cover-background-color`
+   * (see metaJson.writeAppearanceJson).
+   */
+  private static generateCoverBackgroundStyle(book: Book): string {
+    const hasFullCover = book.pages.some((page) =>
+      page.elements.some(
+        (element): element is ImageElement =>
+          element.type === "image" && element.src === FRONT_COVER_IMAGE_FILENAME,
+      ),
+    );
+    if (!hasFullCover) return "";
+    return `<style type="text/css" name="appearanceCoverBackgroundColor">.bloom-page { --cover-background-color: white; }</style>`;
   }
 
   private static generateBloomDataDiv(book: Book): string {

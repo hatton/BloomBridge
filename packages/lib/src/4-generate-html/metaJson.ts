@@ -1,7 +1,13 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { randomUUID } from "crypto";
-import type { Book, TextBlockElement } from "../types.js";
+import {
+  type Book,
+  type TextBlockElement,
+  type ImageElement,
+  FRONT_COVER_IMAGE_FILENAME,
+  BACK_COVER_IMAGE_FILENAME,
+} from "../types.js";
 import { logger } from "../logger";
 
 /**
@@ -116,6 +122,63 @@ export function buildBookMetaData(book: Book, existing?: Partial<BookMetaData>):
     nameLocked: true,
     pageCount: book.pages.filter((p) => p.type === "content").length,
   };
+}
+
+/** Whether the book has a full-page front cover (a rendered `cover.jpg`). */
+export function hasFullPageFrontCover(book: Book): boolean {
+  return book.pages.some((page) =>
+    page.elements.some(
+      (el): el is ImageElement => el.type === "image" && el.src === FRONT_COVER_IMAGE_FILENAME,
+    ),
+  );
+}
+
+/**
+ * A book "looks full-bleed" when its art runs to the page edge: a full-page cover
+ * (front or back) or any Canvas page (full-page background image with floating
+ * text). For these, we tell Bloom to render full-bleed (no page margins).
+ */
+function looksFullBleed(book: Book): boolean {
+  const hasFullCover = book.pages.some((page) =>
+    page.elements.some(
+      (el): el is ImageElement =>
+        el.type === "image" &&
+        (el.src === FRONT_COVER_IMAGE_FILENAME || el.src === BACK_COVER_IMAGE_FILENAME),
+    ),
+  );
+  const hasCanvasPage = book.pages.some((page) => !!page.canvasTextBox);
+  return hasFullCover || hasCanvasPage;
+}
+
+/**
+ * Write Bloom's `appearance.json` when the book calls for full-bleed presentation.
+ * Bloom reads this on import: `fullBleed` removes page margins so cover/canvas art
+ * reaches the edge, and `cover-background-color: white` keeps the regenerated (and
+ * otherwise branding-colored) xMatter covers white behind a full-page cover image.
+ * Merges over any appearance.json Bloom already wrote, and is a no-op for ordinary
+ * bordered books.
+ */
+export async function writeAppearanceJson(bookFolderPath: string, book: Book): Promise<void> {
+  const fullBleed = looksFullBleed(book);
+  const whiteCover = hasFullPageFrontCover(book);
+  if (!fullBleed && !whiteCover) return; // nothing to assert; let Bloom manage it
+
+  const appearancePath = path.join(bookFolderPath, "appearance.json");
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = JSON.parse(await fs.readFile(appearancePath, "utf-8")) as Record<string, unknown>;
+  } catch {
+    existing = {};
+  }
+
+  const merged: Record<string, unknown> = { cssThemeName: "default", ...existing };
+  if (fullBleed) merged.fullBleed = true;
+  if (whiteCover) merged["cover-background-color"] = "white";
+
+  await fs.writeFile(appearancePath, JSON.stringify(merged, null, 2));
+  logger.info(
+    `Wrote appearance.json (fullBleed=${fullBleed ? "true" : "unchanged"}${whiteCover ? ", cover-background-color=white" : ""}).`,
+  );
 }
 
 /**
