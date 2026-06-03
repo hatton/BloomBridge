@@ -34,7 +34,13 @@ export {
   applyMasterPages,
 } from "./master/masterPages";
 export type { MasterPage } from "./master/masterPages";
-export { hashPageImage } from "./1-ocr/pageImageHash";
+export {
+  hashPageImage,
+  hashesMatch,
+  hashDistance,
+  PERCEPTUAL_MATCH_MAX_DISTANCE,
+  DEFAULT_HASH_MODE,
+} from "./1-ocr/pageImageHash";
 export type { PageHashMode } from "./1-ocr/pageImageHash";
 export type {
   Book,

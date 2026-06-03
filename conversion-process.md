@@ -166,12 +166,17 @@ Image filename convention: `image-<page>-<indexOnPage>.png`. Page numbers are me
 to be dropped by OCR; if they leak through they’re marked later (Stage 2 cleanup).
 
 **Per-page source hash (GPT path only).** As each page is rendered, `pageImageHash.ts`
-hashes its raster (SHA-256 of decoded pixels) and the hash is recorded on the page
-comment as `import-source-hash="…"`. This is the key for **master-page substitution**
-(§9.7): if the hash matches one provided by a master book, that page **skips OCR**
-entirely (a short placeholder body + `master-page="true"`) — its real content is
-spliced in from the master in Stage 4. The hashing is local and free; only the GPT
-path renders full pages, so Mistral/unpdf inputs don't get hashes (and can't match).
+computes a **perceptual hash** (a 64-bit dHash, 16 hex chars) of its raster and
+records it on the page comment as `import-source-hash="…"`. This is the key for
+**master-page substitution** (§9.7): if the hash is within a small Hamming distance
+of one provided by a master book, that page **skips OCR** entirely (a short
+placeholder body + `master-page="true"`) — its real content is spliced in from the
+master in Stage 4. A perceptual hash (rather than an exact one) means a master built
+from full-resolution PDFs still matches the same page in a re-compressed/downsampled
+copy (e.g. the smaller PDFs checked into the repo). The hashing is local and free;
+only the GPT path renders full pages, so Mistral/unpdf inputs don't get hashes (and
+can't match). `pageImageHash.ts` also offers an `"exact"` mode (SHA-256) behind the
+same API.
 
 Vestigial: `unused-pdfToMarkdownAndImageFiles-OpenRouter.ts` (OpenRouter file-parser
 plugin — never worked/wired; this is what `--parser` was for) and
@@ -236,7 +241,12 @@ box as **page fractions** in the page comment:
 <!-- page index=3 … canvas-text-box="0.104,0.241,0.694,0.128" -->
 ```
 
-Stage 4 uses this to build a Bloom “Canvas” page (8.4).
+Stage 4 uses this to build a Bloom “Canvas” page (8.4). It also **renders each
+canvas page and samples its solid background color** (the same deterministic
+border-sampling used by vision-formatting, `detectBackgroundColor.ts`) and emits
+`background-color` on the page comment — so Stage 4 can fill the page margin and
+the full-bleed art doesn’t leave a white border (see 9.4). Skipped if
+vision-formatting already set a `background-color`.
 
 > Stage 1 ordering in `process.ts`: OCR → `prepareCovers` → (optional)
 > `addVisionFormatting` → `detectNormalStyle` (prepends the book comment) →
@@ -407,6 +417,10 @@ editable. The canvas (`data-imgsizebasedon`) is sized to the page aspect ratio s
 full-bleed image fills it with no letterbox, and the `canvasTextBox` fractions map
 straight to px. Validated on `volcano.pdf`.
 
+If the page has a detected `background-color` (5.6), it is applied to the page div
+as Bloom’s `--page-background-color` custom property — the canvas art fills only
+the marginBox, so without this the 12 mm page margin shows an ugly white border.
+
 ### 9.5 Origami layout — `origami.ts`
 
 Recursive split-panes (`split-pane` / `split-pane-component` / `split-pane-divider`).
@@ -453,12 +467,14 @@ can't reconstruct faithfully. Rather than fight them on every book, we build **o
 "master" book**, perfect those pages in Bloom, and **drop them into every other
 import** when we recognize them.
 
-**Recognition is by page-render hash.** Each source page's raster is hashed in
-Stage 1 (§5.1) and carried as `import-source-hash`. A book folder ending in `master`
-holds the canonical pages, each tagged with the `data-import-source-hash` of the
-source page it replaces. On a normal import we build a `hash → {page HTML, images}`
-map from the master (`loadMasterPages`) and, after Stage 4 generates the HTML,
-`applyMasterPages` post-processes it:
+**Recognition is by a perceptual page-render hash.** Each source page's raster is
+hashed in Stage 1 (§5.1, a 64-bit dHash) and carried as `import-source-hash`. A book
+folder ending in `master` holds the canonical pages, each tagged with the
+`data-import-source-hash` of the source page it replaces. On a normal import we build
+a `hash → {page HTML, images}` map from the master (`loadMasterPages`) and, after
+Stage 4 generates the HTML, `applyMasterPages` post-processes it. Matching is by
+**Hamming distance ≤ `PERCEPTUAL_MATCH_MAX_DISTANCE` (10/64)`** (`hashesMatch`), and
+when several master pages are within range the closest one wins:
 
 - **matched page** (its `data-import-source-hash` is in the map) → the generated
   placeholder div is replaced with the **master's exact page HTML**; the master's
@@ -478,15 +494,19 @@ page carries `data-import-source-hash`; open it in Bloom, perfect the complex pa
 delete the rest, and **rename the folder to end in `master`**. Subsequent imports
 into that collection substitute automatically.
 
-**Two caveats** (both real, seen in this session):
+**Robustness, measured this session:**
 
-- The hash is **exact** (the seam in `pageImageHash.ts` allows a perceptual mode
-  later). Two source PDFs must rasterize the shared page **identically** to match —
-  so build the master from a file produced by the **same export/compression
-  pipeline** as the books you'll import. (Recompressing a PDF changes every hash.)
-- The master's hashes live on the page divs in its `.htm`. Confirm your Bloom build
-  **preserves `data-import-source-hash`** on save; if a future build strips unknown
-  `data-*`, the fallback is a sidecar JSON in the master folder.
+- The perceptual hash tolerates re-compression: across a full-res PDF and a heavily
+  compressed copy (37 MB → 1.25 MB), every shared page hashed to within **0–2 bits**,
+  while distinct pages differed by **≥ 18** — so the threshold of 10 separates them
+  with wide margin. Build the master from your full-resolution PDFs; it still matches
+  the compressed copies used in repo tests.
+- Bloom **preserves `data-import-source-hash`** on the page divs across a save
+  (verified on Bloom 6.5.0), so the master's hashes survive hand-editing in Bloom.
+- Residual risk: two genuinely look-alike pages (e.g. blank pages) can fall within
+  10 bits of each other. Masters only tag the specific boilerplate pages, and the
+  closest match wins, so this hasn't caused a wrong substitution — but don't tag a
+  blank/near-empty page in a master.
 
 ---
 
@@ -577,8 +597,9 @@ adds/refreshes the book live.
   delete/regenerate them (noted as TODO in code).
 - **Marketing back-matter** isn’t auto-distinguished from content, but a master book
   can substitute specific such pages (§9.7).
-- **Master substitution uses exact hashes**: rebuild the master if the source export
-  pipeline changes, and verify Bloom preserves `data-import-source-hash` on save.
+- **Master substitution uses a perceptual hash** (dHash, Hamming ≤ 10/64), so it
+  tolerates re-compression/downsampling between the master's source and the imported
+  books. Don't tag near-blank pages in a master (they can collide perceptually).
 
 ---
 
@@ -597,5 +618,6 @@ adds/refreshes the book live.
 - Stage 4: `packages/lib/src/4-generate-html/` — `html-generator.ts`, `origami.ts`,
   `markdownToHtml.ts`, `metaJson.ts`, `licenses.ts`
 - Master substitution: `packages/lib/src/master/masterPages.ts`,
-  `packages/lib/src/1-ocr/pageImageHash.ts`
+  `packages/lib/src/1-ocr/pageImageHash.ts` (perceptual hash + `hashesMatch`)
+- Background color (canvas + solid pages): `packages/lib/src/1-ocr/detectBackgroundColor.ts`
 - Stage 5: `packages/lib/src/5-notify-bloom/notifyBloom.ts`

@@ -5,7 +5,7 @@ import * as os from "os";
 import * as path from "path";
 import { getPdfPageInfo } from "./coverDetection";
 import { renderPdfPageToImage } from "./renderPdfPage";
-import { hashPageImage } from "./pageImageHash";
+import { hashPageImage, hashesMatch } from "./pageImageHash";
 
 // A streamed chat-completion chunk (Server-Sent Events `data:` payload).
 interface OpenRouterStreamChunk {
@@ -227,7 +227,8 @@ export async function pdfToMarkdown(
       // If this page's render matches one of the master book's pages, skip OCR:
       // the master supplies its exact HTML + images during substitution. Emit a
       // short placeholder so the page survives parsing (an empty page is dropped).
-      if (masterHashes?.has(hash)) {
+      // Matching is perceptual (Hamming distance), so a compressed copy still hits.
+      if (masterHashes && [...masterHashes].some((mh) => hashesMatch(hash, mh))) {
         logger.info(`Page ${page}/${pageCount} matched master, skipping OCR`);
         return { md: "_(page provided by master book)_", hash, matched: true };
       }

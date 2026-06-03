@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { logger } from "../logger";
+import { hashesMatch, hashDistance } from "../1-ocr/pageImageHash";
 
 /** A page lifted from a master book, keyed elsewhere by its source-image hash. */
 export interface MasterPage {
@@ -154,7 +155,18 @@ export async function applyMasterPages(
     const hash = readSourceHash(page.html);
     if (!hash) continue;
 
-    const master = masterPages.get(hash);
+    // Perceptual match: pick the closest master page within the match threshold.
+    let master: MasterPage | undefined;
+    let bestDistance = Infinity;
+    for (const [masterHash, candidate] of masterPages) {
+      if (!hashesMatch(hash, masterHash)) continue;
+      const d = hashDistance(hash, masterHash);
+      if (d < bestDistance) {
+        bestDistance = d;
+        master = candidate;
+      }
+    }
+
     if (master && masterFolder) {
       let pageHtml = master.html;
       for (const src of master.images) {
