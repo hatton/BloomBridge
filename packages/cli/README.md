@@ -136,3 +136,38 @@ of the `--model` (LLM enrichment) option with `--vision-model`:
 ```bash
 pdf-to-bloom mybook.pdf --vision-formatting --vision-model "openai/gpt-5.4"
 ```
+
+## Master-page substitution (shared boilerplate pages)
+
+When a whole set of books from one publisher share the same complex, hand-built pages
+(license/credits, "You're reading Level 4", "Did you enjoy this book?", etc.), you can
+build **one "master" book** with those pages perfected in Bloom and have every other
+import drop them in automatically.
+
+How it works: every source page is fingerprinted with a perceptual hash. If a page
+matches one held by a master book, OCR is skipped for it and the master's exact page
+HTML + images are spliced into the result. Matching is perceptual, so a master built
+from full-resolution PDFs still matches the same page in a re-compressed copy.
+
+**To build a master:**
+
+1. Convert a representative book with `--emit-source-hashes`. This tags every page in
+   the output HTML with a `data-import-source-hash` (and skips substitution).
+
+   ```bash
+   pdf-to-bloom sample.pdf --collection "My Collection" --emit-source-hashes
+   ```
+
+2. Open the book in Bloom, perfect the complex pages, delete the rest, and **rename the
+   book's folder so it ends in `master`** (e.g. `LFA Vanuatu Master`).
+
+**Then just convert normally.** Any book sent to a collection that contains a `*master`
+folder will have its matching pages substituted automatically — the log shows
+`matched master, skipping OCR` and `Substituted master page …`. No extra flag needed.
+
+Notes:
+
+- Only the default OCR path (which renders each page) produces the hashes, so this works
+  with `--ocr gpt`/`gemini`, not `--ocr mistral`/`unpdf`.
+- Don't keep blank/near-empty pages in a master — perceptually they look alike and could
+  match the wrong page.
