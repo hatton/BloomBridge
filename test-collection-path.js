@@ -2,9 +2,7 @@ const path = require("path");
 const os = require("os");
 
 // Import the function we want to test (assuming it's built)
-const {
-  validateAndResolveCollectionPath,
-} = require("./packages/cli/dist/index.js");
+const { validateAndResolveCollectionPath } = require("./packages/cli/dist/index.js");
 
 async function testCollectionPaths() {
   console.log("Testing collection path resolution...\n");
@@ -43,12 +41,7 @@ async function testCollectionPaths() {
         console.log(`Resolved to: ${attemptedPath}`);
 
         // Check if it matches our expected pattern
-        const expectedPath = path.join(
-          homeDir,
-          "Documents",
-          "Bloom",
-          testCase.input
-        );
+        const expectedPath = path.join(homeDir, "Documents", "Bloom", testCase.input);
         const normalizedAttempted = path.normalize(attemptedPath);
         const normalizedExpected = path.normalize(expectedPath);
 

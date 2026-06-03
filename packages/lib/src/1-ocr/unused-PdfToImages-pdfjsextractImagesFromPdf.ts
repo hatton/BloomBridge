@@ -19,7 +19,7 @@ export interface ExtractedImage {
  * @returns Promise resolving to array of extracted images with metadata
  */
 export async function extractImagesFromPdf(
-  pdfPath: string | ArrayBuffer
+  pdfPath: string | ArrayBuffer,
 ): Promise<ExtractedImage[]> {
   try {
     logger.info("Starting image extraction from PDF using PDF.js + Sharp");
@@ -64,10 +64,7 @@ export async function extractImagesFromPdf(
             const { width, height, data: imgData } = imgObj;
 
             if (
-              !(
-                imgData instanceof Uint8ClampedArray ||
-                imgData instanceof Uint8Array
-              ) ||
+              !(imgData instanceof Uint8ClampedArray || imgData instanceof Uint8Array) ||
               typeof width !== "number" ||
               typeof height !== "number"
             ) {
@@ -77,9 +74,7 @@ export async function extractImagesFromPdf(
 
             // Convert Uint8Array to Uint8ClampedArray if needed
             const clampedImgData =
-              imgData instanceof Uint8ClampedArray
-                ? imgData
-                : new Uint8ClampedArray(imgData);
+              imgData instanceof Uint8ClampedArray ? imgData : new Uint8ClampedArray(imgData);
 
             // Check if data appears to be RGB (3 channels) or RGBA (4 channels)
             const bytesPerPixel = clampedImgData.length / (width * height);
@@ -147,9 +142,7 @@ export async function extractImagesFromPdf(
       }
     }
 
-    logger.info(
-      `Extraction complete. Found ${extractedImages.length} images total`
-    );
+    logger.info(`Extraction complete. Found ${extractedImages.length} images total`);
     return extractedImages;
   } catch (error) {
     logger.error(`Error during PDF image extraction: ${error}`);
@@ -163,10 +156,7 @@ export async function extractImagesFromPdf(
  * @param outputDir - Directory where images will be saved
  * @returns Promise resolving to array of saved file paths
  */
-export async function extractAndSaveImages(
-  pdfPath: string,
-  outputDir: string
-): Promise<string[]> {
+export async function extractAndSaveImages(pdfPath: string, outputDir: string): Promise<string[]> {
   try {
     // Read the PDF file
     const pdfBuffer = await fs.readFile(pdfPath);

@@ -42,7 +42,7 @@ export class BloomMetadataParser {
       throw new Error(
         `Validation failed:\n${this.errors
           .map((e) => `${e.type.toUpperCase()}: ${e.message}`)
-          .join("\n")}`
+          .join("\n")}`,
       );
     }
     return metadata;
@@ -103,9 +103,7 @@ export class BloomMetadataParser {
 
     // Validate l2 exists in languages if specified
     if (metadata.l2 && metadata.languages && !metadata.languages[metadata.l2]) {
-      this.addError(
-        `Secondary language '${metadata.l2}' not found in languages`
-      );
+      this.addError(`Secondary language '${metadata.l2}' not found in languages`);
     }
 
     // return true if no errors

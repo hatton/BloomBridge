@@ -85,9 +85,7 @@ export function getMarkdownFromBook(book: Book): string {
             continue;
           }
 
-          logger.verbose(
-            `[getMarkdownFromBook] text: ${JSON.stringify(element.content, null, 2)}`
-          );
+          logger.verbose(`[getMarkdownFromBook] text: ${JSON.stringify(element.content, null, 2)}`);
 
           // Generate text content for each language
           for (const [lang, content] of Object.entries(element.content)) {

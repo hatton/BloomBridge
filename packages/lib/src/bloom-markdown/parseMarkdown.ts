@@ -1,14 +1,5 @@
-import {
-  BloomMetadataParser,
-  FrontMatterMetadata,
-} from "../3-add-bloom-plan/bloomMetadata";
-import type {
-  Book,
-  Page,
-  PageElement,
-  TextBlockElement,
-  ValidationError,
-} from "../types";
+import { BloomMetadataParser, FrontMatterMetadata } from "../3-add-bloom-plan/bloomMetadata";
+import type { Book, Page, PageElement, TextBlockElement, ValidationError } from "../types";
 
 export class BloomMarkdown {
   private errors: ValidationError[] = [];
@@ -18,8 +9,7 @@ export class BloomMarkdown {
     this.errors = [];
     this.metadataParser.clearErrors();
 
-    const { frontmatter, body } =
-      this.metadataParser.extractFrontmatter(markdown);
+    const { frontmatter, body } = this.metadataParser.extractFrontmatter(markdown);
     const metadata = this.metadataParser.parseMetadata(frontmatter);
     if (!metadata) {
       throw new Error("Failed to parse metadata from frontmatter");
@@ -32,7 +22,7 @@ export class BloomMarkdown {
 
     if (this.errors.some((e) => e.type === "error")) {
       throw new Error(
-        `Validation failed:\n${this.errors.map((e) => `${e.type.toUpperCase()}: ${e.message}`).join("\n")}`
+        `Validation failed:\n${this.errors.map((e) => `${e.type.toUpperCase()}: ${e.message}`).join("\n")}`,
       );
     }
 
@@ -52,10 +42,7 @@ export class BloomMarkdown {
   getErrors(): ValidationError[] {
     return [...this.errors, ...this.metadataParser.getErrors()];
   }
-  private createPageObjects(
-    body: string,
-    metadata: FrontMatterMetadata
-  ): Page[] {
+  private createPageObjects(body: string, metadata: FrontMatterMetadata): Page[] {
     // Use regex to split on page comments with or without attributes
     const pageRegex = /<!--\s*page\s*(?:[^>]*)-->/g;
     const parts = body.split(pageRegex);
@@ -90,7 +77,7 @@ export class BloomMarkdown {
     content: string,
     metadata: FrontMatterMetadata,
     pageNumber: number,
-    pageComment?: string
+    pageComment?: string,
   ): Page | null {
     const lines = content.split("\n");
     const elements: PageElement[] = [];
@@ -104,9 +91,7 @@ export class BloomMarkdown {
     // Sometimes the llm sees something that it can't identify and doesn't tag it.
     // Collect up everything that comes before the first comment or image (![...) and
     // add a text block for it with lang="unk". If it's just whitespace, skip it.
-    const indexOfFirstCommentOrImage = content.search(
-      /<!--|!\[([^\]]*)\]\(([^)]+)\)/
-    );
+    const indexOfFirstCommentOrImage = content.search(/<!--|!\[([^\]]*)\]\(([^)]+)\)/);
     const materialBeforeFirstComment =
       indexOfFirstCommentOrImage >= 0
         ? content.substring(0, indexOfFirstCommentOrImage).trim()
@@ -119,9 +104,7 @@ export class BloomMarkdown {
         },
       };
       elements.push(unknownTextBlock);
-      this.addWarning(
-        `page ${pageNumber}: Found untagged text in unknown language`
-      );
+      this.addWarning(`page ${pageNumber}: Found untagged text in unknown language`);
     }
 
     for (const line of lines) {
@@ -129,9 +112,7 @@ export class BloomMarkdown {
 
       // Handle inline comments by splitting the line
       const commentMatches = [
-        ...line.matchAll(
-          /<!-- text lang=(?:"?([a-zA-Z0-9-]+)"?)(?:\s+[^>]*)? -->/g
-        ),
+        ...line.matchAll(/<!-- text lang=(?:"?([a-zA-Z0-9-]+)"?)(?:\s+[^>]*)? -->/g),
       ];
 
       if (commentMatches.length > 0) {
@@ -165,8 +146,7 @@ export class BloomMarkdown {
           // create new text block or finalize existing one.
           if (
             currentTextBlock &&
-            (currentTextBlock.field !== field ||
-              currentTextBlock.content[currentLang])
+            (currentTextBlock.field !== field || currentTextBlock.content[currentLang])
           ) {
             elements.push(currentTextBlock);
             currentTextBlock = null;
@@ -211,9 +191,7 @@ export class BloomMarkdown {
            
       When we are done with lines, if we have a currentTextBlock, push it to elements.
       */ // Check for images - preserve full markdown format
-      const imageMatch = trimmedLine.match(
-        /!\[([^\]]*)\]\(([^)]+)\)(\{[^}]*\})?/
-      );
+      const imageMatch = trimmedLine.match(/!\[([^\]]*)\]\(([^)]+)\)(\{[^}]*\})?/);
       if (imageMatch) {
         // Finalize current text block before adding image
         if (currentTextBlock) {
@@ -242,7 +220,7 @@ export class BloomMarkdown {
 
       // Check for language blocks
       const langMatch = trimmedLine.match(
-        /<!-- text lang=(?:"?([a-zA-Z0-9-]+)"?)(?:\s+[^>]*)?(?:\s*)-->/
+        /<!-- text lang=(?:"?([a-zA-Z0-9-]+)"?)(?:\s+[^>]*)?(?:\s*)-->/,
       );
       if (langMatch) {
         // Extract field attribute if present
@@ -281,7 +259,7 @@ export class BloomMarkdown {
 
         if (!metadata.languages || !metadata.languages[currentLang]) {
           this.addWarning(
-            `Encountered lang="${currentLang}" but this language is not defined in the metadata languages (page ${pageNumber}).`
+            `Encountered lang="${currentLang}" but this language is not defined in the metadata languages (page ${pageNumber}).`,
           );
         }
 
@@ -296,7 +274,7 @@ export class BloomMarkdown {
         // if the trimmed line is not empty
         if (trimmedLine.length > 0) {
           this.addWarning(
-            `Found text outside of a language block (page ${pageNumber}): "${trimmedLine}"`
+            `Found text outside of a language block (page ${pageNumber}): "${trimmedLine}"`,
           );
         }
       }
@@ -336,9 +314,7 @@ export class BloomMarkdown {
     }
 
     // Extract bilingual attribute
-    const bilingualMatch = pageComment.match(
-      /bilingual=["']?(true|false)["']?/
-    );
+    const bilingualMatch = pageComment.match(/bilingual=["']?(true|false)["']?/);
     if (bilingualMatch) {
       attributes.bilingual = bilingualMatch[1] === "true";
     }

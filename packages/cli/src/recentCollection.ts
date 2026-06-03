@@ -98,9 +98,7 @@ async function findUserConfig(configDir: string): Promise<string | null> {
 /**
  * Extract MRU path from a .NET user.config file
  */
-async function extractMruFromConfig(
-  configPath: string
-): Promise<string | null> {
+async function extractMruFromConfig(configPath: string): Promise<string | null> {
   try {
     const configXml = await fs.readFile(configPath, "utf8");
     const parser = new XMLParser({

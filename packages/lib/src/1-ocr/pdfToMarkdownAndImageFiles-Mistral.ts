@@ -54,7 +54,7 @@ export async function pdfToMarkdownAndImageFiles(
   pdfPath: string,
   imageOutputDir: string,
   mistralApiKey: string,
-  logCallback?: (log: LogEntry) => void
+  logCallback?: (log: LogEntry) => void,
 ): Promise<string> {
   if (logCallback) logger.subscribe(logCallback);
 
@@ -180,10 +180,7 @@ function calculateImageDimensions(image: OCRImage): {
  * @param images - Array of OCR images with coordinate information
  * @returns Enhanced markdown with dimension information
  */
-function enhanceMarkdownWithImageDimensions(
-  markdown: string,
-  images: OCRImage[]
-): string {
+function enhanceMarkdownWithImageDimensions(markdown: string, images: OCRImage[]): string {
   let enhancedMarkdown = markdown;
 
   for (const img of images) {
@@ -206,14 +203,8 @@ function enhanceMarkdownWithImageDimensions(
  * @param filePath - Base file path (extension will be updated based on image type)
  * @returns Promise that resolves when the file is saved
  */
-async function saveBase64Image(
-  base64ImageData: string,
-  filePath: string
-): Promise<void> {
-  const justImageData = base64ImageData.replace(
-    /^data:image\/[a-z]+;base64,/,
-    ""
-  );
+async function saveBase64Image(base64ImageData: string, filePath: string): Promise<void> {
+  const justImageData = base64ImageData.replace(/^data:image\/[a-z]+;base64,/, "");
 
   // Save the image file
   fs.writeFileSync(filePath, justImageData, "base64");

@@ -4,10 +4,7 @@ const fs = require("fs");
 
 async function test() {
   try {
-    const pdfPath = path.resolve(
-      __dirname,
-      "../../test-inputs/bilingual-sample.pdf"
-    );
+    const pdfPath = path.resolve(__dirname, "../../test-inputs/bilingual-sample.pdf");
     const outputDir = path.resolve(__dirname, "./test-unpdf-output");
 
     console.log("Testing PDF:", pdfPath);

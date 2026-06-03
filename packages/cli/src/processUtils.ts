@@ -43,9 +43,7 @@ function isSimpleDirectoryName(collectionPath: string): boolean {
  * @returns Object containing the collection folder path and collection file path
  * @throws Error if the path is invalid
  */
-export async function validateAndResolveCollectionPath(
-  collectionPath: string
-): Promise<{
+export async function validateAndResolveCollectionPath(collectionPath: string): Promise<{
   collectionFolderPath: string;
   collectionFilePath: string;
 }> {
@@ -93,9 +91,7 @@ export async function validateAndResolveCollectionPath(
 
     resolvedPath = path.resolve(documentsBloomPath);
     console.log(
-      chalk.blue(
-        `Expanding simple collection name '${collectionPath}' to: ${resolvedPath}`
-      )
+      chalk.blue(`Expanding simple collection name '${collectionPath}' to: ${resolvedPath}`),
     );
   } else {
     resolvedPath = path.resolve(collectionPath);
@@ -108,9 +104,7 @@ export async function validateAndResolveCollectionPath(
     if (stats.isFile()) {
       // If it's a file, it should end with .bloomCollection
       if (!resolvedPath.endsWith(".bloomCollection")) {
-        throw new Error(
-          `Collection file must end with .bloomCollection, got: ${resolvedPath}`
-        );
+        throw new Error(`Collection file must end with .bloomCollection, got: ${resolvedPath}`);
       }
 
       return {
@@ -120,14 +114,10 @@ export async function validateAndResolveCollectionPath(
     } else if (stats.isDirectory()) {
       // If it's a directory, look for a .bloomCollection file inside
       const files = await fs.readdir(resolvedPath);
-      const bloomCollectionFile = files.find((file) =>
-        file.endsWith(".bloomCollection")
-      );
+      const bloomCollectionFile = files.find((file) => file.endsWith(".bloomCollection"));
 
       if (!bloomCollectionFile) {
-        throw new Error(
-          `No .bloomCollection file found in directory: ${resolvedPath}`
-        );
+        throw new Error(`No .bloomCollection file found in directory: ${resolvedPath}`);
       }
 
       return {
@@ -135,9 +125,7 @@ export async function validateAndResolveCollectionPath(
         collectionFilePath: path.join(resolvedPath, bloomCollectionFile),
       };
     } else {
-      throw new Error(
-        `Collection path must be a file or directory: ${resolvedPath}`
-      );
+      throw new Error(`Collection path must be a file or directory: ${resolvedPath}`);
     }
   } catch (error: any) {
     if (error.code === "ENOENT") {
@@ -198,9 +186,7 @@ export function getFileExtension(filePath: string): string {
   return path.parse(filePath).ext;
 }
 
-export async function findMarkdownFileInDirectory(
-  dirPath: string
-): Promise<string | null> {
+export async function findMarkdownFileInDirectory(dirPath: string): Promise<string | null> {
   const files = await fs.readdir(dirPath);
   const mdFiles = files.filter((f) => f.toLowerCase().endsWith(".md"));
   if (mdFiles.length === 0) {
@@ -212,8 +198,8 @@ export async function findMarkdownFileInDirectory(
     // In a real-world scenario, you might want to throw an error or ask the user to specify.
     console.warn(
       chalk.yellow(
-        `Warning: Multiple .md files found in ${dirPath}. Using the first one: ${mdFiles[0]}`
-      )
+        `Warning: Multiple .md files found in ${dirPath}. Using the first one: ${mdFiles[0]}`,
+      ),
     );
     return path.join(dirPath, mdFiles[0]);
   }
@@ -239,7 +225,7 @@ export async function fileExists(filePath: string): Promise<boolean> {
 </Collection>
 */
 export async function readBloomCollectionSettingsIfFound(
-  folderPath: string
+  folderPath: string,
 ): Promise<{ l1?: Language; l2?: Language; l3?: Language } | null> {
   // the settingFilePath will be the first file that ends in ".bloomCollection". It does not end in "xml"
   // search a file ending in ".bloomCollection" in the folderPath, then one level up if not found
@@ -249,16 +235,12 @@ export async function readBloomCollectionSettingsIfFound(
   // First, try the current folder
   try {
     const files = await fs.readdir(folderPath);
-    const bloomCollectionFile = files.find((file) =>
-      file.endsWith(".bloomCollection")
-    );
+    const bloomCollectionFile = files.find((file) => file.endsWith(".bloomCollection"));
     if (bloomCollectionFile) {
       settingsFilePath = path.join(folderPath, bloomCollectionFile);
     }
   } catch (error) {
-    console.warn(
-      chalk.yellow(`Could not read directory ${folderPath}: ${error}`)
-    );
+    console.warn(chalk.yellow(`Could not read directory ${folderPath}: ${error}`));
   }
 
   // If not found, try one level up
@@ -266,24 +248,20 @@ export async function readBloomCollectionSettingsIfFound(
     const parentPath = path.dirname(folderPath);
     try {
       const parentFiles = await fs.readdir(parentPath);
-      const bloomCollectionFile = parentFiles.find((file) =>
-        file.endsWith(".bloomCollection")
-      );
+      const bloomCollectionFile = parentFiles.find((file) => file.endsWith(".bloomCollection"));
       if (bloomCollectionFile) {
         settingsFilePath = path.join(parentPath, bloomCollectionFile);
       }
     } catch (error) {
-      console.warn(
-        chalk.yellow(`Could not read parent directory ${parentPath}: ${error}`)
-      );
+      console.warn(chalk.yellow(`Could not read parent directory ${parentPath}: ${error}`));
     }
   }
 
   if (!settingsFilePath || !(await fileExists(settingsFilePath))) {
     console.warn(
       chalk.yellow(
-        `No .bloomCollection file found in ${folderPath}. Using default language settings.`
-      )
+        `No .bloomCollection file found in ${folderPath}. Using default language settings.`,
+      ),
     );
     return null; // No settings file found
   }
@@ -313,9 +291,7 @@ export async function readBloomCollectionSettingsIfFound(
       l3: l3Name && l3IsoCode ? { tag: l3IsoCode, name: l3Name } : undefined,
     };
   } catch (error) {
-    console.error(
-      chalk.red(`Error reading Bloom collection settings: ${error}`)
-    );
+    console.error(chalk.red(`Error reading Bloom collection settings: ${error}`));
     throw error;
   }
 }

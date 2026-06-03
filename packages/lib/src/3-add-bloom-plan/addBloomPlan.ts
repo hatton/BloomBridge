@@ -87,9 +87,7 @@ function AddPageTypes(pages: Page[]): void {
         const hasOnlyUnknownLang =
           element.content["unk"] && Object.keys(element.content).length === 1;
         if ((element.field && element.field !== "pageNumber") || hasOnlyUnknownLang) {
-          page.type = haveSeenContentPage
-            ? ("back-matter" as const)
-            : ("front-matter" as const);
+          page.type = haveSeenContentPage ? ("back-matter" as const) : ("front-matter" as const);
           break; // Found a field element, so this determines the page type
         }
       }
