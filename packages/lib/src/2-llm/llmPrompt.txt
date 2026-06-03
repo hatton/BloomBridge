@@ -68,7 +68,7 @@ Here is a list of every kind of metadata you need to identify in the markdown fi
 4: licenseUrl (e.g. "http://creativecommons.org/licenses/by/4.0/") 
 5: licenseDescription (If the book is CC-license, this is often a description of what the license means.) 
 6: licenseNotes (Something that goes beyond describing the legalities of the license, often this is used to add a condition or permit use. Example: "Ask us before you translate this." or "It is ok to translate this, just send us a copy") 
-7: copyright (e.g. "Copyright © 1993, Instituto Lingüístico de Verano, A.C.") 
+7: copyright (e.g. "Copyright © 1993, Instituto Lingüístico de Verano, A.C."). If the book has no explicit copyright statement but does name a publisher (e.g. text like "Published by Library For All Ltd"), use just that organization's name as the copyright holder, stripping any leading words like "Published by" (e.g. "Published by Library For All Ltd" becomes "Library For All Ltd").
 8: originalCopyright (when the book is a derivative, it may have text like "Based on the original, Copyright 1991, Generous Publishing") 
 9: smallCoverCredits (Credits are found on the first page of the file, e.g "Authored by Cassidy, Illustrated by Sundance") 
 10: topic (e.g. Traditional Story) 

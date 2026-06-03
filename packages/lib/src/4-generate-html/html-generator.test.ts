@@ -118,6 +118,34 @@ describe("generateHtmlDocument", () => {
       expect(contentPageMatches).toHaveLength(2);
     });
 
+    it("uses just the organization as copyright, stripping a 'Published by' prefix", () => {
+      const book = {
+        frontMatterMetadata: { languages: { en: "English" }, l1: "en" },
+        pages: [
+          {
+            type: "back-matter" as const,
+            appearsToBeBilingualPage: false,
+            elements: [
+              {
+                type: "text" as const,
+                field: "copyright",
+                content: { en: "Published by Library For All Ltd" },
+              },
+            ],
+          },
+          {
+            type: "content" as const,
+            appearsToBeBilingualPage: false,
+            elements: [{ type: "text" as const, content: { en: "<p>Story</p>" } }],
+          },
+        ],
+      };
+
+      const html = HtmlGenerator.generateHtmlDocument(book);
+      expect(html).toContain('data-book="copyright" lang="en">Library For All Ltd<');
+      expect(html).not.toContain("Published by Library For All Ltd");
+    });
+
     it("drops a picture on the title page (Bloom does not support title-page images)", () => {
       const book = {
         frontMatterMetadata: { languages: { en: "English" }, l1: "en" },

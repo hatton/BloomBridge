@@ -20,6 +20,12 @@ export interface TextOrigamiItem {
 export interface ImageOrigamiItem {
   type: "image";
   src: string;
+  /**
+   * Optional inline style for the bloom-canvas-element (width/height/top/left in px),
+   * precomputed from the page size so the image shows at the right size before Bloom
+   * recomputes it on first view. Omitted for images in multi-pane layouts.
+   */
+  canvasElementStyle?: string;
 }
 
 export type OrigamiItem = TextOrigamiItem | ImageOrigamiItem;
@@ -164,10 +170,11 @@ function generateTextBlock(
  * @param src The source URL of the image.
  * @returns HTML string for the image block.
  */
-function generateImageBlock(src: string | undefined): string {
+function generateImageBlock(src: string | undefined, canvasElementStyle?: string): string {
+  const styleAttr = canvasElementStyle ? ` style="${canvasElementStyle}"` : "";
   return `
 <div class="bloom-canvas bloom-leadingElement bloom-has-canvas-element">
-  <div class="bloom-canvas-element bloom-backgroundImage">
+  <div class="bloom-canvas-element bloom-backgroundImage"${styleAttr}>
     <div class="bloom-leadingElement bloom-imageContainer">
       <img src="${escapeHtml(src || "")}" />
     </div>
@@ -189,7 +196,7 @@ function generateItemHtml(item: OrigamiItem): string {
       item.horizontalAlign,
     );
   } else if (item.type === "image") {
-    return generateImageBlock(item.src);
+    return generateImageBlock(item.src, item.canvasElementStyle);
   }
   // Should not happen with proper typing
   return "<!-- unknown item type !-->";

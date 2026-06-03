@@ -199,14 +199,15 @@ export class HtmlGenerator {
     };
     const frontCoverSrc = findCoverSrc(FRONT_COVER_IMAGE_FILENAME);
     const backCoverSrc = findCoverSrc(BACK_COVER_IMAGE_FILENAME);
+    const coverPageSize = book.frontMatterMetadata.pageSize || "A5Portrait";
     if (frontCoverSrc) {
       elements.push(
-        `      <div data-book="customOutsideFrontCover" lang="*">${this.coverCanvasHtml(frontCoverSrc, true)}</div>`,
+        `      <div data-book="customOutsideFrontCover" lang="*">${this.coverCanvasHtml(frontCoverSrc, true, coverPageSize)}</div>`,
       );
     }
     if (backCoverSrc) {
       elements.push(
-        `      <div data-book="customOutsideBackCover" lang="*">${this.coverCanvasHtml(backCoverSrc, false)}</div>`,
+        `      <div data-book="customOutsideBackCover" lang="*">${this.coverCanvasHtml(backCoverSrc, false, coverPageSize)}</div>`,
       );
     }
 
@@ -223,6 +224,7 @@ export class HtmlGenerator {
     // Group fields by their output field name and concatenate values
     const fields = this.fields(book);
     fixIsbn(fields);
+    fixCopyright(fields);
     const groupedFields: Record<string, Record<string, string[]>> = {};
 
     for (const element of fields) {
@@ -380,22 +382,65 @@ export class HtmlGenerator {
     "{`version`:`1.0`,`style`:`none`,`tails`:[],`level`:1,`backgroundColors`:[`transparent`],`shadowOffset`:0}";
 
   /**
+   * Pixel dimensions (at Bloom's 96dpi) for a page-size class, plus the marginBox
+   * (content) area after Bloom's default 12mm page margin. Used to precompute the
+   * bloom-canvas-element geometry so images show at the right size before Bloom
+   * recomputes it on first view. Falls back to A5 for unknown sizes.
+   */
+  private static pagePx(pageSize: string): {
+    pageW: number;
+    pageH: number;
+    canvasW: number;
+    canvasH: number;
+  } {
+    const MM_TO_PX = 96 / 25.4;
+    const MARGIN_PX = 12 * MM_TO_PX; // --page-margin: 12mm
+    const dimsMm: Record<string, [number, number]> = {
+      // [short edge, long edge] in mm
+      A3: [297, 420],
+      A4: [210, 297],
+      A5: [148, 210],
+      A6: [105, 148],
+      Letter: [215.9, 279.4],
+      Legal: [215.9, 355.6],
+    };
+    const base = pageSize.replace(/(Portrait|Landscape)$/, "");
+    const landscape = pageSize.endsWith("Landscape");
+    const [shortMm, longMm] = dimsMm[base] ?? dimsMm["A5"];
+    const wMm = landscape ? longMm : shortMm;
+    const hMm = landscape ? shortMm : longMm;
+    const pageW = Math.round(wMm * MM_TO_PX);
+    const pageH = Math.round(hMm * MM_TO_PX);
+    return {
+      pageW,
+      pageH,
+      canvasW: Math.round(pageW - 2 * MARGIN_PX),
+      canvasH: Math.round(pageH - 2 * MARGIN_PX),
+    };
+  }
+
+  /**
    * The inner canvas markup for a full-bleed cover image. This same markup goes
    * both into the visible cover page's `.marginBox` AND the dataDiv
    * `customOutside*Cover` entry that Bloom reads to (re)generate the xMatter cover.
    * It mirrors what Bloom itself writes so the custom layout round-trips on import.
    *
-   * `data-imgsizebasedon` and the px sizing are for A5Portrait; Bloom recomputes
-   * them when the book is edited. `bloom-imageObjectFit-cover` on the img makes the
-   * art fill the page (cropping bleed) rather than letterboxing.
+   * The px sizing fills the whole page (full bleed) for the given page size; Bloom
+   * recomputes it when the book is edited. `bloom-imageObjectFit-cover` on the img
+   * makes the art fill the page (cropping bleed) rather than letterboxing.
    */
-  private static coverCanvasHtml(imageSrc: string, isFront: boolean): string {
+  private static coverCanvasHtml(
+    imageSrc: string,
+    isFront: boolean,
+    pageSize: string = "A5Portrait",
+  ): string {
     // The front cover image doubles as the book's coverImage, but that data-book
     // binding is INACTIVE — the custom layout drives the cover now (a plain
     // data-book="coverImage" produces Bloom's small positioned default cover).
     const inactiveCoverImage = isFront ? ' data-book-inactive="coverImage"' : "";
-    return `<div class="bloom-canvas bloom-has-canvas-element" data-imgsizebasedon="559,794" title="">
-          <div class="bloom-canvas-element bloom-backgroundImage" style="width: 559px; top: 0px; left: 0px; height: 794px;" data-bubble="${this.COVER_DATA_BUBBLE}">
+    const { pageW, pageH } = this.pagePx(pageSize);
+    return `<div class="bloom-canvas bloom-has-canvas-element" data-imgsizebasedon="${pageW},${pageH}" title="">
+          <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${pageW}px; top: 0px; left: 0px; height: ${pageH}px;" data-bubble="${this.COVER_DATA_BUBBLE}">
             <div class="bloom-imageContainer" style="direction: ltr;">
               <img src="${escapeHtml(imageSrc)}" class="bloom-imageObjectFit-cover" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt=""${inactiveCoverImage} />
             </div>
@@ -425,7 +470,7 @@ export class HtmlGenerator {
       <div class="pageLabel" data-i18n="${i18n}">${label}</div>
       <div class="pageDescription"></div>
       <div class="marginBox">
-        ${this.coverCanvasHtml(imageSrc, isFront)}
+        ${this.coverCanvasHtml(imageSrc, isFront, pageSize)}
       </div>
     </div>`;
   }
@@ -507,7 +552,19 @@ export class HtmlGenerator {
         origamiItems.push(textItem);
       } else if (element.type === "image") {
         const imageElement = element as ImageElement;
-        origamiItems.push({ type: "image", src: imageElement.src });
+        // For a page that is a single full-page image, size its canvas element to
+        // the marginBox (page minus margins) so it shows at full size before Bloom
+        // recomputes geometry on first view. object-fit:contain (Bloom's default for
+        // a non-cover canvas) keeps the whole image visible. We only do this for
+        // single-image pages; in multi-pane layouts the pane size isn't the marginBox.
+        const isSingleFullPageImage =
+          layoutElements.length === 1 && layoutElements[0].type === "image";
+        let canvasElementStyle: string | undefined;
+        if (isSingleFullPageImage) {
+          const { canvasW, canvasH } = HtmlGenerator.pagePx(metadata.pageSize || "A5Portrait");
+          canvasElementStyle = `width: ${canvasW}px; height: ${canvasH}px; left: 0px; top: 0px;`;
+        }
+        origamiItems.push({ type: "image", src: imageElement.src, canvasElementStyle });
       }
     });
 
@@ -557,6 +614,18 @@ export class HtmlGenerator {
       </div>
     </div>`;
   }
+}
+function fixCopyright(fields: TextBlockElement[]) {
+  // When the copyright was derived from a publisher line, it can arrive as
+  // "Published by Library For All Ltd". The copyright holder is just the
+  // organization, so strip a leading "Published by" (and any trailing punctuation).
+  fields.forEach((field) => {
+    if (field.field && field.field.toLowerCase() === "copyright") {
+      for (const lang of Object.keys(field.content)) {
+        field.content[lang] = field.content[lang].replace(/^\s*published\s+by\s*:?\s*/i, "").trim();
+      }
+    }
+  });
 }
 function fixIsbn(fields: TextBlockElement[]) {
   // if there is a field with "isbn" or "ISBn", do two things:
