@@ -17,6 +17,7 @@ import {
   type OrigamiItem,
   type TextOrigamiItem,
 } from "./origami.js";
+import { inlineMarkdownToHtml } from "./markdownToHtml.js";
 import { LogEntry, logger } from "../logger";
 
 // A note about bloom-monolingual, bloom-bilingual, and bloom-trilingual
@@ -167,7 +168,7 @@ export class HtmlGenerator {
         if (!groupedFields[outputFieldName][lang]) {
           groupedFields[outputFieldName][lang] = [];
         }
-        const htmlValue = escapeHtml(this.getHtmlFromMarkdown(value));
+        const htmlValue = inlineMarkdownToHtml(value);
         if (htmlValue.trim()) {
           // Only add non-empty values
           groupedFields[outputFieldName][lang].push(htmlValue);
@@ -191,19 +192,6 @@ export class HtmlGenerator {
     return elements.join("\n");
   }
 
-  private static getHtmlFromMarkdown(markdown: string): string {
-    // convert inline markdown styles to HTML
-    // e.g. bold, italic, links, underline, h1, h2, etc.
-
-    return markdown
-      .replace(/^\s*#\s+(.*)$/gm, "<h1>$1</h1>") // H1
-      .replace(/^\s*##\s+(.*)$/gm, "<h2>$1</h2>") // H2
-      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>") // Bold
-      .replace(/__(.*?)__/g, "<strong>$1</strong>") // Bold with underscores
-      .replace(/\*(.*?)\*/g, "<em>$1</em>") // Italic
-      .replace(/_(.*?)_/g, "<em>$1</em>") // Italic with underscores
-      .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>');
-  }
   private static getFieldContent(key: string, book: Book): Record<string, string> | undefined {
     const fields: TextBlockElement[] = this.fields(book);
     const field = fields.find((field) => field.field === key);

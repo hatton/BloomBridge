@@ -1,5 +1,6 @@
 import escapeHtml from "escape-html";
 import { logger } from "../logger.js";
+import { blockMarkdownToHtml } from "./markdownToHtml.js";
 
 export enum Orientation {
   Portrait = "portrait",
@@ -26,7 +27,7 @@ export type OrigamiItem = TextOrigamiItem | ImageOrigamiItem;
  */
 export function generateOrigamiHtml(
   blocks: OrigamiItem[],
-  orientation: Orientation = Orientation.Portrait
+  orientation: Orientation = Orientation.Portrait,
 ): string {
   if (!blocks || blocks.length === 0) {
     throw new Error("Input sequence cannot be empty.");
@@ -50,7 +51,7 @@ export function generateOrigamiHtml(
  */
 function buildSplitPane(
   blocks: OrigamiItem[],
-  orientation: Orientation = Orientation.Portrait
+  orientation: Orientation = Orientation.Portrait,
 ): string {
   const firstItem = blocks[0];
   const remainingItemsSequence = blocks.slice(1);
@@ -70,8 +71,7 @@ function buildSplitPane(
 
   // the labels we have to emit are the opposite of actual orientation
   // they refer to the orientation of the split, not the orientation of the content
-  const splitOrientation =
-    orientation === Orientation.Landscape ? "vertical" : "horizontal";
+  const splitOrientation = orientation === Orientation.Landscape ? "vertical" : "horizontal";
 
   // Determine CSS classes based on orientation
   const splitPaneClass = `split-pane ${splitOrientation}-percent`;
@@ -108,35 +108,25 @@ function buildSplitPane(
  */
 function generateTextBlock(
   textBlocks: Record<string, string>,
-  translationGroupDefaultLangVariables?: string[]
+  translationGroupDefaultLangVariables?: string[],
 ): string {
-  logger.verbose(
-    `Generating text block with languages: ${JSON.stringify(textBlocks, null, 2)}`
-  );
+  logger.verbose(`Generating text block with languages: ${JSON.stringify(textBlocks, null, 2)}`);
 
   const bloomEditableDivs: string[] = [];
 
   // iterate over the languages and create a bloom-editable div for each
   for (const lang of Object.keys(textBlocks)) {
-    const paragraphs: string[] = [];
     const content = textBlocks[lang];
 
-    // Don't wrap in <p> if content already contains block-level HTML tags
-    const shouldWrapInParagraph =
-      !/<(h[1-6]|p|div|ul|ol|li|blockquote|hr|table|figure|figcaption)/i.test(
-        content
-      );
-
-    const escapedContent = escapeHtml(content);
-    paragraphs.push(
-      shouldWrapInParagraph ? `<p>${escapedContent}</p>` : escapedContent
-    );
+    // Convert markdown content (headings, paragraphs, inline styles) to HTML.
+    // An empty editable still needs a paragraph so Bloom has something to edit.
+    const html = blockMarkdownToHtml(content) || "<p></p>";
 
     bloomEditableDivs.push(
       `
 <div class="bloom-editable" lang="${lang}">
-  ${paragraphs.join("\n")}
-</div>`.trim()
+  ${html}
+</div>`.trim(),
     );
   }
 
@@ -174,10 +164,7 @@ function generateImageBlock(src: string | undefined): string {
  */
 function generateItemHtml(item: OrigamiItem): string {
   if (item.type === "text") {
-    return generateTextBlock(
-      item.content,
-      item.translationGroupDefaultLangVariables
-    );
+    return generateTextBlock(item.content, item.translationGroupDefaultLangVariables);
   } else if (item.type === "image") {
     return generateImageBlock(item.src);
   }
