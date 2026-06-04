@@ -815,7 +815,7 @@ function RunRow({
             {run.id}
           </span>
         </div>
-        <div>
+        <div title={failed && run.error ? run.error.message : undefined}>
           <StatusPill status={effStatus(run)} size="sm" />
         </div>
         <div>

@@ -16,11 +16,15 @@ const CONFIG_DIR = path.join(os.homedir(), ".pdf2bloom");
 const SETTINGS_PATH = path.join(CONFIG_DIR, "settings.json");
 
 function defaults(): ServerSettings {
+  // The GUI deliberately does NOT fall back to the OPENROUTER_KEY/MISTRAL_API_KEY
+  // environment variables. Keys must be entered in the Settings dialog and are
+  // stored in ~/.pdf2bloom/settings.json, so the GUI behaves the same regardless
+  // of how the shell that launched it was configured.
   return {
-    openrouterKey: process.env.OPENROUTER_KEY || "",
-    mistralKey: process.env.MISTRAL_API_KEY || "",
+    openrouterKey: "",
+    mistralKey: "",
     workspace: path.join(CONFIG_DIR, "workspace"),
-    defaultCollection: "",
+    defaultCollection: "__running__",
     maxParallel: 2,
   };
 }

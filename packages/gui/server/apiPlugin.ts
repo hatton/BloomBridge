@@ -223,6 +223,28 @@ export function conversionApiPlugin(): Plugin {
             return;
           }
 
+          // Serve a source PDF (for the preview pane). Restricted to PDFs inside a
+          // known/recent source folder.
+          if (p === "/api/source-pdf" && method === "GET") {
+            const fp = u.searchParams.get("path") || "";
+            const resolved = path.resolve(fp);
+            if (!resolved.toLowerCase().endsWith(".pdf"))
+              return send(res, 400, { error: "not a pdf" });
+            const recents = await getRecentFolders();
+            const allowed = recents.some((r) => resolved.startsWith(path.resolve(r)));
+            if (!allowed) return send(res, 403, { error: "pdf is outside known source folders" });
+            try {
+              const buf = await fs.readFile(resolved);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/pdf");
+              res.end(buf);
+            } catch {
+              res.statusCode = 404;
+              res.end();
+            }
+            return;
+          }
+
           if (p === "/api/folder" && method === "GET") {
             const folder = u.searchParams.get("path");
             if (!folder) return send(res, 400, { error: "path query param required" });
@@ -259,7 +281,8 @@ export function conversionApiPlugin(): Plugin {
             const settings = await getSettings();
             const collections = new Set<string>();
             if (bloom?.collectionFolder) collections.add(bloom.collectionFolder);
-            if (settings.defaultCollection) collections.add(settings.defaultCollection);
+            if (settings.defaultCollection && settings.defaultCollection !== "__running__")
+              collections.add(settings.defaultCollection);
             let removedPreviews = 0;
             for (const col of collections) {
               try {

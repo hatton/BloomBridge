@@ -182,10 +182,8 @@ export async function addVisionFormatting(
           logger.verbose(
             `Vision formatting page ${page.index}: vertical=${object.verticalAlign}, horizontal=${object.horizontalAlign}, bg=${bgColor ?? "none"}`,
           );
-        } catch (error) {
-          // One bad page shouldn't abort the book; just leave it unannotated.
-          logger.warn(`Vision formatting failed for page ${page.index}: ${String(error)}`);
         } finally {
+          // A page failure is a failure — let it propagate and stop the run.
           await fs.rm(jpgPath, { force: true }).catch(() => {});
         }
       });

@@ -12,6 +12,7 @@ import {
   scanPdfFolder,
   detectArtifacts,
   startableStages,
+  getRunningBloomCollection,
   type ConversionEvent,
   type RunArgs,
 } from "@pdf-to-bloom/lib";
@@ -116,12 +117,17 @@ async function ensureLoaded() {
       try {
         const raw = await fs.readFile(path.join(runDir, "run.json"), "utf-8");
         const rec = JSON.parse(raw) as RunRecord;
-        // A run that was mid-flight when the server stopped is no longer running.
+        // A run left queued/running when the server stopped is interrupted: mark it
+        // failed (visible) and persist so it can't reappear as queued on next load.
         if (rec.status === "running" || rec.status === "queued") {
           rec.status = "failed";
-          rec.error = rec.error || "Interrupted (server restarted).";
+          rec.error = rec.error || "Interrupted — the server stopped before this run finished.";
+          rec.progress = undefined;
+          runs.set(rec.id, rec);
+          await writeRunJson(rec);
+        } else {
+          runs.set(rec.id, rec);
         }
-        runs.set(rec.id, rec);
       } catch {
         /* not a run dir */
       }
@@ -221,10 +227,19 @@ async function executeRun(rec: RunRecord) {
     if (e.kind !== "log") pushRun(rec);
   };
 
+  // Resolve the "use the running Bloom's open collection" sentinel to that
+  // collection's folder. Other values (a real path, or "recent" which the lib
+  // resolves to the most-recently-opened collection) pass through unchanged.
+  let resolvedCollection = rec.collection || settings.defaultCollection || undefined;
+  if (resolvedCollection === "__running__") {
+    const bloom = await getRunningBloomCollection();
+    resolvedCollection = bloom?.collectionFolder || undefined;
+  }
+
   const args: RunArgs = {
     input: rec.sourcePath,
     output: rec.runDir,
-    collection: rec.collection || settings.defaultCollection || undefined,
+    collection: resolvedCollection,
     target: TARGET_MAP[rec.target] ?? Artifact.HTML,
     verbose: false,
     openrouterKey: settings.openrouterKey || undefined,

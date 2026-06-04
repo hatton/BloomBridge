@@ -1688,7 +1688,7 @@ export function CollectionPicker({
   collections: { path: string; name: string }[];
 }) {
   const options = [
-    { value: "recent", label: "Use running Bloom (recent)" },
+    { value: "__running__", label: "The collection in the running Bloom" },
     ...collections.map((c) => ({ value: c.path, label: c.name })),
     { value: "", label: "No collection" },
   ];
@@ -2107,6 +2107,135 @@ export function RunSelectionPane({
           <Icon name="x" size={13} /> Clear selection
         </button>
       </div>
+    </aside>
+  );
+}
+
+// ============ PDF preview pane (far-right, collapsible + resizable) ============
+export function PdfViewerPane({
+  source,
+  multiSelected,
+  width,
+  onResize,
+  onClose,
+}: {
+  source?: Source | null;
+  multiSelected: boolean;
+  width: number;
+  onResize: (w: number) => void;
+  onClose: () => void;
+}) {
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = width;
+    const onMove = (ev: MouseEvent) => {
+      // handle is on the left edge: dragging left widens the pane
+      onResize(Math.max(260, Math.min(900, startW + (startX - ev.clientX))));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+    };
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const empty = (msg: string) => (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        textAlign: "center",
+        color: "var(--text-3)",
+        fontSize: 12.5,
+      }}
+    >
+      {msg}
+    </div>
+  );
+
+  return (
+    <aside
+      style={{
+        width,
+        flexShrink: 0,
+        position: "relative",
+        background: "var(--surface)",
+        borderLeft: "1px solid var(--border)",
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+      }}
+    >
+      <div
+        onMouseDown={startResize}
+        title="Drag to resize"
+        style={{
+          position: "absolute",
+          left: -3,
+          top: 0,
+          bottom: 0,
+          width: 7,
+          cursor: "col-resize",
+          zIndex: 6,
+        }}
+      />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "11px 14px 10px",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <span
+            style={{
+              fontSize: 10.5,
+              fontWeight: 700,
+              letterSpacing: ".7px",
+              textTransform: "uppercase",
+              color: "var(--text-3)",
+            }}
+          >
+            PDF preview
+          </span>
+          {source && !multiSelected && (
+            <div
+              style={{
+                fontSize: 11.5,
+                fontWeight: 600,
+                color: "var(--text)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {source.name}
+            </div>
+          )}
+        </div>
+        <IconBtn name="x" iconSize={15} size={22} title="Hide PDF preview" onClick={onClose} />
+      </div>
+      {multiSelected ? (
+        empty("Multiple PDFs selected — select a single PDF to preview it.")
+      ) : source?.path ? (
+        <iframe
+          key={source.path}
+          title="PDF preview"
+          src={`/api/source-pdf?path=${encodeURIComponent(source.path)}`}
+          style={{ flex: 1, width: "100%", border: "none", background: "var(--surface-2)" }}
+        />
+      ) : (
+        empty("Select a PDF to preview it here.")
+      )}
     </aside>
   );
 }

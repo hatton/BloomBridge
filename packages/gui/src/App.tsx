@@ -9,6 +9,7 @@ import {
   PdfDetail,
   BatchPane,
   RunSelectionPane,
+  PdfViewerPane,
 } from "./components/panels";
 import { RunConfig, CompareModal, SettingsModal, ConfirmModal } from "./components/modals";
 import { useTweaks } from "./components/devPanel";
@@ -61,9 +62,10 @@ export function App() {
   const [collections, setCollections] = useState<{ path: string; name: string }[]>([]);
   const [defaults, setDefaults] = useState<Params>(FALLBACK_PARAMS);
   const [maxParallel, setMaxParallel] = useState(2);
-  const [defaultCollection, setDefaultCollection] = useState("");
-  // Target collection for launches/promote: "recent" (running Bloom), a path, or "".
-  const [launchCollection, setLaunchCollection] = useState("recent");
+  const [defaultCollection, setDefaultCollection] = useState("__running__");
+  // Target collection for launches/promote: "__running__" (the running Bloom's
+  // open collection), a real path, or "" (no collection).
+  const [launchCollection, setLaunchCollection] = useState("__running__");
   const [serverSettings, setServerSettings] = useState<ServerSettingsView | null>(null);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -76,7 +78,39 @@ export function App() {
   const [sortDir, setSortDir] = useState("desc");
   const [panelOpen, setPanelOpen] = useState(true);
   const [modal, setModal] = useState<any>(null);
-  const [bloom, setBloom] = useState<{ running: boolean; collectionName?: string }>({
+  const [pdfOpen, setPdfOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("pdf2bloom.pdfPane.open") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [pdfWidth, setPdfWidth] = useState<number>(() => {
+    try {
+      return Number(localStorage.getItem("pdf2bloom.pdfPane.width")) || 380;
+    } catch {
+      return 380;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("pdf2bloom.pdfPane.open", pdfOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [pdfOpen]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("pdf2bloom.pdfPane.width", String(pdfWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [pdfWidth]);
+  const [bloom, setBloom] = useState<{
+    running: boolean;
+    collectionName?: string;
+    collectionFolder?: string;
+  }>({
     running: false,
   });
   const [toast, setToast] = useState<{ kind: "info" | "ok" | "error"; msg: string } | null>(null);
@@ -118,6 +152,21 @@ export function App() {
         setMaxParallel(s.maxParallel);
         setDefaultCollection(s.defaultCollection);
         if (s.defaultCollection) setLaunchCollection(s.defaultCollection);
+        // The pipeline can't run without an OpenRouter key. If it's missing,
+        // prompt for it immediately. (Mistral is optional — only --ocr mistral.)
+        if (!s.openrouterKeySet) {
+          setModal({
+            type: "settings",
+            draft: {
+              openrouterKey: "",
+              mistralKey: "",
+              workspace: s.workspace || "",
+              collection: s.defaultCollection,
+              preset: "",
+              parallelism: s.maxParallel,
+            },
+          });
+        }
       })
       .catch(() => {});
 
@@ -463,6 +512,8 @@ export function App() {
         dark={t.dark}
         onToggleTheme={() => setTweak("dark", !t.dark)}
         bloom={bloom}
+        pdfOpen={pdfOpen}
+        onTogglePdf={() => setPdfOpen((v) => !v)}
         onSettings={openSettings}
       />
 
@@ -610,6 +661,16 @@ export function App() {
             <Icon name="panel-right" size={15} />
           </button>
         )}
+
+        {pdfOpen && (
+          <PdfViewerPane
+            source={checkedPdfs.size > 1 ? null : focusedSource}
+            multiSelected={checkedPdfs.size > 1}
+            width={pdfWidth}
+            onResize={setPdfWidth}
+            onClose={() => setPdfOpen(false)}
+          />
+        )}
       </div>
 
       <QueueBar
@@ -712,11 +773,15 @@ function TopBar({
   dark,
   onToggleTheme,
   bloom,
+  pdfOpen,
+  onTogglePdf,
   onSettings,
 }: {
   dark: boolean;
   onToggleTheme: () => void;
   bloom: { running: boolean; collectionName?: string };
+  pdfOpen: boolean;
+  onTogglePdf: () => void;
   onSettings: () => void;
 }) {
   return (
@@ -760,7 +825,9 @@ function TopBar({
         {/* live indicator (not a control) — reflects the actually-running Bloom */}
         <span
           title={
-            bloom.running ? "Bloom is running with this collection open" : "Bloom is not running"
+            bloom.running
+              ? "Connected to a running Bloom with this collection open"
+              : "Not connected to a running Bloom"
           }
           style={{
             display: "flex",
@@ -788,10 +855,18 @@ function TopBar({
             }}
           />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {bloom.running ? `Bloom: ${bloom.collectionName || "running"}` : "Bloom not running"}
+            {bloom.running
+              ? `Bloom connected: ${bloom.collectionName || "running"}`
+              : "Bloom not connected"}
           </span>
         </span>
         <div style={{ width: 1, height: 20, background: "var(--border)" }} />
+        <IconBtn
+          name="file"
+          active={pdfOpen}
+          onClick={onTogglePdf}
+          title={pdfOpen ? "Hide PDF preview" : "Show PDF preview"}
+        />
         <IconBtn name={dark ? "sun" : "moon"} onClick={onToggleTheme} title="Toggle theme" />
         <IconBtn name="settings" onClick={onSettings} title="Settings" />
       </div>

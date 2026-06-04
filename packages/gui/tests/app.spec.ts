@@ -17,6 +17,15 @@ test("app loads, scans a folder, lists PDFs, and runs an images-only conversion"
   await expect(page.getByText("PDF → Bloom").first()).toBeVisible();
   await expect(page.getByText("Conversion Manager").first()).toBeVisible();
 
+  // If no OpenRouter key is configured, the Settings dialog auto-opens and blocks
+  // the UI. Dismiss it (saving with the empty field doesn't overwrite any key).
+  // Images-only conversion never calls the API, so we don't need a key here.
+  const settingsDialog = page.getByText("Stored locally on this machine");
+  if (await settingsDialog.isVisible().catch(() => false)) {
+    await page.getByRole("button", { name: /Save settings/i }).click();
+    await expect(settingsDialog).toBeHidden();
+  }
+
   // 2) Enter a real folder path and scan it.
   const folderInput = page.getByPlaceholder(/Paste a folder path/);
   await expect(folderInput).toBeVisible();

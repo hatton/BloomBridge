@@ -741,8 +741,9 @@ export function SettingsModal({
                 value={s.collection}
                 onChange={(v) => upd("collection", v)}
                 options={[
-                  { value: "", label: "— none —" },
+                  { value: "__running__", label: "The collection in the running Bloom" },
                   ...collections.map((c) => ({ value: c.path, label: c.name })),
+                  { value: "", label: "— none —" },
                 ]}
               />
             </Field>
