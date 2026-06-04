@@ -1,7 +1,8 @@
 # Master pages for "similar but changing" pages
 
-Status: **design notes / not yet implemented.** Captures the problem and the
-options we discussed so we can decide and come back to it.
+Status: **Option C implemented** (`--complex-becomes-image`); Options A and B not
+built. Captures the problem and the options we discussed so we can decide and come
+back to it.
 
 ## The concrete case
 
@@ -130,20 +131,126 @@ a sensible fallback when the question count differs from the slot count (e.g. a 
 with 6 questions vs a 5-slot template — leave the extra unmatched, or grow the last
 slot). Authoring requires teaching the convention (placeholders).
 
+### Option C — flatten an "overly complex" page to a full-page image ✅ implemented
+
+Shipped as `--complex-becomes-image <off|0..5>` (see the CLI README). Stage 1 scores
+each Canvas page by its text-block count, renders the page to `page-N.jpg` when the
+score meets the level's threshold, and bakes a `flatten-as-image` marker; Stage 4
+emits a full-page-image page carrying a `data-conversion-note`. Verified on thief at
+level 5: the questions page (score 7) flattened to a pixel-perfect image (heading,
+all five left-aligned questions, figures, footer) while "About the author" (score 1)
+stayed editable.
+
+If we can detect that a page is too complex to reconstruct faithfully, **render the
+whole page to an image and emit it as a single full-page image**, exactly the way we
+already handle full-bleed covers. The page becomes a picture; alignment, figures,
+fonts, and colors are all perfect because it _is_ the rendered page.
+
+**Feasibility: high, low complexity.** Every piece already exists:
+
+- We already render any page to a raster (`renderPdfPageToImage`), and Stage 1
+  already saves full-page renders to the book folder for covers (`prepareCovers` →
+  `cover.jpg` / `back-cover.jpg`).
+- Stage 4 already emits a full-bleed image page (`generateFullPageCoverPage` /
+  `coverCanvasHtml`), and `generatePage` already has a single-full-page-image path
+  that sizes the image to the page. With `fullBleed: true` (already wired) it fills
+  edge-to-edge.
+- So "flatten page N" = save `page-N.jpg` in Stage 1 + emit a full-page-image page in
+  Stage 4. A few hours of work, no new dependencies, no LLM.
+
+**Pros:**
+
+- Perfect visual fidelity, for _any_ complex page — solves alignment, the missing
+  figures, and boilerplate all at once, with zero layout logic.
+- Deterministic; no per-book hand-work; no master needed.
+- Naturally per-book: it renders _this_ book's page, so the changing questions come
+  out right automatically.
+
+**Cons / the real trade-off — the text stops being text:**
+
+- A flattened page is a picture, so Bloom can't **edit, translate, reflow, search,
+  or read-aloud** that text. For a literacy/translation platform that matters a lot
+  on _story_ pages, and less on back-matter (questions, "download the app", credits
+  with logos). This is a **product decision per page-type**, not a technical limit.
+- Raster, so resolution is fixed — render at a high enough DPI for print (the cover
+  render is 150 dpi; a text-bearing page probably wants ~200–300).
+- Larger files (one full-page image per flattened page). Minor.
+- Optional mitigation: also emit the OCR text as hidden/`alt` for search and
+  accessibility — extra complexity, can be deferred.
+
+**The crux is detection — "overly complex," which is a scalar, not a black-and-white
+line.** We compute a per-page **complexity score** from deterministic signals we
+already have (no model), e.g. additively:
+
+- number of text blocks on a Canvas page beyond the first (the questions page has 7;
+  a normal caption page has 1; "About the author" has 1);
+- canvas box-count vs text-block-count **fails to reconcile**;
+- the page references images we **couldn't extract** (broken refs) — art we can't
+  reproduce as elements;
+- **mixed alignment** within the page;
+- many positioned elements overall.
+
+### The `--complex-becomes-image` sensitivity knob
+
+Because "too complex" is fuzzy, expose it as a **scalar** rather than a boolean, so
+the user can dial how eagerly the converter "gives up" and flattens:
+
+| value   | meaning                                                             |
+| ------- | ------------------------------------------------------------------- |
+| `off`   | never flatten — always try to reconstruct (today's behavior)        |
+| `0`     | flatten **every** content page (the whole book becomes page images) |
+| `1`     | **timid** — bail to an image at the slightest complexity            |
+| `2`–`4` | progressively braver — only flatten as pages get clearly complex    |
+| `5`     | **bravest** — flatten only the most extreme pages                   |
+
+So lower = flattens more readily; higher = tolerates more complexity before bailing.
+Mechanically, the level sets the score threshold (e.g. flatten when
+`score >= 6 - level`), with `0`/`off` as the all/never end-stops. Default should be
+conservative — likely `off` (opt-in) or a high level like `4` — so we never silently
+turn editable text into pictures without the user asking. A per-page escape hatch
+(`--flatten-pages 6,9`) can complement the global knob.
+
+### Marking flattened pages: `data-conversion-note`
+
+Every page we flatten gets a machine- and human-readable annotation on its
+`div.bloom-page`, so the decision is visible and reversible (and Bloom preserves
+unknown `data-*` — we confirmed it keeps `data-import-source-hash`). Make it a
+**general conversion-note mechanism**, not specific to this feature, so any stage can
+leave notes/warnings on a page. Single-quote the attribute so the JSON value can use
+normal double quotes:
+
+```html
+data-conversion-note='{"severity":"note","code":"complex-page-flattened","message":"This page
+exceeded the too-complex threshold (score 7, level 4), so it was imported as a full-page image
+instead of editable text. To keep it as text, re-import with --complex-becomes-image off (or a
+higher level).","score":7,"level":4}'
+```
+
+Fields: `severity` (`note`|`warning`|`error`), `code` (stable machine key),
+`message` (human, includes how to change it), plus context like `score`/`level`.
+These could later be surfaced in a conversion report or in Bloom itself.
+
 ## Recommendation
 
-These aren't mutually exclusive, and they serve different needs:
+These aren't mutually exclusive, and they serve different needs. The deciding axis
+between B and C is **does the text on these pages need to stay editable/translatable?**
 
-- **Option A** is a small, safe, immediate win for canvas alignment _in general_
-  (not just this page) — any canvas page with a left-aligned caption benefits, and
-  it's strictly an improvement over today.
-- **Option B** is the durable, correct solution for _this recurring templated page_
-  and any like it, and it's the only one that also restores figures and pristine
-  boilerplate.
+- **Option A** (geometry alignment) — small, safe, immediate win for canvas alignment
+  _in general_; keeps text editable; heuristic, so not bulletproof on the long tail.
+- **Option B** (template master) — keeps text **editable**, correct by construction,
+  restores figures + pristine boilerplate; the most engineering, and needs authoring
+  a template. Right when those pages are real, translatable content.
+- **Option C** (flatten to image) — cheapest by far and **pixel-perfect** for any
+  complex page, but the text becomes a **non-editable picture**. Right for back-matter
+  / boilerplate pages (questions, "download the app", credits-with-logos) that nobody
+  needs to translate.
 
-Suggested sequencing: ship **A** now (cheap, low-risk, uses `canvas-left-style`), and
-design/prototype **B** as the real answer for the publisher's repeating pages. If we
-expect many templated pages across the 100 books, **B** is where the leverage is.
+Given these are English LFA readers and the complex pages are end-matter (questions,
+app promo), **Option C is very likely the best value**: a few hours of work, perfect
+output, no per-book effort. The one thing to confirm is whether those specific pages
+are ever translated/edited downstream — if not, flatten them. Keep **A** as a cheap
+general improvement for ordinary caption pages; reserve **B** for the case where a
+templated page genuinely must remain editable text.
 
 ## Open questions to resolve before building B
 

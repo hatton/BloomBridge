@@ -64,8 +64,9 @@ program
   )
   .option(
     "--vision-formatting",
-    "Use a vision model to detect per-page text alignment (vertical/horizontal) and background color, cached into the .ocr.md so it isn't re-run on later passes. Requires a PDF input and an OpenRouter key.",
+    "Use a vision model to detect per-page text alignment (vertical/horizontal) and background color, cached into the .ocr.md so it isn't re-run on later passes. On by default; requires a PDF input and an OpenRouter key. Use --no-vision-formatting to disable.",
   )
+  .option("--no-vision-formatting", "Disable the vision-formatting pass (see --vision-formatting).")
   .option(
     "--vision-model <model>",
     "OpenRouter model for the --vision-formatting pass (defaults to a cheap vision model). e.g. 'google/gemini-3.1-pro-preview'. Independent of --model.",
@@ -73,6 +74,11 @@ program
   .option(
     "--emit-source-hashes",
     "Emit a data-import-source-hash on every page (the hash of its source PDF page render) and skip master-page substitution. Use this once to build a 'master' book: run it on the publisher's sample, hand-perfect the complex pages in Bloom, then rename the folder to end in 'master'. Normal imports then substitute those pages automatically.",
+  )
+  .option(
+    "--complex-becomes-image <level>",
+    "When a page is too complex to reconstruct as editable text, import it as a single full-page image instead. Scalar sensitivity: 'off' (never, default), '0' (every canvas page), '1' (timid — bail easily) … '5' (only the most complex). Lower = flattens more readily. Flattened pages carry a data-conversion-note. Requires PDF input.",
+    "off",
   )
   .option("--verbose", "Enable verbose logging to see detailed process steps")
   .action(async (input, options) => {
@@ -91,9 +97,12 @@ program
         parserEngine: options.parser || "native",
         imager: options.imager || "poppler",
         cover: options.cover || "auto",
-        visionFormatting: options.visionFormatting || false,
+        // Commander defaults this to true (because --no-vision-formatting is defined);
+        // --no-vision-formatting sets it false. Vision-formatting is on by default.
+        visionFormatting: options.visionFormatting,
         visionModelName: options.visionModel,
         emitSourceHashes: options.emitSourceHashes || false,
+        complexBecomesImage: options.complexBecomesImage || "off",
       };
 
       await processConversion(input, args);

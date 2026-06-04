@@ -115,20 +115,24 @@ To extract only images from a PDF:
 
 `pdf-to-bloom mybook.pdf --target=images`
 
-## Vision formatting (optional)
+## Vision formatting (on by default)
 
-Add `--vision-formatting` to have a vision model look at each rendered page and detect
-its text alignment (vertical: top/center/bottom, horizontal: left/center/right) and
-background color. These are baked into the `.ocr.md` page comments and carried through to
-the Bloom HTML (e.g. `bloom-vertical-align-center`, an inline `text-align`, and a page
-`background-color`). Requires a PDF input and `OPENROUTER_KEY`.
+A vision model looks at each rendered page and detects its text alignment (vertical:
+top/center/bottom, horizontal: left/center/right) and background color. These are baked
+into the `.ocr.md` page comments and carried through to the Bloom HTML (e.g.
+`bloom-vertical-align-center`, an inline `text-align`, and a page `background-color`).
+
+**This is on by default.** It needs a PDF input and `OPENROUTER_KEY`; if either is
+missing it is skipped with a warning (the conversion still completes). Disable it with
+`--no-vision-formatting`:
+
+```bash
+pdf-to-bloom mybook.pdf --collection recent          # vision-formatting runs
+pdf-to-bloom mybook.pdf --collection recent --no-vision-formatting   # skip it
+```
 
 Results are cached in the `.ocr.md`, so re-running later stages does not re-pay for the
 vision calls. To regenerate, re-run starting from the PDF.
-
-```bash
-pdf-to-bloom mybook.pdf --collection recent --vision-formatting
-```
 
 By default the vision pass uses a capable Google Gemini model. Override it independently
 of the `--model` (LLM enrichment) option with `--vision-model`:
@@ -186,3 +190,30 @@ Notes:
   with `--ocr gpt`/`gemini`, not `--ocr mistral`/`unpdf`.
 - Don't keep blank/near-empty pages in a master — perceptually they look alike and could
   match the wrong page.
+
+## Importing complex pages as images (`--complex-becomes-image`)
+
+Some pages are too intricate to rebuild as editable text — e.g. a "discussion
+questions" page with a heading, several differently-aligned questions interleaved with
+little figures, and a footer. Rather than approximate them, you can have the importer
+render such a page to a **single full-page image** (the same way it handles full-bleed
+covers), so it looks exactly like the original. The trade-off: that page's text is then
+a picture — not editable, translatable, or searchable in Bloom.
+
+Because "too complex" is a matter of degree, the option is a scalar dial, not a switch:
+
+```bash
+pdf-to-bloom mybook.pdf --collection recent --complex-becomes-image 4
+```
+
+| value           | behavior                                    |
+| --------------- | ------------------------------------------- |
+| `off` (default) | never flatten — always reconstruct as text  |
+| `0`             | flatten every canvas page                   |
+| `1`             | timid — flatten at the slightest complexity |
+| `2`–`4`         | progressively braver                        |
+| `5`             | only flatten the most complex pages         |
+
+Lower = flattens more readily. Each flattened page carries a `data-conversion-note`
+recording why and how to change it. Requires a PDF input (the page is rendered from the
+PDF), so it runs on the `--ocr gpt`/`gemini` path.

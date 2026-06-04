@@ -16,6 +16,7 @@ import {
   addVisionFormatting,
   detectNormalStyle,
   detectCanvasPages,
+  renderPdfPageToImage,
   writeMetaJson,
   writeAppearanceJson,
   writeImageMetadata,
@@ -25,6 +26,7 @@ import {
   readMasterHashes,
   applyMasterPages,
   type CoverMode,
+  type CanvasPageInfo,
 } from "@pdf-to-bloom/lib"; // Assuming these functions are async and return/handle as described
 import {
   createLogCallback,
@@ -66,6 +68,7 @@ export type Arguments = {
   visionFormatting?: boolean; // Use a vision model to detect per-page alignment + background color
   visionModelName?: string; // OpenRouter model for the vision-formatting pass (independent of modelName)
   emitSourceHashes?: boolean; // Tag pages with data-import-source-hash (master-creation mode)
+  complexBecomesImage?: string; // "off" | "0".."5": flatten too-complex pages to a full-page image
 };
 
 type Plan = {
@@ -91,6 +94,7 @@ type Plan = {
   visionModelName?: string;
   emitSourceHashes: boolean;
   masterFolderPath?: string;
+  complexBecomesImage: string;
 };
 
 // Convert numeric enum value to readable string
@@ -135,6 +139,64 @@ async function extractImages(pdfPath: string, outputDir: string, method: string)
     logger.info("Using Poppler pdfimages for image extraction (PDF.js method removed)");
     await extractAndSaveImagesWithPdfImages(pdfPath, outputDir);
   }
+}
+
+/**
+ * Map the `--complex-becomes-image` level to a complexity-score threshold (flatten
+ * a page when its score ≥ threshold). Returns null for "off" / unrecognized.
+ * off → never; 0 → 1 (any canvas page); 1 → 2; … 5 → 6.
+ */
+function complexThreshold(level: string): number | null {
+  if (!level || level === "off") return null;
+  const n = Number(level);
+  if (!Number.isInteger(n) || n < 0 || n > 5) {
+    logger.warn(`Unknown --complex-becomes-image value '${level}', treating as 'off'.`);
+    return null;
+  }
+  return n + 1;
+}
+
+/**
+ * For each Canvas page whose complexity score (its number of text blocks) meets the
+ * threshold, render the page to a full-page image and bake a `flatten-as-image`
+ * marker into its page comment. Master-substituted pages are left alone.
+ */
+async function flattenComplexPages(
+  markdown: string,
+  canvasPages: Map<number, CanvasPageInfo>,
+  pdfPath: string,
+  bookFolder: string,
+  level: string,
+): Promise<string> {
+  const threshold = complexThreshold(level);
+  if (threshold === null) return markdown;
+
+  let out = markdown;
+  for (const [pageNum, info] of canvasPages) {
+    const score = info.textBoxes.length;
+    if (score < threshold) continue;
+
+    // Don't override a master-substituted page.
+    const existing = out.match(new RegExp(`<!--\\s*page\\s+index=${pageNum}\\b[^>]*-->`));
+    if (existing && /master-page=/.test(existing[0])) continue;
+
+    const file = `page-${pageNum}.jpg`;
+    try {
+      await renderPdfPageToImage(pdfPath, pageNum, path.join(bookFolder, file), { dpi: 200 });
+    } catch (error) {
+      logger.warn(`Could not render complex page ${pageNum} to an image: ${error}`);
+      continue;
+    }
+    const re = new RegExp(`(<!--\\s*page\\s+index=${pageNum}\\b)([^>]*?)(\\s*-->)`);
+    out = out.replace(
+      re,
+      `$1$2 flatten-as-image="${file}" flatten-score="${score}" flatten-level="${level}"$3`,
+    );
+    logger.info(
+      `Page ${pageNum}: too complex (score ${score} ≥ ${threshold}); importing as full-page image ${file}.`,
+    );
+  }
+  return out;
 }
 
 export async function processConversion(inputPath: string, options: Arguments) {
@@ -276,6 +338,20 @@ export async function processConversion(inputPath: string, options: Arguments) {
           return `${open}${attrs}${addition}${close}`;
         });
       }
+
+      // "Too complex" → import the page as a single full-page image. The complexity
+      // score is the number of distinct text blocks on a Canvas page (a plain caption
+      // has 1; the LFA "discussion questions" page has 7). The `--complex-becomes-image`
+      // level sets how eagerly we bail: off=never, 0=any canvas page, 1=≥2 blocks …
+      // 5=≥6 blocks. We render the page (PDF in hand) and bake a flatten marker into
+      // the page comment; Stage 4 emits the image page with a data-conversion-note.
+      markdownContent = await flattenComplexPages(
+        markdownContent,
+        canvasPages,
+        plan.pdfPath!,
+        plan.bookFolderPath!,
+        plan.complexBecomesImage,
+      );
 
       logger.info(`Writing OCR'd markdown to: ${plan.markdownFromOCRPath}`);
       await fs.writeFile(plan.markdownFromOCRPath!, markdownContent); // Write the markdown content to file
@@ -559,19 +635,24 @@ async function makeThePlan(inputPath: string, cliArguments: Arguments): Promise<
       "OpenRouter API key is required for OpenRouter OCR models. Provide --openrouter-key or set OPENROUTER_KEY environment variable.",
     );
   }
-  if (cliArguments.visionFormatting && inputType === Artifact.PDF && !openrouterKey) {
-    // Vision formatting runs during the PDF stage and calls OpenRouter.
-    throw new Error(
-      "OpenRouter API key is required for --vision-formatting. Provide --openrouter-key or set OPENROUTER_KEY environment variable.",
-    );
-  }
-
-  if (cliArguments.visionFormatting && inputType !== Artifact.PDF) {
+  // Vision-formatting is ON by default (disable with --no-vision-formatting). It
+  // runs during the PDF stage and calls OpenRouter, so it only applies to a PDF
+  // input and needs the OpenRouter key. Since it's the default, degrade gracefully
+  // (warn + skip) when it can't run rather than failing the whole conversion.
+  let visionFormatting = cliArguments.visionFormatting !== false;
+  if (visionFormatting && inputType !== Artifact.PDF) {
     // The vision step needs the PDF to render pages; results are cached into the
     // .ocr.md, so regeneration requires starting from the PDF.
-    logger.warn(
-      "--vision-formatting only runs when the input is a PDF; ignoring it for this non-PDF input.",
+    logger.info(
+      "Skipping vision-formatting: it only runs when the input is a PDF (results are cached in the .ocr.md).",
     );
+    visionFormatting = false;
+  }
+  if (visionFormatting && !openrouterKey) {
+    logger.warn(
+      "Skipping vision-formatting: it needs an OpenRouter key. Provide --openrouter-key or set OPENROUTER_KEY (or pass --no-vision-formatting to silence this).",
+    );
+    visionFormatting = false;
   }
 
   if (
@@ -693,10 +774,11 @@ async function makeThePlan(inputPath: string, cliArguments: Arguments): Promise<
     parserEngine: cliArguments.parserEngine,
     imager: cliArguments.imager,
     coverMode: normalizeCoverMode(cliArguments.cover),
-    visionFormatting: cliArguments.visionFormatting ?? false,
+    visionFormatting,
     visionModelName: cliArguments.visionModelName,
     emitSourceHashes,
     masterFolderPath,
+    complexBecomesImage: cliArguments.complexBecomesImage ?? "off",
   };
   //console.log(`Plan created:`, JSON.stringify(plan, null, 2));
 
