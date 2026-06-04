@@ -282,7 +282,9 @@ in Stage 4): `bookTitle, isbn, license, licenseUrl, licenseDescription,
 licenseNotes, copyright, originalCopyright, smallCoverCredits, topic, credits,
 versionAcknowledgments, originalContributions, originalAcknowledgments, funding,
 country, province, district, author, illustrator, originalPublisher, language`.
-Special rule: if there’s **no explicit copyright but a publisher line** (“Published
+(`illustrator`, `copyright`, `licenseNotes`, and the CC `license` also flow into each
+image file's XMP in Stage 4 — see 9.6.) Special rule: if there’s **no explicit
+copyright but a publisher line** (“Published
 by X”), use the organization as the copyright (Stage 4 then strips the “Published
 by” prefix deterministically — see 8.6).
 
@@ -403,6 +405,22 @@ pages.
    page renders as just the image, not an image-over-empty-box split), then recurse
    into split-panes.
 
+Every rendered content page is wrapped as `bloom-page numberedPage customPage
+<pageSize>`. The **`numberedPage` class is load-bearing for layout** — and not for
+the reason its name suggests: Bloom only assigns the `side-left`/`side-right` classes
+to numbered pages, and in `basePage.css` those side classes are what apply the
+horizontal page margin (`.bloom-page.side-left { padding-left: var(--page-margin-left) }`;
+`.bloom-page` itself sets only top/bottom padding). So a content page **without**
+`numberedPage` gets zero left/right padding and its text sits hard against the page
+edge (the symptom that prompted this; Bloom's "repair" fixes it by adding
+`numberedPage`, after which Bloom adds the side class). Coupling a layout margin to a
+"page number" class is arguably a Bloom CSS bug, but fixing that isn't this project's
+job. We deliberately **don't** emit the other things Bloom's repair adds
+(`data-pagelineage`, `pageLabel`, `pageDescription`) — they don't affect layout and
+Bloom regenerates them. `validateBloomHtml.ts` checks the generated HTML for the two
+things that matter (every content page has `numberedPage` and a non-empty `id`) and
+logs each problem (non-fatal), so the regression can't return silently.
+
 ### 9.3 Full-bleed covers — `generateFullPageCoverPage` + dataDiv entries
 
 Bloom’s current cover mechanism is **custom layout**, not the old
@@ -467,7 +485,10 @@ the thumbnail isn’t tiny before Bloom recomputes geometry on first view).
   (8.3), and one `data-book` div per metadata field — grouped, markdown→HTML inlined,
   multiple values joined with `<br>`. Field fix-ups: **ISBN** stripped to digits and
   set `lang="*"`; **copyright** stripped of a leading “Published by”; **license ↔
-  licenseUrl** filled in from each other via `licenses.ts`.
+  licenseUrl** filled in from each other via `licenses.ts`, and — when neither is
+  present — recovered from a Creative Commons URL embedded in the prose
+  `licenseDescription`/`licenseNotes` (`resolveCcLicenseUrl`), since OCR/LLM output
+  often leaves the whole CC statement there without a structured token.
 - **`userModifiedStyles`** (`generateUserModifiedStyles`): emits the detected body
   font as `.normal-style { font-size: Npt }` + `.normal-style[lang="L1"] { …
 font-family }`, and the **same rules for `.Bubble-style`** so canvas captions match
@@ -478,8 +499,9 @@ font-family }`, and the **same rules for `.Bubble-style`** so canvas captions ma
 - **`meta.json`** (`metaJson.ts`): `bookInstanceId` (new UUID, or **preserved** when
   updating so Bloom refreshes rather than duplicates), `formatVersion`,
   `nameLocked: true` (so Bloom keeps our folder name instead of renaming to the
-  title), `pageCount` = **content pages only**, plus title/author/license/etc. License
-  strings are normalized to Bloom tokens (`cc-by-nc-nd`, else `custom`).
+  title), `pageCount` = **content pages only**, plus title/author/license/etc. The
+  license is resolved (token, `licenseUrl`, or a CC URL in the prose description via
+  `resolveCcLicenseUrl`) and normalized to a Bloom token (`cc-by-nc-nd`, else `custom`).
 
 - **`appearance.json`** (`metaJson.writeAppearanceJson`): for full-bleed-style books
   (a full-page cover or any canvas page) we write `{ fullBleed: true }` so Bloom
@@ -489,6 +511,27 @@ font-family }`, and the **same rules for `.Bubble-style`** so canvas captions ma
 
 The book HTML is written as `<bookFolder>/<bookFolder>.htm` (the name Bloom reads),
 and a stray `index.html` from older runs is removed.
+
+- **Image XMP metadata** (`imageMetadata.writeImageMetadata`): after the HTML and
+  `meta.json` are written, we stamp **every image in the book folder** (`image-*.png`,
+  `cover.jpg`, `back-cover.jpg`; placeholder/license/thumbnail are skipped) with the
+  book's intellectual-property metadata, using the **same XMP tags SIL libpalaso
+  reads back** so a running Bloom recognizes them (attributes the artist, builds image
+  credits). The mapping — verified against Bloom's `ImageUpdater.cs` and libpalaso's
+  `ClearShare.MetadataCore`:
+
+  | Book field (`collectFields`)                    | XMP tag                     | Notes                                                                                                                                                                                            |
+  | ----------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+  | `illustrator`                                   | `XMP-dc:Creator`            | the image's "Creator" = the artist                                                                                                                                                               |
+  | `copyright`                                     | `XMP-dc:Rights` (x-default) |                                                                                                                                                                                                  |
+  | `licenseNotes`                                  | `XMP-dc:Rights` (lang `en`) | only written alongside a copyright, matching libpalaso                                                                                                                                           |
+  | `licenseUrl` / `license` / `licenseDescription` | `XMP-cc:License`            | Creative-Commons only, via `resolveCcLicenseUrl`: a ready `licenseUrl`, a `license` token, or a CC URL recovered from the prose `licenseDescription`/`licenseNotes`. Custom licenses are skipped |
+
+  Written via the `exiftool-vendored` package (externalized in the lib build like
+  `sharp`, since it ships a platform exiftool binary). Uses `-overwrite_original` so no
+  `*_original` backups are left behind. **Best-effort:** a per-image failure is logged
+  and skipped, and a missing/unusable exiftool never aborts the conversion. One
+  book-level illustrator is applied to all images (no per-image artist support yet).
 
 ### 9.7 Master-page substitution — `master/masterPages.ts`
 
@@ -647,7 +690,8 @@ adds/refreshes the book live.
 - Markdown contract: `packages/lib/src/bloom-markdown/` — `parseMarkdown.ts`,
   `generateMarkdown.ts`; types in `packages/lib/src/types.ts`
 - Stage 4: `packages/lib/src/4-generate-html/` — `html-generator.ts`, `origami.ts`,
-  `markdownToHtml.ts`, `metaJson.ts`, `licenses.ts`
+  `markdownToHtml.ts`, `metaJson.ts`, `licenses.ts`, `validateBloomHtml.ts`
+  (structural well-formedness check on the generated HTML), `imageMetadata.ts` (image XMP)
 - Master substitution: `packages/lib/src/master/masterPages.ts`,
   `packages/lib/src/1-ocr/pageImageHash.ts` (perceptual hash + `hashesMatch`)
 - Background color (canvas + solid pages): `packages/lib/src/1-ocr/detectBackgroundColor.ts`

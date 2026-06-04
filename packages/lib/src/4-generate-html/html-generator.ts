@@ -1,6 +1,6 @@
 import escapeHtml from "escape-html";
 import { randomUUID } from "crypto";
-import { getUrlFromLicense } from "./licenses.js";
+import { getUrlFromLicense, resolveCcLicenseUrl, getLicenseFromUrl } from "./licenses.js";
 import {
   type Book,
   type Page,
@@ -18,6 +18,7 @@ import {
   type TextOrigamiItem,
 } from "./origami.js";
 import { inlineMarkdownToHtml, blockMarkdownToHtml } from "./markdownToHtml.js";
+import { validateBloomHtml } from "./validateBloomHtml.js";
 import { LogEntry, logger } from "../logger";
 
 // A note about bloom-monolingual, bloom-bilingual, and bloom-trilingual
@@ -61,7 +62,7 @@ export class HtmlGenerator {
       // );
     }
     const l1Lang = book.frontMatterMetadata.l1;
-    return `<!doctype html>
+    const html = `<!doctype html>
   <html>
     <head>
     <meta charset="UTF-8" />
@@ -79,6 +80,16 @@ export class HtmlGenerator {
       .join("\n")}
     </body>
   </html>`;
+
+    // Catch malformed pages (e.g. a content page missing the numbered-page
+    // scaffolding) before they reach Bloom. Non-fatal: log and still return the
+    // HTML so it can be inspected.
+    for (const error of validateBloomHtml(html)) {
+      if (error.type === "error") logger.error(`Bloom HTML validation: ${error.message}`);
+      else logger.warn(`Bloom HTML validation: ${error.message}`);
+    }
+
+    return html;
   }
 
   /**
@@ -370,6 +381,25 @@ export class HtmlGenerator {
         license: { [firstLang]: licenseValue },
       });
       logger.info(`Generated license from licenseUrl: ${licenseUrlValue} -> ${licenseValue}`);
+    } else if (!licenseField && !licenseUrlField) {
+      // Neither structured field is present. OCR/LLM often leaves the whole CC
+      // statement in the prose licenseDescription/licenseNotes; recover the URL
+      // (and token) from there so Bloom gets a real license, not just prose.
+      const descField = fields.find((f) => Object.keys(f)[0] === "licenseDescription");
+      const notesField = fields.find((f) => Object.keys(f)[0] === "licenseNotes");
+      const firstLang =
+        (descField && Object.keys(descField["licenseDescription"])[0]) ??
+        (notesField && Object.keys(notesField["licenseNotes"])[0]) ??
+        "*";
+      const url = resolveCcLicenseUrl({
+        licenseDescription: descField?.["licenseDescription"][firstLang],
+        licenseNotes: notesField?.["licenseNotes"][firstLang],
+      });
+      if (url) {
+        fields.push({ licenseUrl: { [firstLang]: url } });
+        fields.push({ license: { [firstLang]: getLicenseFromUrl(url) } });
+        logger.info(`Derived license from licenseDescription prose -> ${url}`);
+      }
     }
     //console.log("Fields generated:", JSON.stringify(fields, null, 2));
 
@@ -734,22 +764,9 @@ ${textElementsHtml}
     const orientation = Orientation.Portrait;
     const origamiContent = generateOrigamiHtml(origamiItems, orientation);
 
-    // to 'bloom-page' div based on page properties (e.g., page.type) if available/needed.
-    // For now, 'customPage' is used as a general class.
-    // The `page.type` property could be used here.
     // The page-size class (e.g. A4Portrait) matches the source PDF; Bloom keys the
     // book's paper size off this class. Defaults to A5Portrait.
-    let pageClasses = `bloom-page customPage ${metadata.pageSize || "A5Portrait"}`;
-
-    // TODO: think about this... it appears that Bloom is deleting these. Ultimately
-    // we do want to get rid of them because Bloom regenerates them based on its
-    // metadata, but at the moment we also might be losing some information.
-    if (page.type === "front-matter") {
-      pageClasses += " bloom-frontMatter";
-    } else if (page.type === "back-matter") {
-      pageClasses += " bloom-backMatter";
-    }
-    // Consider adding 'numberedPage' if it's a content page, etc.
+    const pageSize = metadata.pageSize || "A5Portrait";
 
     // Every .bloom-page must have a unique, non-empty id (required by Bloom and
     // its validator). Bloom uses GUIDs; generate one per page.
@@ -768,7 +785,22 @@ ${textElementsHtml}
       ? ` data-import-source-hash="${page.importSourceHash}"`
       : "";
 
-    return `    <div class="${pageClasses.trim()}" id="${pageId}"${pageStyleAttr}${sourceHashAttr}>
+    // Only content/empty pages reach here (front/back-matter are filtered by
+    // shouldRenderPage; covers/canvas/master pages returned above). They MUST carry
+    // the `numberedPage` class.
+    //
+    // NOTE: `numberedPage` unfortunately does more than its name implies. Bloom only
+    // assigns the `side-left`/`side-right` classes to numbered pages, and in
+    // basePage.css those side classes are what apply the left/right page margin
+    // (`.bloom-page.side-left { padding-left: var(--page-margin-left) }`);
+    // `.bloom-page` itself sets only top/bottom padding. So a content page WITHOUT
+    // `numberedPage` gets zero horizontal padding and its text sits hard against the
+    // page edge — the bug this fixes. Coupling a layout margin to a "page number"
+    // class is arguably a Bloom CSS bug, but fixing that is not this project's job;
+    // we just emit `numberedPage` so the page lays out correctly. We deliberately do
+    // NOT emit the other things Bloom's "repair" adds (data-pagelineage, pageLabel,
+    // pageDescription) — they don't affect layout and Bloom regenerates them.
+    return `    <div class="bloom-page numberedPage customPage ${pageSize}" id="${pageId}"${pageStyleAttr}${sourceHashAttr}>
       <div class="marginBox">
         ${origamiContent}
       </div>

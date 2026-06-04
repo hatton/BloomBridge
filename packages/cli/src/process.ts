@@ -18,6 +18,7 @@ import {
   detectCanvasPages,
   writeMetaJson,
   writeAppearanceJson,
+  writeImageMetadata,
   notifyBloomOfBook,
   findMasterBookFolder,
   loadMasterPages,
@@ -456,6 +457,9 @@ export async function processConversion(inputPath: string, options: Arguments) {
       // Tell Bloom to render full-bleed (no margins) and keep covers white behind
       // full-page cover art, when the book calls for it.
       await writeAppearanceJson(plan.bookFolderPath!, book);
+      // Stamp each image's XMP with the book's illustrator/copyright/license, using
+      // the same tags Bloom reads, so the artist is attributed and image credits work.
+      await writeImageMetadata(plan.bookFolderPath!, book);
 
       logger.info(`Bloom book should be at: ${plan.bookFolderPath}`);
       logger.info("✅ Conversion to Bloom HTML completed successfully!");

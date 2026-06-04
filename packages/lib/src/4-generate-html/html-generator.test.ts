@@ -138,7 +138,9 @@ describe("generateHtmlDocument", () => {
       expect(html).toContain('data-book="bookTitle"'); // title preserved as metadata
 
       // Only the two content pages are rendered (now carrying the default page-size class).
-      const contentPageMatches = html.match(/class="bloom-page customPage A5Portrait"/g);
+      const contentPageMatches = html.match(
+        /class="bloom-page numberedPage customPage A5Portrait"/g,
+      );
       expect(contentPageMatches).toHaveLength(2);
     });
 
@@ -409,7 +411,7 @@ describe("generateHtmlDocument", () => {
       const html = HtmlGenerator.generateHtmlDocument(book);
 
       // Should still generate a page with an empty text block
-      expect(html).toContain('class="bloom-page customPage A5Portrait"');
+      expect(html).toContain('class="bloom-page numberedPage customPage A5Portrait"');
       expect(html).toContain("marginBox");
     });
   });

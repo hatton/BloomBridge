@@ -9,6 +9,7 @@ import {
   BACK_COVER_IMAGE_FILENAME,
 } from "../types.js";
 import { logger } from "../logger";
+import { resolveCcLicenseUrl, getLicenseFromUrl } from "./licenses.js";
 
 /**
  * Bloom's meta.json (a subset of `BookMetaData` in Bloom's `BookInfo.cs`).
@@ -38,7 +39,7 @@ export interface BookMetaData {
 }
 
 /** Collect text-field content from the book, keyed by field name then language. */
-function collectFields(book: Book): Record<string, Record<string, string>> {
+export function collectFields(book: Book): Record<string, Record<string, string>> {
   const fields: Record<string, Record<string, string>> = {};
   for (const page of book.pages) {
     for (const element of page.elements) {
@@ -56,7 +57,10 @@ function collectFields(book: Book): Record<string, Record<string, string>> {
 }
 
 /** Pick the value for the primary language, falling back to the first available. */
-function preferL1(content: Record<string, string> | undefined, l1: string): string | undefined {
+export function preferL1(
+  content: Record<string, string> | undefined,
+  l1: string,
+): string | undefined {
   if (!content) return undefined;
   return content[l1] ?? Object.values(content)[0];
 }
@@ -86,7 +90,18 @@ export function buildBookMetaData(book: Book, existing?: Partial<BookMetaData>):
   const titleContent = fields["bookTitle"];
   const title = preferL1(titleContent, l1);
 
-  const license = toBloomLicenseToken(preferL1(fields["license"], l1));
+  // Prefer an explicit license token, but fall back to a Creative Commons URL
+  // resolved from licenseUrl or the prose licenseDescription/licenseNotes (OCR/LLM
+  // often leaves the whole CC statement there without a structured token).
+  const ccUrl = resolveCcLicenseUrl({
+    license: preferL1(fields["license"], l1),
+    licenseUrl: preferL1(fields["licenseUrl"], l1),
+    licenseDescription: preferL1(fields["licenseDescription"], l1),
+    licenseNotes: preferL1(fields["licenseNotes"], l1),
+  });
+  const license = ccUrl
+    ? toBloomLicenseToken(getLicenseFromUrl(ccUrl))
+    : toBloomLicenseToken(preferL1(fields["license"], l1));
 
   // Fields we derive from the book content. Undefined entries are dropped below
   // so they never clobber a value an existing meta.json already had.

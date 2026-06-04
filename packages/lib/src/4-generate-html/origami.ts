@@ -147,7 +147,10 @@ function generateTextBlock(
     );
   }
 
-  const defLangsAttr = translationGroupDefaultLangVariables
+  // Only emit data-default-languages when there's an explicit ordering to convey
+  // (e.g. "V"/"N1" for bilingual pages). Omitting it on monolingual text adds
+  // nothing — Bloom shows the content either way.
+  const defLangsAttr = translationGroupDefaultLangVariables?.length
     ? ` data-default-languages="${translationGroupDefaultLangVariables.join(",")}"`
     : "";
 

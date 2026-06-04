@@ -137,6 +137,21 @@ of the `--model` (LLM enrichment) option with `--vision-model`:
 pdf-to-bloom mybook.pdf --vision-formatting --vision-model "openai/gpt-5.4"
 ```
 
+## Image metadata (illustrator, copyright, license)
+
+When converting to Bloom HTML, the tool copies the book's intellectual-property
+metadata into the **XMP of every image** in the book folder, using the same tags
+Bloom reads. In particular the **illustrator** becomes each image's _Creator_, so Bloom
+attributes the artist and can build image credits. It also writes the copyright,
+license notes, and — for Creative Commons licenses — the license URL. The CC license
+is recognized even when the book only carries it as prose (e.g. a "This work is
+licensed under… visit http://creativecommons.org/licenses/by-nc-nd/4.0/" description),
+and the same resolution feeds `meta.json` and the book's license fields.
+
+This is automatic; there's no option to set. It's best-effort: if metadata can't be
+written to an image, that image is skipped and the conversion still completes. One
+book-level illustrator is applied to all images.
+
 ## Master-page substitution (shared boilerplate pages)
 
 When a whole set of books from one publisher share the same complex, hand-built pages

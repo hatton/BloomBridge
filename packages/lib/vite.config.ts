@@ -101,6 +101,10 @@ export default defineConfig({
         "buffer",
         "events",
         "sharp", // Add Sharp as external to avoid bundling issues
+        // exiftool-vendored ships a platform-specific exiftool binary it locates
+        // relative to its own package dir and spawns as a child process; it must
+        // stay external so Node resolves it (and its binary) from node_modules.
+        "exiftool-vendored",
       ],
     },
     sourcemap: true,
