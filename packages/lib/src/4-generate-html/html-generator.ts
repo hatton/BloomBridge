@@ -476,23 +476,40 @@ export class HtmlGenerator {
     const posStyleOf = (b: { x: number; y: number; w: number; h: number }) =>
       `left: ${Math.round(b.x * canvasW)}px; top: ${Math.round(b.y * canvasH)}px; width: ${Math.round(b.w * canvasW)}px; height: ${Math.round(b.h * canvasH)}px;`;
 
-    // Pair each text block with its own box when the counts line up; otherwise fall
-    // back to a single box (the union) holding all the text, so nothing is dropped.
-    const pairs: { text: TextBlockElement; box: { x: number; y: number; w: number; h: number } }[] =
-      boxes.length === textEls.length
-        ? textEls.map((text, i) => ({ text, box: boxes[i] }))
-        : [{ text: mergeTextBlocks(textEls), box: unionBox(boxes) }];
+    // Decide how the text maps onto the detected boxes, in reading order:
+    //  1. one text block per box (the common case);
+    //  2. else split blocks into paragraphs (blank-line separated) and use those if
+    //     the paragraph count matches — handles the LLM merging two visually-separate
+    //     chunks (e.g. a question and the footer) into one block;
+    //  3. else merge everything into the union box so nothing is dropped.
+    const blockContents = textEls.map((e) => e.content);
+    let units: Record<string, string>[];
+    let useBoxes: { x: number; y: number; w: number; h: number }[];
+    if (blockContents.length === boxes.length) {
+      units = blockContents;
+      useBoxes = boxes;
+    } else {
+      const chunks = splitIntoParagraphChunks(textEls);
+      if (chunks.length === boxes.length) {
+        units = chunks;
+        useBoxes = boxes;
+      } else {
+        units = [mergeTextBlocks(textEls).content];
+        useBoxes = [unionBox(boxes)];
+      }
+    }
+    const pairs = units.map((content, i) => ({ content, box: useBoxes[i] }));
 
     const textElementsHtml = pairs
-      .map(({ text, box }, i) => {
+      .map(({ content, box }, i) => {
         const posStyle = posStyleOf(box);
         // bubble levels stack above the background (level 1); start text at level 2.
         const bubble = this.COVER_DATA_BUBBLE.replace("`level`:1", `\`level\`:${i + 2}`);
         const altBubble = `{\`lang\`:\`${l1}\`,\`style\`:\`${posStyle}\`,\`tails\`:[]}`;
-        const editables = Object.keys(text.content)
-          .filter((lang) => text.content[lang] && text.content[lang].trim())
+        const editables = Object.keys(content)
+          .filter((lang) => content[lang] && content[lang].trim())
           .map((lang) => {
-            const html = blockMarkdownToHtml(text.content[lang]) || "<p></p>";
+            const html = blockMarkdownToHtml(content[lang]) || "<p></p>";
             const visibility =
               lang === l1 ? " bloom-visibility-code-on bloom-content1 bloom-contentNational1" : "";
             return `<div class="bloom-editable Bubble-style${visibility}" lang="${lang}" contenteditable="true" data-bubble-alternate="${altBubble}">${html}</div>`;
@@ -758,6 +775,41 @@ ${textElementsHtml}
     </div>`;
   }
 }
+/**
+ * Split text blocks into paragraph-level chunks (separated by blank lines), in
+ * reading order. Used to reconcile with the per-block boxes a canvas page detected
+ * when the LLM merged two visually-separate chunks into one block. A block whose
+ * languages disagree on paragraph count (or that has a single paragraph) stays whole.
+ */
+function splitIntoParagraphChunks(textEls: TextBlockElement[]): Record<string, string>[] {
+  const chunks: Record<string, string>[] = [];
+  for (const el of textEls) {
+    const langs = Object.keys(el.content).filter((l) => el.content[l]?.trim());
+    const paras: Record<string, string[]> = {};
+    let count = -1;
+    let consistent = true;
+    for (const lang of langs) {
+      const parts = el.content[lang]
+        .split(/\n\s*\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      paras[lang] = parts;
+      if (count === -1) count = parts.length;
+      else if (parts.length !== count) consistent = false;
+    }
+    if (!consistent || count <= 1) {
+      chunks.push(el.content);
+    } else {
+      for (let i = 0; i < count; i++) {
+        const chunk: Record<string, string> = {};
+        for (const lang of langs) chunk[lang] = paras[lang][i];
+        chunks.push(chunk);
+      }
+    }
+  }
+  return chunks;
+}
+
 /** Merge several text blocks into one, concatenating each language's text as paragraphs. */
 function mergeTextBlocks(textEls: TextBlockElement[]): TextBlockElement {
   const content: Record<string, string> = {};

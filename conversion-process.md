@@ -433,11 +433,14 @@ absolutely-positioned `bloom-canvas-element` per text block** (`left/top/width/h
 px from that block's box), each holding a `bloom-translationGroup` with a
 `Bubble-style` editable. The canvas (`data-imgsizebasedon`) is sized to the page
 aspect ratio so the full-bleed image fills it with no letterbox, and each box's
-fractions map straight to px. When the number of detected boxes doesn't match the
-number of text blocks (e.g. starting from an older `.ocr.md` with a single box), it
-falls back to merging all the text into one box so nothing is dropped. Validated on
-`volcano.pdf` (single caption) and the LFA "discussion questions" page (heading +
-five questions + footer).
+fractions map straight to px. When the number of text blocks doesn't match the
+number of detected boxes, it first **splits the blocks into paragraphs** (blank-line
+separated) and uses those if the paragraph count matches the boxes — this recovers
+the common case where the LLM tagged two visually-separate chunks (e.g. the last
+question and the footer) as one block; only if that still doesn't line up does it
+merge all the text into one box so nothing is dropped. Validated on `volcano.pdf`
+(single caption) and the LFA "discussion questions" page (heading + five questions +
+footer → 7 separate positioned elements).
 
 If the page has a detected `background-color` (5.6), it is applied to the page div
 as Bloom’s `--page-background-color` custom property — the canvas art fills only
