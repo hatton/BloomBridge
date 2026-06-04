@@ -29,6 +29,7 @@ export async function llmMarkdown(
   cleanedUpMarkdown: string;
   valid: boolean;
   error?: string;
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 }> {
   const { logCallback, overridePrompt, overrideModel } = options || {};
 
@@ -48,7 +49,7 @@ export async function llmMarkdown(
       llmPrompt = overridePrompt || fs.readFileSync(promptPath, "utf8");
       logger.verbose("Loaded enrichment prompt from file");
     } catch (error) {
-      logger.error(`Failed to read enrichment prompt: ${error}`);
+      logger.error(`Failed to read enrichment prompt: ${String(error)}`);
       throw error;
     } // Configure OpenRouter with Gemini 3.1 Pro Preview
     const modelName = overrideModel || "google/gemini-3.1-pro-preview";
@@ -93,7 +94,18 @@ export async function llmMarkdown(
       messages,
       temperature: 0.0, // Deterministic, no creativity needed
       maxTokens,
+      // Ask OpenRouter to include actual usage cost in the response.
+      providerOptions: { openrouter: { usage: { include: true } } },
     });
+    // OpenRouter surfaces the real cost via provider metadata when usage accounting
+    // is on. Path varies by provider version, so read defensively.
+    const pm = (result as any).providerMetadata?.openrouter;
+    const llmCostUsd: number | undefined =
+      typeof pm?.usage?.cost === "number"
+        ? pm.usage.cost
+        : typeof pm?.cost === "number"
+          ? pm.cost
+          : undefined;
     const finishReason = result.finishReason as string; // Cast to string to allow checking custom reasons like "payment"
     if (finishReason !== "stop") {
       console.log("⚠️ runPrompt: Non-stop finish reason detected", {
@@ -114,6 +126,24 @@ export async function llmMarkdown(
     }
     let taggedContent = result.text;
 
+    // Capture token usage (cost lookup is a later pass — see plan).
+    const usage = result.usage
+      ? {
+          promptTokens: result.usage.promptTokens ?? 0,
+          completionTokens: result.usage.completionTokens ?? 0,
+          totalTokens: result.usage.totalTokens ?? 0,
+        }
+      : undefined;
+    if (usage) {
+      logger.event({
+        kind: "tokens",
+        stage: "llm",
+        tokensIn: usage.promptTokens,
+        tokensOut: usage.completionTokens,
+        costUsd: llmCostUsd,
+      });
+    }
+
     logger.info("Markdown enrichment completed... validating...");
     logger.verbose(`Generated ${taggedContent.length} characters of markdown`);
 
@@ -133,9 +163,10 @@ export async function llmMarkdown(
       markdownResultFromLLM: taggedContent,
       cleanedUpMarkdown: cleanupResult.cleaned,
       valid: cleanupResult.valid,
+      usage,
     };
   } catch (error) {
-    logger.error(`Markdown enrichment failed: ${error}`);
+    logger.error(`Markdown enrichment failed: ${String(error)}`);
     return {
       markdownResultFromLLM: "",
       cleanedUpMarkdown: "",

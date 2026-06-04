@@ -106,6 +106,13 @@ export interface Page {
   // It renders as a minimal placeholder div that master-page substitution then
   // replaces with the master's exact HTML.
   isMasterPage?: boolean;
+  // When set, the page was judged "too complex" to reconstruct faithfully and is
+  // imported as a single full-page image instead (see Stage 1's complexity check
+  // and the `--complex-becomes-image` option). The value is the rendered image's
+  // filename; score/level record why, for the page's data-conversion-note.
+  flattenAsImage?: string;
+  flattenScore?: number;
+  flattenLevel?: string;
 }
 
 export interface Book {

@@ -139,6 +139,8 @@ export class HtmlGenerator {
     // A page matched to the master book always renders (as a substitution
     // placeholder), even if it was otherwise classified as back-matter.
     if (page.isMasterPage) return true;
+    // A flattened page renders as its full-page image regardless of type.
+    if (page.flattenAsImage) return true;
     const isCover = page.elements.some(
       (element): element is ImageElement =>
         element.type === "image" &&
@@ -155,6 +157,13 @@ export class HtmlGenerator {
    * unused inside covers). This matches Bloom's own `appearanceCoverBackgroundColor`
    * style block, which it keys off `appearance.json`'s `cover-background-color`
    * (see metaJson.writeAppearanceJson).
+   *
+   * We also emit `<meta name="preserveCoverColor" content="true">`. Without it, when
+   * Bloom loads the book it runs `Book.InitCoverColor()` and assigns a *random*
+   * cover color (overwriting our white), because its `GetCoverColorStyleElement`
+   * gate only recognizes the legacy `.coverColor { background-color }` rule — not the
+   * `--cover-background-color` CSS variable we emit. The meta tells Bloom to leave the
+   * cover color alone, so the appearance.json white sticks behind the full-page art.
    */
   private static generateCoverBackgroundStyle(book: Book): string {
     const hasFullCover = book.pages.some((page) =>
@@ -164,7 +173,8 @@ export class HtmlGenerator {
       ),
     );
     if (!hasFullCover) return "";
-    return `<style type="text/css" name="appearanceCoverBackgroundColor">.bloom-page { --cover-background-color: white; }</style>`;
+    return `<meta name="preserveCoverColor" content="true" />
+    <style type="text/css" name="appearanceCoverBackgroundColor">.bloom-page { --cover-background-color: white; }</style>`;
   }
 
   private static generateBloomDataDiv(book: Book): string {
@@ -475,6 +485,55 @@ export class HtmlGenerator {
   }
 
   /**
+   * Emit a page that is a single full-page image — used when the complexity check
+   * decided to import the page as a picture rather than reconstruct its text/layout
+   * (see Stage 1 + `--complex-becomes-image`). It's a Canvas page holding only a
+   * full-bleed background image (no text), so with `appearance.json` `fullBleed`
+   * the rendered page fills edge-to-edge. A `data-conversion-note` records why and
+   * how to turn it off, for a human or a later conversion report.
+   */
+  private static generateFullPageImagePage(page: Page, metadata: FrontMatterMetadata): string {
+    const src = page.flattenAsImage!;
+    const pageSize = metadata.pageSize || "A5Portrait";
+    // Size the background to the FULL page (not the marginBox) so the image bleeds
+    // to every edge — same as a full-bleed cover. Pairs with appearance.json's
+    // `fullBleed: true`; sizing to canvasW/canvasH instead leaves white margins.
+    const { pageW, pageH } = this.pagePx(pageSize);
+    const pageId = randomUUID();
+    const bgBubble = this.COVER_DATA_BUBBLE;
+
+    const note = {
+      severity: "note",
+      code: "complex-page-flattened",
+      message:
+        `This page exceeded the too-complex threshold (score ${page.flattenScore ?? "?"}, ` +
+        `level ${page.flattenLevel ?? "?"}), so it was imported as a full-page image instead ` +
+        `of editable text. To keep it as text, re-import with --complex-becomes-image off ` +
+        `(or a higher level).`,
+      score: page.flattenScore,
+      level: page.flattenLevel,
+    };
+    // Single-quote the attribute so the JSON value can use normal double quotes.
+    const noteAttr = ` data-conversion-note='${JSON.stringify(note)}'`;
+
+    return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang=""${noteAttr}>
+      <div class="pageLabel" data-i18n="TemplateBooks.PageLabel.Canvas">Canvas</div>
+      <div class="pageDescription"></div>
+      <div class="marginBox">
+        <div class="split-pane-component-inner">
+          <div class="bloom-canvas bloom-has-canvas-element" data-tool-id="canvas" data-imgsizebasedon="${pageW},${pageH}" title="">
+            <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${pageW}px; height: ${pageH}px; top: 0px; left: 0px;" data-bubble="${bgBubble}">
+              <div class="bloom-imageContainer" data-tool-id="canvas" style="direction: ltr;">
+                <img src="${escapeHtml(src)}" class="bloom-imageObjectFit-cover" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /**
    * Emit a Bloom "Canvas" page: a full-page background image with one text block
    * floating on top, positioned where it sits in the source PDF (page.canvasTextBox,
    * a fraction of the page). The canvas matches the page aspect ratio so the
@@ -650,6 +709,13 @@ ${textElementsHtml}
       return `    <div class="bloom-page customPage ${pageSize}" id="${randomUUID()}" data-import-source-hash="${page.importSourceHash}">
       <div class="marginBox"></div>
     </div>`;
+    }
+
+    // A page the complexity check flagged as "too complex" is imported as a single
+    // full-page image (Stage 1 rendered it). We carry a data-conversion-note so the
+    // decision is visible and reversible.
+    if (page.flattenAsImage) {
+      return this.generateFullPageImagePage(page, metadata);
     }
 
     // A page whose art is a whole-page render (see 1-ocr/prepareCovers.ts) becomes

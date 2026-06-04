@@ -40,6 +40,74 @@ function normalizeFolder(p: string): string {
   return p.replace(/[\\/]+$/, "").toLowerCase();
 }
 
+/**
+ * Find a running Bloom and report which collection it currently has open. Lets a
+ * caller preview a book into the very collection Bloom is showing.
+ */
+export async function getRunningBloomCollection(): Promise<{
+  port: number;
+  collectionFolder: string;
+  collectionName?: string;
+} | null> {
+  for (const port of CANDIDATE_PORTS) {
+    try {
+      const response = await fetch(`http://localhost:${port}/bloom/api/common/instanceInfo`, {
+        signal: AbortSignal.timeout(PORT_PROBE_TIMEOUT_MS),
+      });
+      if (!response.ok) continue;
+      const info = (await response.json()) as BloomInstanceInfo;
+      if (info.instanceKind === "running-bloom" && info.editableCollectionFolder) {
+        return {
+          port,
+          collectionFolder: info.editableCollectionFolder,
+          collectionName: info.collectionName,
+        };
+      }
+    } catch {
+      // keep scanning
+    }
+  }
+  return null;
+}
+
+/** Ask the running Bloom to reload its open collection (POST common/reloadCollection). */
+export async function reloadBloomCollection(port?: number): Promise<boolean> {
+  const ports = port ? [port] : CANDIDATE_PORTS;
+  for (const p of ports) {
+    try {
+      const response = await fetch(`http://localhost:${p}/bloom/api/common/reloadCollection`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(PORT_PROBE_TIMEOUT_MS),
+      });
+      if (response.ok) return true;
+    } catch {
+      // keep scanning
+    }
+  }
+  return false;
+}
+
+/** Bring the running Bloom window to the foreground (POST external/bringToFront). */
+export async function bringBloomToFront(port?: number): Promise<boolean> {
+  const ports = port ? [port] : CANDIDATE_PORTS;
+  for (const p of ports) {
+    try {
+      const response = await fetch(`http://localhost:${p}/bloom/api/external/bringToFront`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(PORT_PROBE_TIMEOUT_MS),
+      });
+      if (response.ok) return true;
+    } catch {
+      // keep scanning
+    }
+  }
+  return false;
+}
+
 /** True if `parent` is the immediate parent folder of `child`. */
 function isParentOf(parent: string, child: string): boolean {
   return normalizeFolder(path.dirname(child)) === normalizeFolder(parent);

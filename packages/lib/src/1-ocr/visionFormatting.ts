@@ -126,6 +126,10 @@ export async function addVisionFormatting(
 
     // page index -> attribute string to append (only for successful pages)
     const results = new Map<number, string>();
+    let visionTokensIn = 0;
+    let visionTokensOut = 0;
+    let visionCost = 0;
+    let haveVisionCost = false;
 
     try {
       await runWithConcurrency(toProcess, concurrency, async (page) => {
@@ -134,10 +138,11 @@ export async function addVisionFormatting(
           await renderPdfPageToImage(pdfPath, page.index, jpgPath, { dpi });
           const imageBuffer = await fs.readFile(jpgPath);
 
-          const { object } = await generateObject({
+          const { object, usage, providerMetadata } = await generateObject({
             model: openrouterProvider(modelName),
             schema: VisionResultSchema,
             temperature: 0,
+            providerOptions: { openrouter: { usage: { include: true } } },
             messages: [
               {
                 role: "user",
@@ -152,6 +157,22 @@ export async function addVisionFormatting(
           // Background color is detected deterministically from the rendered page
           // (a uniform, non-white border = a solid page background), NOT from the
           // vision model. Only genuinely solid-color pages get a background-color.
+          if (usage) {
+            visionTokensIn += usage.promptTokens ?? 0;
+            visionTokensOut += usage.completionTokens ?? 0;
+          }
+          const vpm = (providerMetadata as any)?.openrouter;
+          const vcost =
+            typeof vpm?.usage?.cost === "number"
+              ? vpm.usage.cost
+              : typeof vpm?.cost === "number"
+                ? vpm.cost
+                : undefined;
+          if (typeof vcost === "number") {
+            visionCost += vcost;
+            haveVisionCost = true;
+          }
+
           const bgColor = await detectSolidBackgroundColor(jpgPath);
           const bg = bgColor ? ` background-color="${bgColor}"` : "";
           results.set(
@@ -163,14 +184,14 @@ export async function addVisionFormatting(
           );
         } catch (error) {
           // One bad page shouldn't abort the book; just leave it unannotated.
-          logger.warn(`Vision formatting failed for page ${page.index}: ${error}`);
+          logger.warn(`Vision formatting failed for page ${page.index}: ${String(error)}`);
         } finally {
           await fs.rm(jpgPath, { force: true }).catch(() => {});
         }
       });
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true }).catch((error) => {
-        logger.warn(`Failed to clean up temp dir ${tempDir}: ${error}`);
+        logger.warn(`Failed to clean up temp dir ${tempDir}: ${String(error)}`);
       });
     }
 
@@ -180,6 +201,16 @@ export async function addVisionFormatting(
       if (!addition) return comment;
       return `<!-- page index=${indexStr}${attrs.replace(/\s+$/, "")}${addition} -->`;
     });
+
+    if (visionTokensIn || visionTokensOut) {
+      logger.event({
+        kind: "tokens",
+        stage: "vision",
+        tokensIn: visionTokensIn,
+        tokensOut: visionTokensOut,
+        costUsd: haveVisionCost ? visionCost : undefined,
+      });
+    }
 
     logger.info(`Vision formatting: annotated ${results.size} of ${toProcess.length} page(s).`);
     return updated;

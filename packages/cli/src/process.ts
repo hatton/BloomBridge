@@ -1,556 +1,82 @@
-import * as fs from "fs/promises"; // Use promises API for async file operations
-import * as path from "path";
-import {
-  makeMarkdownFromPDF,
-  logger,
-  llmMarkdown,
-  attemptCleanup,
-  Parser,
-  HtmlGenerator,
-  addBloomPlanToMarkdown,
-  pdfToMarkdownWithUnpdf,
-  pdfToMarkdown,
-  extractImagesWithPdfImages,
-  extractAndSaveImagesWithPdfImages,
-  prepareCovers,
-  addVisionFormatting,
-  detectNormalStyle,
-  detectCanvasPages,
-  renderPdfPageToImage,
-  writeMetaJson,
-  writeAppearanceJson,
-  writeImageMetadata,
-  notifyBloomOfBook,
-  findMasterBookFolder,
-  loadMasterPages,
-  readMasterHashes,
-  applyMasterPages,
-  type CoverMode,
-  type CanvasPageInfo,
-} from "@pdf-to-bloom/lib"; // Assuming these functions are async and return/handle as described
-import {
-  createLogCallback,
-  getApiKeys,
-  getFileNameWithoutExtension,
-  readBloomCollectionSettingsIfFound,
-  validateAndResolveCollectionPath,
-} from "./processUtils";
+import { logger, planConversion, runConversion, Artifact, type RunArgs } from "@pdf-to-bloom/lib";
+import { createLogCallback, getApiKeys } from "./processUtils";
 
-export enum PdfProcessor {
-  Mistral = "mistral",
-  Unpdf = "unpdf",
-  OpenRouter = "openrouter",
-}
+// The conversion orchestration now lives in the lib (shared with the GUI server).
+// This wrapper handles CLI concerns: API-key/env resolution, console logging, the
+// --json-events NDJSON stream, and exit codes.
 
-export enum Artifact {
-  PDF,
-  Images,
-  MarkdownFromOCR,
-  MarkdownFromLLMRaw,
-  MarkdownFromLLMCleaned,
-  MarkdownReadyForBloom,
-  HTML,
-}
+export { Artifact };
+
 export type Arguments = {
-  input: string; // Input file or directory path
-  output?: string; // Optional output path
-  collection?: string; // Path to Bloom collection folder or .bloomCollection file
-  target: Artifact; // Target format (default is HTML)
-  verbose: boolean; // Verbose logging
-  mistralApiKey?: string; // Mistral API key for PDF to markdown conversion
-  openrouterKey?: string; // OpenRouter API key for LLM tagging of markdown
-  promptPath?: string; // Path to custom prompt file to override built-in prompt
-  modelName?: string; // OpenRouter model name to override the default model
-  ocrMethod: string; // OCR processing method: mistral, unpdf, or any OpenRouter model
-  parserEngine: string; // PDF parsing engine for OpenRouter: native, mistral-ocr, or pdf-text
-  imager: string; // Image extraction method: pdfjs or poppler
-  cover?: string; // Full-page cover handling: auto (default), render, or none
-  visionFormatting?: boolean; // Use a vision model to detect per-page alignment + background color
-  visionModelName?: string; // OpenRouter model for the vision-formatting pass (independent of modelName)
-  emitSourceHashes?: boolean; // Tag pages with data-import-source-hash (master-creation mode)
-  complexBecomesImage?: string; // "off" | "0".."5": flatten too-complex pages to a full-page image
-};
-
-type Plan = {
-  pdfPath?: string;
-  markdownFromOCRPath?: string;
-  markdownFromLLMPath?: string;
-  markdownCleanedAfterLLMPath?: string;
-  markdownForBloomPath?: string;
-  bookFolderPath?: string;
-  collectionFolderPath?: string;
-  inputArtifact: Artifact;
-  targetArtifact: Artifact;
+  input: string;
+  output?: string;
+  collection?: string;
+  target: Artifact;
   verbose: boolean;
-  mistralKey?: string;
+  mistralApiKey?: string;
   openrouterKey?: string;
   promptPath?: string;
   modelName?: string;
   ocrMethod: string;
   parserEngine: string;
   imager: string;
-  coverMode: CoverMode;
-  visionFormatting: boolean;
+  cover?: string;
+  visionFormatting?: boolean;
   visionModelName?: string;
-  emitSourceHashes: boolean;
-  masterFolderPath?: string;
-  complexBecomesImage: string;
+  emitSourceHashes?: boolean;
+  complexBecomesImage?: string;
+  jsonEvents?: boolean;
 };
-
-// Convert numeric enum value to readable string
-const artifactNames = {
-  [Artifact.PDF]: "PDF",
-  [Artifact.Images]: "Images",
-  [Artifact.MarkdownFromOCR]: "Markdown from OCR",
-  [Artifact.MarkdownFromLLMRaw]: "Raw Markdown from LLM",
-  [Artifact.MarkdownFromLLMCleaned]: "Tagged Markdown from LLM",
-  [Artifact.MarkdownReadyForBloom]: "Bloom-ready Markdown",
-  [Artifact.HTML]: "Bloom HTML",
-};
-
-/**
- * Normalize the --cover option to a CoverMode, defaulting to "auto".
- */
-function normalizeCoverMode(value?: string): CoverMode {
-  switch ((value ?? "auto").toLowerCase()) {
-    case "render":
-      return "render";
-    case "none":
-      return "none";
-    case "auto":
-      return "auto";
-    default:
-      logger.warn(`Unknown --cover value '${value}', defaulting to 'auto'.`);
-      return "auto";
-  }
-}
-
-/**
- * Extracts images from a PDF using the specified method
- */
-async function extractImages(pdfPath: string, outputDir: string, method: string): Promise<void> {
-  if (method === "poppler") {
-    logger.info("Using Poppler pdfimages for image extraction");
-    const images = await extractImagesWithPdfImages(pdfPath, outputDir);
-  } else {
-    if (method !== "pdfjs") {
-      logger.warn(`Unknown imager method '${method}', defaulting to 'poppler'`);
-    }
-    logger.info("Using Poppler pdfimages for image extraction (PDF.js method removed)");
-    await extractAndSaveImagesWithPdfImages(pdfPath, outputDir);
-  }
-}
-
-/**
- * Map the `--complex-becomes-image` level to a complexity-score threshold (flatten
- * a page when its score ≥ threshold). Returns null for "off" / unrecognized.
- * off → never; 0 → 1 (any canvas page); 1 → 2; … 5 → 6.
- */
-function complexThreshold(level: string): number | null {
-  if (!level || level === "off") return null;
-  const n = Number(level);
-  if (!Number.isInteger(n) || n < 0 || n > 5) {
-    logger.warn(`Unknown --complex-becomes-image value '${level}', treating as 'off'.`);
-    return null;
-  }
-  return n + 1;
-}
-
-/**
- * For each Canvas page whose complexity score (its number of text blocks) meets the
- * threshold, render the page to a full-page image and bake a `flatten-as-image`
- * marker into its page comment. Master-substituted pages are left alone.
- */
-async function flattenComplexPages(
-  markdown: string,
-  canvasPages: Map<number, CanvasPageInfo>,
-  pdfPath: string,
-  bookFolder: string,
-  level: string,
-): Promise<string> {
-  const threshold = complexThreshold(level);
-  if (threshold === null) return markdown;
-
-  let out = markdown;
-  for (const [pageNum, info] of canvasPages) {
-    const score = info.textBoxes.length;
-    if (score < threshold) continue;
-
-    // Don't override a master-substituted page.
-    const existing = out.match(new RegExp(`<!--\\s*page\\s+index=${pageNum}\\b[^>]*-->`));
-    if (existing && /master-page=/.test(existing[0])) continue;
-
-    const file = `page-${pageNum}.jpg`;
-    try {
-      await renderPdfPageToImage(pdfPath, pageNum, path.join(bookFolder, file), { dpi: 200 });
-    } catch (error) {
-      logger.warn(`Could not render complex page ${pageNum} to an image: ${error}`);
-      continue;
-    }
-    const re = new RegExp(`(<!--\\s*page\\s+index=${pageNum}\\b)([^>]*?)(\\s*-->)`);
-    out = out.replace(
-      re,
-      `$1$2 flatten-as-image="${file}" flatten-score="${score}" flatten-level="${level}"$3`,
-    );
-    logger.info(
-      `Page ${pageNum}: too complex (score ${score} ≥ ${threshold}); importing as full-page image ${file}.`,
-    );
-  }
-  return out;
-}
 
 export async function processConversion(inputPath: string, options: Arguments) {
-  const logCallback = createLogCallback(!!options.verbose);
+  const jsonEvents = !!options.jsonEvents;
+  // In --json-events mode stdout is reserved for NDJSON; route human logs to stderr.
+  const logCallback = jsonEvents
+    ? (log: { level: string; message: string }) => {
+        if (log.level !== "verbose" || options.verbose) {
+          process.stderr.write(`[${log.level}] ${log.message}\n`);
+        }
+      }
+    : createLogCallback(!!options.verbose);
   logger.subscribe(logCallback);
+  if (jsonEvents) {
+    logger.subscribeEvents((e) => {
+      if (e.kind === "log" && e.level === "verbose" && !options.verbose) return;
+      process.stdout.write(JSON.stringify(e) + "\n");
+    });
+  }
 
-  const plan = await makeThePlan(inputPath, options);
+  const { mistralKey, openrouterKey } = getApiKeys(options);
+  const args: RunArgs = {
+    input: inputPath,
+    output: options.output,
+    collection: options.collection,
+    target: options.target,
+    verbose: options.verbose,
+    mistralKey,
+    openrouterKey,
+    promptPath: options.promptPath,
+    modelName: options.modelName,
+    ocrMethod: options.ocrMethod,
+    parserEngine: options.parserEngine,
+    imager: options.imager,
+    cover: options.cover,
+    visionFormatting: options.visionFormatting,
+    visionModelName: options.visionModelName,
+    emitSourceHashes: options.emitSourceHashes,
+    complexBecomesImage: options.complexBecomesImage,
+  };
 
   try {
-    logger.info(
-      `Starting conversion from "${artifactNames[plan.inputArtifact]}" to "${artifactNames[plan.targetArtifact]}"`,
-    );
-
-    let latestArtifact = plan.inputArtifact; // Start with the input type
-
-    // ------------------------------------------------------------------------------
-    // Step 0.5: Extract Images from PDF (if target is Images)
-    // ------------------------------------------------------------------------------
-    if (latestArtifact === Artifact.PDF && plan.targetArtifact === Artifact.Images) {
-      logger.info(`-> Extracting images from PDF...`);
-
-      await extractImages(plan.pdfPath!, plan.bookFolderPath!, plan.imager);
-      return; // Exit early, we only wanted images
-    }
-
-    // ------------------------------------------------------------------------------
-    // Step 1: Convert PDF to Markdown
-    // ------------------------------------------------------------------------------
-    if (latestArtifact === Artifact.PDF) {
-      logger.info(`-> Converting PDF to Markdown...`);
-
-      let markdownContent: string;
-
-      if (plan.ocrMethod === "unpdf") {
-        logger.info(`Using unpdf for PDF processing (experimental)`);
-        // Use the new unpdf approach - extracts ALL text from PDF structure,
-        // including potentially hidden layers. Some PDFs (especially those from
-        // Adobe Illustrator/Distiller) may contain non-visible text.
-        markdownContent = await pdfToMarkdownWithUnpdf(
-          plan.pdfPath!,
-          plan.bookFolderPath!,
-          logCallback,
-        );
-      } else if (plan.ocrMethod === "mistral") {
-        logger.info(`Using Mistral AI for PDF processing`);
-        // Use the existing Mistral AI approach - vision-based OCR that only
-        // extracts visually rendered text, similar to what a human would see.
-        markdownContent = await makeMarkdownFromPDF(
-          plan.pdfPath!,
-          plan.bookFolderPath!,
-          plan.mistralKey!,
-          logCallback,
-        );
-      } else {
-        // Read custom prompt if provided
-        let customPrompt: string | undefined;
-        if (plan.promptPath) {
-          try {
-            customPrompt = await fs.readFile(plan.promptPath, "utf-8");
-            logger.info(`Using custom prompt from: ${plan.promptPath} for OCR`);
-          } catch (error) {
-            logger.error(`Failed to read custom prompt file: ${plan.promptPath}`);
-            throw error;
-          }
-        }
-
-        // When a master book is present (and we're not building one), skip OCR
-        // for pages whose render matches a master page; their content is supplied
-        // by master-page substitution in Stage 4.
-        let masterHashes: Set<string> | undefined;
-        if (plan.masterFolderPath && !plan.emitSourceHashes) {
-          masterHashes = await readMasterHashes(plan.masterFolderPath);
-        }
-
-        markdownContent = await pdfToMarkdown(
-          plan.pdfPath!,
-          plan.openrouterKey!,
-          plan.ocrMethod,
-          logCallback,
-          customPrompt,
-          { masterHashes },
-        );
-        // After writing markdown, extract images from the PDF to match markdown references
-        await extractImages(plan.pdfPath!, plan.bookFolderPath!, plan.imager);
-      }
-
-      // Detect and render full-page-art covers (front/back) straight from the PDF.
-      // This bakes a `cover.jpg` and a markdown reference into the OCR output, so
-      // later runs that start from the markdown don't need the PDF or re-run OCR.
-      markdownContent = await prepareCovers(
-        plan.pdfPath!,
-        markdownContent,
-        plan.bookFolderPath!,
-        plan.coverMode,
-      );
-
-      // Optionally use a vision model to detect per-page alignment and background
-      // color, baking the results into the page comments. We do this here, while
-      // the PDF is in hand and before .ocr.md is written, so the results persist
-      // in .ocr.md and aren't re-paid for on later runs.
-      if (plan.visionFormatting) {
-        logger.info(`-> Detecting page layout with vision model...`);
-        markdownContent = await addVisionFormatting(
-          plan.pdfPath!,
-          markdownContent,
-          plan.openrouterKey!,
-          { logCallback, overrideModel: plan.visionModelName },
-        );
-      }
-
-      // Detect the body-text style (font size + family) from the PDF and bake it
-      // into a top-of-file `<!-- book ... -->` comment so it persists in the .ocr.md
-      // and flows through to Bloom's "normal" style. Local pdfjs, no API cost.
-      const normalStyle = await detectNormalStyle(plan.pdfPath!);
-      if (normalStyle.fontSizePt || normalStyle.fontFamily || normalStyle.pageSize) {
-        let attrs = "";
-        if (normalStyle.fontSizePt) attrs += ` normal-font-size="${normalStyle.fontSizePt}"`;
-        if (normalStyle.fontFamily) attrs += ` normal-font-family="${normalStyle.fontFamily}"`;
-        if (normalStyle.pageSize) attrs += ` page-size="${normalStyle.pageSize}"`;
-        markdownContent = `<!-- book${attrs} -->\n\n${markdownContent}`;
-      }
-
-      // Detect "canvas" pages (full-page background image with text floating on top)
-      // and record where the text sits as a fraction of the page, baked into the
-      // page comment so HTML generation can reproduce the layout.
-      const canvasPages = await detectCanvasPages(plan.pdfPath!);
-      for (const [pageNum, info] of canvasPages) {
-        const re = new RegExp(`(<!--\\s*page\\s+index=${pageNum}\\b)([^>]*?)(\\s*-->)`);
-        const boxes = (info.textBoxes.length ? info.textBoxes : [info])
-          .map((b) => `${b.x},${b.y},${b.w},${b.h}`)
-          .join(";");
-        markdownContent = markdownContent.replace(re, (_m, open, attrs, close) => {
-          let addition = ` canvas-text-boxes="${boxes}"`;
-          // Add the detected page background color so the full-bleed canvas art
-          // doesn't leave a white border, unless vision-formatting already set one.
-          if (info.backgroundColor && !/background-color=/.test(attrs)) {
-            addition += ` background-color="${info.backgroundColor}"`;
-          }
-          return `${open}${attrs}${addition}${close}`;
-        });
-      }
-
-      // "Too complex" → import the page as a single full-page image. The complexity
-      // score is the number of distinct text blocks on a Canvas page (a plain caption
-      // has 1; the LFA "discussion questions" page has 7). The `--complex-becomes-image`
-      // level sets how eagerly we bail: off=never, 0=any canvas page, 1=≥2 blocks …
-      // 5=≥6 blocks. We render the page (PDF in hand) and bake a flatten marker into
-      // the page comment; Stage 4 emits the image page with a data-conversion-note.
-      markdownContent = await flattenComplexPages(
-        markdownContent,
-        canvasPages,
-        plan.pdfPath!,
-        plan.bookFolderPath!,
-        plan.complexBecomesImage,
-      );
-
-      logger.info(`Writing OCR'd markdown to: ${plan.markdownFromOCRPath}`);
-      await fs.writeFile(plan.markdownFromOCRPath!, markdownContent); // Write the markdown content to file
-
-      latestArtifact = Artifact.MarkdownFromOCR;
-      // If Markdown was the final target, we're done here
-      if (plan.targetArtifact === Artifact.MarkdownFromOCR) {
-        return;
-      }
-    } // ------------------------------------------------------------------------------
-    // Stage 2: Run LLM over Markdown
-    // ------------------------------------------------------------------------------
-    if (latestArtifact === Artifact.MarkdownFromOCR) {
-      logger.info(`-> Giving Markdown to LLM...`);
-      const markdownContentToEnrich = await fs.readFile(plan.markdownFromOCRPath!, "utf-8");
-      // For markdown enrichment, if the input is from a Bloom collection, try to get language info from collection settings
-      const inputFolder = plan.collectionFolderPath || path.dirname(plan.bookFolderPath!);
-      const langs = await readBloomCollectionSettingsIfFound(inputFolder);
-      if (langs) {
-        const formatLang = (lang?: { tag: string; name: string }) =>
-          lang ? `${lang.name} (${lang.tag})` : "undefined";
-        logger.info(
-          `Supplying info from Bloom Collection settings: L1: ${formatLang(langs.l1)}, L2: ${formatLang(langs.l2)}, L3: ${formatLang(langs.l3)}`,
-        );
-      } else {
-        logger.warn(
-          `No Bloom Collection settings found in ${inputFolder} or parent directories, so LLM may not use the correct language codes.`,
-        );
-      }
-
-      // Read custom prompt if provided
-      let customPrompt: string | undefined;
-      if (plan.promptPath) {
-        try {
-          customPrompt = await fs.readFile(plan.promptPath, "utf-8");
-          logger.info(`Using custom prompt from: ${plan.promptPath}`);
-        } catch (error) {
-          logger.error(`Failed to read custom prompt file: ${error}`);
-          throw new Error(`Failed to read custom prompt file: ${plan.promptPath}`);
-        }
-      }
-
-      const llmResult = await llmMarkdown(markdownContentToEnrich, plan.openrouterKey!, {
-        logCallback,
-        l1: langs?.l1,
-        l2: langs?.l2,
-        l3: langs?.l3,
-        overridePrompt: customPrompt,
-        overrideModel: plan.modelName,
-      });
-      logger.info(`Writing llm-tagged markdown to: ${plan.markdownFromLLMPath}`);
-
-      // Check if LLM processing failed
-      if (llmResult.error) {
-        // Save the invalid markdown for inspection
-        await fs.writeFile(plan.markdownFromLLMPath!, llmResult.markdownResultFromLLM);
-        logger.error(`LLM processing failed: ${llmResult.error}`);
-        logger.info(`Invalid markdown saved to: ${plan.markdownFromLLMPath!}`);
-        throw new Error(
-          `LLM processing failed: ${llmResult.error}. Check the saved markdown at "${plan.markdownFromLLMPath!}" for details.`,
-        );
-      }
-
-      await fs.writeFile(plan.markdownFromLLMPath!, llmResult.markdownResultFromLLM);
-      logger.info(`Writing cleaned up markdown to: ${plan.markdownCleanedAfterLLMPath}`);
-      await fs.writeFile(plan.markdownCleanedAfterLLMPath!, llmResult.cleanedUpMarkdown);
-
-      if (!llmResult.valid) {
-        throw new Error(
-          `Enrichment process returned invalid content. This can be a result of the mode/prompt. You may be able to see errors in the file "${plan.markdownCleanedAfterLLMPath!}" for details.`,
-        );
-      }
-
-      latestArtifact = Artifact.MarkdownFromLLMCleaned;
-      console.log(
-        `latestArtifact is now MarkdownFromLLM. target is ${artifactNames[plan.targetArtifact]}`,
-      );
-      if (plan.targetArtifact === Artifact.MarkdownFromLLMCleaned) {
-        return; // If Markdown was the final target, we're done here
-      }
-    }
-
-    // ------------------------------------------------------------------------------
-    // Stage 2.5: Process Raw LLM Markdown (if starting from .raw-llm.md)
-    // ------------------------------------------------------------------------------
-    if (latestArtifact === Artifact.MarkdownFromLLMRaw) {
-      logger.info(`-> Processing raw LLM markdown...`);
-
-      // Read the raw LLM output and run the same post-LLM cleanup that the live
-      // LLM stage applies (strip code fences, mark page numbers, etc.). This makes
-      // "start from .raw-llm.md" a deterministic way to re-apply cleanup fixes
-      // without paying for another LLM call.
-      const rawLLMContent = await fs.readFile(plan.markdownFromLLMPath!, "utf-8");
-      const cleanupResult = attemptCleanup(rawLLMContent);
-      if (!cleanupResult.valid) {
-        throw new Error(
-          `Cleanup of raw LLM markdown produced invalid content. See "${plan.markdownCleanedAfterLLMPath!}".`,
-        );
-      }
-      logger.info(`Writing cleaned-up markdown to: ${plan.markdownCleanedAfterLLMPath}`);
-      await fs.writeFile(plan.markdownCleanedAfterLLMPath!, cleanupResult.cleaned);
-
-      latestArtifact = Artifact.MarkdownFromLLMCleaned;
-      console.log(
-        `latestArtifact is now MarkdownFromLLMCleaned. target is ${artifactNames[plan.targetArtifact]}`,
-      );
-      if (plan.targetArtifact === Artifact.MarkdownFromLLMCleaned) {
-        return; // If Markdown was the final target, we're done here
-      }
-    }
-
-    // ------------------------------------------------------------------------------
-    // Stage 3: Make Markdown with all decisions made
-    // ------------------------------------------------------------------------------
-    if (latestArtifact === Artifact.MarkdownFromLLMCleaned) {
-      logger.info(`-> Adding Bloom plan to Markdown...`);
-      // Now we want to do the final bit of any logic work, still in markdown format because
-      // then it is easier for a human to inspect the plan. Later we're going to HTML and by then
-      // it's really hard to wade through what was done.
-
-      const input = await fs.readFile(plan.markdownCleanedAfterLLMPath!, "utf-8");
-      const finalMarkdown = addBloomPlanToMarkdown(input);
-      logger.info(`Writing ready-for-bloom markdown to: ${plan.markdownForBloomPath!}`);
-
-      await fs.writeFile(plan.markdownForBloomPath!, finalMarkdown);
-
-      latestArtifact = Artifact.MarkdownReadyForBloom;
-      // If Tagged Markdown was the final target, we're done here
-      if (plan.targetArtifact === Artifact.MarkdownReadyForBloom) {
-        return;
-      }
-    }
-    // ------------------------------------------------------------------------------
-    // Stage 4: Convert Tagged Markdown to Bloom HTML
-    // ------------------------------------------------------------------------------
-    if (latestArtifact === Artifact.MarkdownReadyForBloom) {
-      logger.info(`-> Converting Markdown to Bloom HTML...`);
-      const taggedMarkdownContent = await fs.readFile(plan.markdownForBloomPath!, "utf-8");
-
-      const book = new Parser().parseMarkdown(taggedMarkdownContent);
-
-      let bloomHtmlContent = await HtmlGenerator.generateHtmlDocument(book, logCallback);
-
-      // Ensure the output directory exists
-      await fs.mkdir(plan.bookFolderPath!, { recursive: true });
-
-      // Master-page substitution. In emit mode we keep every data-import-source-hash
-      // (this run is building a master) and skip substitution. Otherwise we splice
-      // in any matching master pages and strip the internal hash marker from the rest.
-      if (!plan.emitSourceHashes) {
-        const masterPages = plan.masterFolderPath
-          ? await loadMasterPages(plan.masterFolderPath)
-          : new Map();
-        bloomHtmlContent = await applyMasterPages(bloomHtmlContent, {
-          masterPages,
-          bookFolder: plan.bookFolderPath!,
-          masterFolder: plan.masterFolderPath,
-          emitSourceHashes: false,
-        });
-      }
-      // A Bloom book's HTML file is named after its folder (e.g.
-      // "A Thief in the Night/A Thief in the Night.htm"). Write to that name so we
-      // overwrite the file a running Bloom actually reads when it refreshes — not
-      // a sibling "index.html" it would ignore.
-      const bookHtmlPath = path.join(
-        plan.bookFolderPath!,
-        path.basename(plan.bookFolderPath!) + ".htm",
-      );
-      await fs.writeFile(bookHtmlPath, bloomHtmlContent);
-      // Remove any leftover index.html from the old output convention; Bloom's
-      // FindBookHtmlInFolder prefers "<folder>.htm" but a stray index.html is
-      // confusing cruft, so clean it up.
-      await fs.rm(path.join(plan.bookFolderPath!, "index.html"), { force: true });
-
-      // Write meta.json (creating a new bookInstanceId, or preserving the
-      // existing one when updating a book already in a Bloom collection). The id
-      // is what lets a running Bloom add/refresh the right book.
-      await writeMetaJson(plan.bookFolderPath!, book);
-      // Tell Bloom to render full-bleed (no margins) and keep covers white behind
-      // full-page cover art, when the book calls for it.
-      await writeAppearanceJson(plan.bookFolderPath!, book);
-      // Stamp each image's XMP with the book's illustrator/copyright/license, using
-      // the same tags Bloom reads, so the artist is attributed and image credits work.
-      await writeImageMetadata(plan.bookFolderPath!, book);
-
-      logger.info(`Bloom book should be at: ${plan.bookFolderPath}`);
-      logger.info("✅ Conversion to Bloom HTML completed successfully!");
-
-      // Final step: tell a running Bloom (if any) to add or refresh this book in
-      // its collection. This is best-effort and never fails the conversion.
-      await notifyBloomOfBook(plan.bookFolderPath!);
-      return;
+    const plan = await planConversion(args);
+    const result = await runConversion(plan);
+    if (result.status === "failed") {
+      process.exit(1);
     }
   } catch (error: any) {
     logger.error("❌ Error during conversion:");
-
     if (error instanceof Error) {
       logger.error(error.message);
-      // Log the stack trace which contains file paths and line numbers
       if (error.stack) {
         logger.error("Stack trace:");
         logger.error(error.stack);
@@ -558,229 +84,6 @@ export async function processConversion(inputPath: string, options: Arguments) {
     } else {
       logger.error(String(error));
     }
-
-    process.exit(1); // Exit with an error code
+    process.exit(1);
   }
-}
-
-async function makeThePlan(inputPath: string, cliArguments: Arguments): Promise<Plan> {
-  const fullInputPath = path.resolve(inputPath);
-
-  // Validate that collection and output are not both specified
-  if (cliArguments.collection && cliArguments.output) {
-    throw new Error(
-      "Cannot specify both --collection and --output options. Use --collection for better language detection, or --output for custom directory placement.",
-    );
-  }
-
-  // use a regex to figure out the input type (as an Artifact) by looking at its last two file extensions, e.g. ".pdf" or ".ocr.md" or ".raw-llm.md"
-  const regex = /^(.*?)(\.[^.]+)?(\.[^.]+)?$/; // Matches the last two extensions
-  const match = fullInputPath.match(regex);
-  if (!match) {
-    throw new Error(`Failed to parse input file path: ${fullInputPath}`);
-  }
-
-  const [, , firstExt, secondExt] = match;
-  // want ".pdf" or ".ocr.md" or ".llm.md" or ".bloom.md" or ".raw-llm.md" by combining the last two extensions
-
-  const ext = [firstExt, secondExt].filter(Boolean).join("");
-
-  let inputType: Artifact;
-  switch (ext) {
-    case ".pdf":
-      inputType = Artifact.PDF;
-      break;
-    case ".md":
-    case ".ocr.md":
-      inputType = Artifact.MarkdownFromOCR;
-      break;
-    case ".raw-llm.md":
-      inputType = Artifact.MarkdownFromLLMRaw;
-      break;
-    case ".llm.md":
-      inputType = Artifact.MarkdownFromLLMCleaned;
-      break;
-    case ".bloom.md":
-      inputType = Artifact.MarkdownReadyForBloom;
-      break;
-    default:
-      throw new Error(
-        `Unsupported input file type: ${ext}. Supported types: .pdf, .md, .ocr.md, .raw-llm.md, .llm.md, .bloom.md`,
-      );
-  }
-
-  logger.info(`Input file: "${fullInputPath}" (Type: ${inputType})`);
-
-  const targetType = cliArguments.target ?? Artifact.HTML;
-
-  logger.info(`Target format: ${artifactNames[targetType]}`);
-
-  const { mistralKey, openrouterKey } = getApiKeys(cliArguments);
-
-  if (inputType === Artifact.PDF && cliArguments.ocrMethod === "mistral" && !mistralKey) {
-    // we are going to have to do OCR, need the key
-    throw new Error(
-      "Mistral API key is required for PDF to Bloom conversion. Provide --mistral-api-key or set MISTRAL_API_KEY environment variable, or use --ocr unpdf for local processing.",
-    );
-  }
-
-  if (
-    inputType === Artifact.PDF &&
-    cliArguments.ocrMethod !== "mistral" &&
-    cliArguments.ocrMethod !== "unpdf" &&
-    !openrouterKey
-  ) {
-    // we are going to use OpenRouter for OCR, need the key
-    throw new Error(
-      "OpenRouter API key is required for OpenRouter OCR models. Provide --openrouter-key or set OPENROUTER_KEY environment variable.",
-    );
-  }
-  // Vision-formatting is ON by default (disable with --no-vision-formatting). It
-  // runs during the PDF stage and calls OpenRouter, so it only applies to a PDF
-  // input and needs the OpenRouter key. Since it's the default, degrade gracefully
-  // (warn + skip) when it can't run rather than failing the whole conversion.
-  let visionFormatting = cliArguments.visionFormatting !== false;
-  if (visionFormatting && inputType !== Artifact.PDF) {
-    // The vision step needs the PDF to render pages; results are cached into the
-    // .ocr.md, so regeneration requires starting from the PDF.
-    logger.info(
-      "Skipping vision-formatting: it only runs when the input is a PDF (results are cached in the .ocr.md).",
-    );
-    visionFormatting = false;
-  }
-  if (visionFormatting && !openrouterKey) {
-    logger.warn(
-      "Skipping vision-formatting: it needs an OpenRouter key. Provide --openrouter-key or set OPENROUTER_KEY (or pass --no-vision-formatting to silence this).",
-    );
-    visionFormatting = false;
-  }
-
-  if (
-    inputType < Artifact.MarkdownFromLLMCleaned &&
-    targetType >= Artifact.MarkdownFromLLMCleaned &&
-    !openrouterKey
-  ) {
-    // we are going to have to do call the LLM, need the key
-    throw new Error(
-      "OpenRouter API key is required for PDF to Bloom conversion. Provide --openrouter-key or set OPENROUTER_KEY environment variable.",
-    );
-  }
-
-  logger.verbose(
-    `fullInputPath: ${fullInputPath} cliOutput: ${cliArguments.output} cliCollection: ${cliArguments.collection}`,
-  );
-
-  // Handle collection path validation and setup
-  let collectionFolderPath: string | undefined;
-  let baseOutputDir: string;
-
-  if (cliArguments.collection) {
-    // Validate and resolve collection path
-    const { collectionFolderPath: resolvedCollectionPath } = await validateAndResolveCollectionPath(
-      cliArguments.collection,
-    );
-    collectionFolderPath = resolvedCollectionPath;
-    baseOutputDir = collectionFolderPath;
-    logger.info(`Using Bloom collection folder: ${collectionFolderPath}`);
-  } else if (cliArguments.output) {
-    // Output directory specified explicitly
-    baseOutputDir = cliArguments.output;
-  } else {
-    // No collection or output specified - default to recent collection
-    try {
-      logger.info("No --collection or --output specified, using most recent Bloom collection");
-      const { collectionFolderPath: resolvedCollectionPath } =
-        await validateAndResolveCollectionPath("recent");
-      collectionFolderPath = resolvedCollectionPath;
-      baseOutputDir = collectionFolderPath;
-      logger.info(`Using most recent Bloom collection folder: ${collectionFolderPath}`);
-    } catch (error) {
-      // Fall back to the old logic if recent collection lookup fails
-      logger.warn(`Could not find recent collection (${error}), falling back to current directory`);
-      baseOutputDir = inputType === Artifact.PDF ? process.cwd() : path.dirname(fullInputPath);
-    }
-  }
-
-  logger.verbose(`Output directory: ${baseOutputDir}`);
-  const baseName = getFileNameWithoutExtension(getFileNameWithoutExtension(fullInputPath));
-
-  // Determine the book directory
-  let bookDir: string;
-
-  // Special case: If we're using a collection and the input file is already
-  // within that collection, use the existing directory structure
-  if (
-    collectionFolderPath &&
-    inputType !== Artifact.PDF &&
-    fullInputPath.startsWith(collectionFolderPath)
-  ) {
-    // The input file is already in the collection, use its parent directory as the book directory
-    bookDir = path.dirname(fullInputPath);
-    logger.info(`Using existing book directory: ${bookDir}`);
-  } else {
-    // Create a new book subdirectory based on the base filename
-    bookDir = path.join(baseOutputDir, baseName);
-    logger.info(`Creating book directory: ${bookDir}`);
-    await fs.mkdir(bookDir, { recursive: true });
-  }
-
-  // All outputs will go into the book directory
-  baseOutputDir = bookDir;
-
-  // Look for a sibling "*master" book in the collection (or explicit --output
-  // directory). Its complex pages are substituted into this import — unless we're
-  // building the master ourselves.
-  const emitSourceHashes = cliArguments.emitSourceHashes ?? false;
-  let masterFolderPath: string | undefined;
-  const masterSearchDir =
-    collectionFolderPath ?? (cliArguments.output ? path.resolve(cliArguments.output) : undefined);
-  if (masterSearchDir && !emitSourceHashes) {
-    masterFolderPath = await findMasterBookFolder(masterSearchDir, bookDir);
-    if (masterFolderPath) {
-      logger.info(`Using master book for page substitution: ${masterFolderPath}`);
-    }
-  }
-
-  const plan = {
-    pdfPath: inputType === Artifact.PDF ? fullInputPath : undefined,
-    markdownFromOCRPath:
-      inputType === Artifact.MarkdownFromOCR
-        ? fullInputPath
-        : path.join(baseOutputDir, baseName + ".ocr.md"),
-    markdownFromLLMPath:
-      inputType === Artifact.MarkdownFromLLMRaw
-        ? fullInputPath
-        : path.join(baseOutputDir, baseName + ".raw-llm.md"),
-    markdownCleanedAfterLLMPath:
-      inputType === Artifact.MarkdownFromLLMCleaned
-        ? fullInputPath
-        : path.join(baseOutputDir, baseName + ".llm.md"),
-    markdownForBloomPath:
-      inputType === Artifact.MarkdownReadyForBloom
-        ? fullInputPath
-        : path.join(baseOutputDir, baseName + ".bloom.md"),
-
-    bookFolderPath: bookDir,
-    collectionFolderPath,
-
-    inputArtifact: inputType,
-    targetArtifact: targetType,
-    verbose: cliArguments.verbose ?? false,
-    mistralKey,
-    openrouterKey,
-    promptPath: cliArguments.promptPath,
-    modelName: cliArguments.modelName,
-    ocrMethod: cliArguments.ocrMethod,
-    parserEngine: cliArguments.parserEngine,
-    imager: cliArguments.imager,
-    coverMode: normalizeCoverMode(cliArguments.cover),
-    visionFormatting,
-    visionModelName: cliArguments.visionModelName,
-    emitSourceHashes,
-    masterFolderPath,
-    complexBecomesImage: cliArguments.complexBecomesImage ?? "off",
-  };
-  //console.log(`Plan created:`, JSON.stringify(plan, null, 2));
-
-  return plan;
 }

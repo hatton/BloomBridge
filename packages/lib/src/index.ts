@@ -34,7 +34,12 @@ export {
   collectImageIntellectualProperty,
 } from "./4-generate-html/imageMetadata";
 
-export { notifyBloomOfBook } from "./5-notify-bloom/notifyBloom";
+export {
+  notifyBloomOfBook,
+  getRunningBloomCollection,
+  bringBloomToFront,
+  reloadBloomCollection,
+} from "./5-notify-bloom/notifyBloom";
 export type { NotifyBloomResult } from "./5-notify-bloom/notifyBloom";
 
 export {
@@ -73,7 +78,29 @@ export type { TextBoxFraction, CanvasPageInfo } from "./1-ocr/detectCanvasPages"
 export { detectSolidBackgroundColor } from "./1-ocr/detectBackgroundColor";
 
 // Export logger utilities for callers to access log messages
-export { logger } from "./logger";
+export { logger, withRunContext } from "./logger";
+export type { LogEntry, LogLevel, ConversionEvent, StageName } from "./logger";
+
+// In-process conversion orchestration (shared by the CLI and the GUI server)
+export { planConversion, runConversion, Artifact, artifactNames } from "./run/runConversion";
+export type { RunArgs, RunPlan, RunResult, RunHooks } from "./run/runConversion";
+
+// Options manifest — single source of truth for parameters + defaults (CLI, server, GUI)
+export { optionsSchema, defaultParams } from "./options/optionsSchema";
+export type { OptionSpec, OptionType } from "./options/optionsSchema";
+
+// Artifact detection — which pipeline outputs exist in a folder, and where a run can start
+export { detectArtifacts, startableStages } from "./artifacts";
+export type { ArtifactSet } from "./artifacts";
+
+// Collection + folder discovery (shared by CLI and server)
+export {
+  getMostRecentBloomCollection,
+  validateAndResolveCollectionPath,
+  readBloomCollectionSettingsIfFound,
+  scanPdfFolder,
+} from "./collections/collections";
+export type { ScannedPdf } from "./collections/collections";
 
 //export Language type
 export type { Language } from "./types";

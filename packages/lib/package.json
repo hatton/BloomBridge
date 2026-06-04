@@ -28,6 +28,7 @@
     "ai": "^4.3.16",
     "escape-html": "^1.0.3",
     "exiftool-vendored": "^35.20.0",
+    "fast-xml-parser": "^5.2.3",
     "js-yaml": "^4.1.0",
     "pdfjs-dist": "^5.3.93",
     "sharp": "^0.34.3",

@@ -37,6 +37,42 @@ describe("generateHtmlDocument", () => {
     expect(result).toContain("bloom-editable");
   });
 
+  it("forces a white cover background and preserves it from Bloom's random cover color", () => {
+    const book: Book = {
+      frontMatterMetadata: { languages: { en: "English" }, l1: "en" },
+      pages: [
+        {
+          type: "front-matter" as const,
+          elements: [
+            { type: "text" as const, field: "bookTitle", content: { en: "T" } },
+            { type: "image" as const, src: "cover.jpg" },
+          ],
+        },
+      ],
+    };
+
+    const result = HtmlGenerator.generateHtmlDocument(book, () => {});
+
+    expect(result).toContain("--cover-background-color: white");
+    // Without this meta, Bloom's Book.InitCoverColor() assigns a random cover color
+    // on load, overwriting our white. (Bug fix.)
+    expect(result).toContain('<meta name="preserveCoverColor" content="true"');
+  });
+
+  it("does not force a white cover for a book without a full-page cover image", () => {
+    const book: Book = {
+      frontMatterMetadata: { languages: { en: "English" }, l1: "en" },
+      pages: [
+        {
+          type: "content" as const,
+          elements: [{ type: "text" as const, content: { en: "hi" } }],
+        },
+      ],
+    };
+    const result = HtmlGenerator.generateHtmlDocument(book, () => {});
+    expect(result).not.toContain("preserveCoverColor");
+  });
+
   it("applies a detected background color to a canvas page (no white border)", () => {
     const book: Book = {
       frontMatterMetadata: { languages: { en: "English" }, l1: "en", pageSize: "A4Portrait" },
@@ -59,6 +95,32 @@ describe("generateHtmlDocument", () => {
     // custom property so the page margin matches the full-bleed art.
     expect(result).toContain('data-tool-id="canvas"');
     expect(result).toContain("--page-background-color: #79d3f5");
+  });
+
+  it("renders a flattened (too-complex) page as a full-page image with a conversion note", () => {
+    const book: Book = {
+      frontMatterMetadata: { languages: { en: "English" }, l1: "en", pageSize: "A4Portrait" },
+      pages: [
+        {
+          type: "content" as const,
+          flattenAsImage: "page-6.jpg",
+          flattenScore: 7,
+          flattenLevel: "4",
+          // Even though it still carries text + boxes, the flatten path wins.
+          canvasTextBoxes: [{ x: 0.1, y: 0.1, w: 0.8, h: 0.1 }],
+          elements: [{ type: "text" as const, content: { en: "You can use these questions" } }],
+        },
+      ],
+    };
+
+    const result = HtmlGenerator.generateHtmlDocument(book, () => {});
+
+    expect(result).toContain('src="page-6.jpg"');
+    expect(result).toContain("data-conversion-note=");
+    expect(result).toContain("complex-page-flattened");
+    expect(result).toContain("--complex-becomes-image off");
+    // The questions text is NOT laid out as editable bubbles — the page is an image.
+    expect(result).not.toContain("You can use these questions");
   });
 
   describe("multiple pages", () => {

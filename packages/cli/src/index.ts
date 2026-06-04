@@ -81,6 +81,10 @@ program
     "off",
   )
   .option("--verbose", "Enable verbose logging to see detailed process steps")
+  .option(
+    "--json-events",
+    "Emit machine-readable NDJSON events on stdout (stage timing, page progress, token usage) for tooling like the GUI server; human logs go to stderr.",
+  )
   .action(async (input, options) => {
     if (input) {
       const args: Arguments = {
@@ -103,6 +107,7 @@ program
         visionModelName: options.visionModel,
         emitSourceHashes: options.emitSourceHashes || false,
         complexBecomesImage: options.complexBecomesImage || "off",
+        jsonEvents: options.jsonEvents || false,
       };
 
       await processConversion(input, args);

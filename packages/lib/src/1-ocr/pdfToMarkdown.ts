@@ -9,16 +9,38 @@ import { hashPageImage, hashesMatch } from "./pageImageHash";
 
 // A streamed chat-completion chunk (Server-Sent Events `data:` payload).
 interface OpenRouterStreamChunk {
+  id?: string;
   choices?: Array<{ delta?: { content?: string } }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    cost?: number;
+  };
   error?: { message?: string; code?: string | number; metadata?: unknown };
+}
+
+export interface OcrUsage {
+  promptTokens: number;
+  completionTokens: number;
+  /** Actual USD cost (OpenRouter returns this in `usage` when usage.include=true). */
+  costUsd?: number;
+  /** OpenRouter generation id, for a later $-cost lookup. */
+  generationId?: string;
+}
+
+interface StreamResult {
+  content: string;
+  usage?: OcrUsage;
 }
 
 /**
  * Read an OpenRouter streaming (SSE) chat-completion response and return the
- * concatenated assistant content. Streaming is used so that a long OCR job
- * doesn't exceed the HTTP body timeout while the model works.
+ * concatenated assistant content plus token usage. Streaming is used so that a
+ * long OCR job doesn't exceed the HTTP body timeout while the model works; with
+ * `usage: { include: true }` the final SSE chunk carries the usage totals.
  */
-async function readOpenRouterStream(response: Response): Promise<string> {
+async function readOpenRouterStream(response: Response): Promise<StreamResult> {
   if (!response.body) {
     throw new Error("OpenRouter response has no body to stream.");
   }
@@ -27,6 +49,8 @@ async function readOpenRouterStream(response: Response): Promise<string> {
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
+  let usage: OcrUsage | undefined;
+  let generationId: string | undefined;
 
   const handleData = (data: string) => {
     if (data === "[DONE]") return;
@@ -39,6 +63,14 @@ async function readOpenRouterStream(response: Response): Promise<string> {
     if (chunk.error) {
       logger.error(`OpenRouter stream error (full): ${JSON.stringify(chunk.error).slice(0, 3000)}`);
       throw new Error(`OpenRouter stream error: ${chunk.error.message ?? "unknown"}`);
+    }
+    if (chunk.id) generationId = chunk.id;
+    if (chunk.usage) {
+      usage = {
+        promptTokens: chunk.usage.prompt_tokens ?? 0,
+        completionTokens: chunk.usage.completion_tokens ?? 0,
+        costUsd: typeof chunk.usage.cost === "number" ? chunk.usage.cost : undefined,
+      };
     }
     const delta = chunk.choices?.[0]?.delta?.content;
     if (typeof delta === "string") content += delta;
@@ -61,7 +93,8 @@ async function readOpenRouterStream(response: Response): Promise<string> {
   const tail = buffer.trim();
   if (tail.startsWith("data:")) handleData(tail.slice("data:".length).trim());
 
-  return content;
+  if (usage && generationId) usage.generationId = generationId;
+  return { content, usage };
 }
 
 /**
@@ -124,7 +157,7 @@ async function ocrPageImage(
   apiKey: string,
   jpegBase64: string,
   prompt: string,
-): Promise<string> {
+): Promise<{ markdown: string; usage?: OcrUsage }> {
   const requestBody = {
     model,
     messages: [
@@ -139,6 +172,8 @@ async function ocrPageImage(
     temperature: 0.0,
     max_tokens: 8000,
     stream: true,
+    // Ask OpenRouter to include token usage in the final SSE chunk.
+    usage: { include: true },
   };
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -159,11 +194,12 @@ async function ocrPageImage(
     );
   }
 
-  let markdown = await readOpenRouterStream(response);
+  const { content, usage } = await readOpenRouterStream(response);
+  let markdown = content;
   // Strip a ```markdown ... ``` (or plain ```) wrapper if the model added one.
   const fenced = markdown.match(/^```(?:markdown)?\s*\n([\s\S]*?)\n```\s*$/);
   if (fenced) markdown = fenced[1];
-  return markdown.trim();
+  return { markdown: markdown.trim(), usage };
 }
 
 /**
@@ -230,15 +266,49 @@ export async function pdfToMarkdown(
       // Matching is perceptual (Hamming distance), so a compressed copy still hits.
       if (masterHashes && [...masterHashes].some((mh) => hashesMatch(hash, mh))) {
         logger.info(`Page ${page}/${pageCount} matched master, skipping OCR`);
-        return { md: "_(page provided by master book)_", hash, matched: true };
+        return { md: "_(page provided by master book)_", hash, matched: true, usage: undefined };
       }
 
       const jpegBase64 = (await fsp.readFile(imagePath)).toString("base64");
       const prompt = customPrompt ?? buildPagePrompt(page);
-      const md = await ocrPageImage(resolvedModel, openRouterApiKey, jpegBase64, prompt);
+      const { markdown: md, usage } = await ocrPageImage(
+        resolvedModel,
+        openRouterApiKey,
+        jpegBase64,
+        prompt,
+      );
       logger.info(`OCR'd page ${page}/${pageCount} (${md.length} chars)`);
-      return { md, hash, matched: false };
+      logger.event({ kind: "progress", stage: "ocr", page, pageCount });
+      return { md, hash, matched: false, usage };
     });
+
+    // Aggregate token usage + cost across pages and emit a single tokens event.
+    let ocrTokensIn = 0;
+    let ocrTokensOut = 0;
+    let ocrCost = 0;
+    let haveCost = false;
+    const generationIds: string[] = [];
+    for (const r of pageResults) {
+      if (r.usage) {
+        ocrTokensIn += r.usage.promptTokens;
+        ocrTokensOut += r.usage.completionTokens;
+        if (typeof r.usage.costUsd === "number") {
+          ocrCost += r.usage.costUsd;
+          haveCost = true;
+        }
+        if (r.usage.generationId) generationIds.push(r.usage.generationId);
+      }
+    }
+    if (ocrTokensIn || ocrTokensOut) {
+      logger.event({
+        kind: "tokens",
+        stage: "ocr",
+        tokensIn: ocrTokensIn,
+        tokensOut: ocrTokensOut,
+        costUsd: haveCost ? ocrCost : undefined,
+        generationIds,
+      });
+    }
 
     const markdown = pageResults
       .map(({ md, hash, matched }, i) => {

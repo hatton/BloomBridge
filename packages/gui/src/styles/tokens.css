@@ -1,0 +1,231 @@
+/* ---------- Design tokens (ported verbatim from the Claude Design prototype) ---------- */
+:root {
+  --accent-h: 256;
+  --accent: oklch(0.56 0.15 var(--accent-h));
+  --accent-press: oklch(0.49 0.15 var(--accent-h));
+  --accent-soft: oklch(0.95 0.03 var(--accent-h));
+  --accent-fg: #ffffff;
+
+  /* surfaces */
+  --bg: oklch(0.985 0.003 255);
+  --surface: #ffffff;
+  --surface-2: oklch(0.975 0.004 255);
+  --surface-3: oklch(0.955 0.005 255);
+  --chrome: oklch(0.97 0.004 255);
+
+  /* lines */
+  --border: oklch(0.91 0.005 255);
+  --border-strong: oklch(0.85 0.006 255);
+
+  /* text */
+  --text: oklch(0.27 0.012 260);
+  --text-2: oklch(0.45 0.012 260);
+  --text-3: oklch(0.6 0.012 260);
+  --text-inv: #fff;
+
+  /* status palette (subtle bg / fg / dot) */
+  --st-idle-bg: oklch(0.95 0.004 260);
+  --st-idle-fg: oklch(0.5 0.01 260);
+  --st-queued-bg: oklch(0.95 0.04 270);
+  --st-queued-fg: oklch(0.5 0.13 270);
+  --st-run-bg: oklch(0.95 0.05 75);
+  --st-run-fg: oklch(0.52 0.13 65);
+  --st-fail-bg: oklch(0.95 0.04 25);
+  --st-fail-fg: oklch(0.55 0.18 25);
+  --st-done-bg: oklch(0.95 0.05 155);
+  --st-done-fg: oklch(0.5 0.12 155);
+  --st-keeper-bg: oklch(0.95 0.06 95);
+  --st-keeper-fg: oklch(0.5 0.11 90);
+  --st-disapprove-bg: oklch(0.95 0.04 25);
+  --st-disapprove-fg: oklch(0.55 0.18 25);
+
+  --good: oklch(0.55 0.13 150);
+  --bad: oklch(0.58 0.17 25);
+
+  --radius: 7px;
+  --radius-sm: 5px;
+  --radius-lg: 11px;
+  --shadow-sm: 0 1px 2px oklch(0.2 0.02 260 / 0.06), 0 1px 3px oklch(0.2 0.02 260 / 0.05);
+  --shadow-md: 0 4px 14px oklch(0.2 0.02 260 / 0.1), 0 1px 3px oklch(0.2 0.02 260 / 0.06);
+  --shadow-lg: 0 18px 50px oklch(0.2 0.02 260 / 0.22), 0 6px 16px oklch(0.2 0.02 260 / 0.12);
+
+  --row-h: 42px;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* metrics font: swapped to mono or sans via tweak */
+  --font-metric: var(--font-mono);
+}
+
+[data-density="compact"] {
+  --row-h: 34px;
+}
+[data-density="comfy"] {
+  --row-h: 50px;
+}
+
+[data-theme="dark"] {
+  --accent: oklch(0.68 0.15 var(--accent-h));
+  --accent-press: oklch(0.74 0.14 var(--accent-h));
+  --accent-soft: oklch(0.32 0.06 var(--accent-h));
+  --accent-fg: oklch(0.16 0.02 260);
+
+  --bg: oklch(0.18 0.008 260);
+  --surface: oklch(0.215 0.009 260);
+  --surface-2: oklch(0.235 0.01 260);
+  --surface-3: oklch(0.27 0.011 260);
+  --chrome: oklch(0.205 0.009 260);
+
+  --border: oklch(0.31 0.012 260);
+  --border-strong: oklch(0.4 0.014 260);
+
+  --text: oklch(0.93 0.006 260);
+  --text-2: oklch(0.72 0.01 260);
+  --text-3: oklch(0.58 0.012 260);
+
+  --st-idle-bg: oklch(0.3 0.008 260);
+  --st-idle-fg: oklch(0.72 0.01 260);
+  --st-queued-bg: oklch(0.33 0.05 270);
+  --st-queued-fg: oklch(0.82 0.09 275);
+  --st-run-bg: oklch(0.36 0.06 75);
+  --st-run-fg: oklch(0.86 0.12 80);
+  --st-fail-bg: oklch(0.34 0.07 25);
+  --st-fail-fg: oklch(0.82 0.13 28);
+  --st-done-bg: oklch(0.33 0.06 155);
+  --st-done-fg: oklch(0.82 0.1 158);
+  --st-keeper-bg: oklch(0.36 0.07 95);
+  --st-keeper-fg: oklch(0.86 0.12 95);
+  --st-disapprove-bg: oklch(0.34 0.07 25);
+  --st-disapprove-fg: oklch(0.82 0.13 28);
+
+  --good: oklch(0.74 0.12 150);
+  --bad: oklch(0.72 0.15 28);
+
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.4);
+  --shadow-md: 0 4px 14px oklch(0 0 0 / 0.5);
+  --shadow-lg: 0 18px 50px oklch(0 0 0 / 0.6), 0 6px 16px oklch(0 0 0 / 0.4);
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  font-family: var(--font-ui);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+#root {
+  height: 100vh;
+}
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.metric {
+  font-family: var(--font-metric);
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* indeterminate progress stripe */
+@keyframes indet {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .indet-bar::after {
+    animation: none !important;
+    left: 0 !important;
+    width: 100% !important;
+    opacity: 0.5;
+  }
+}
+/* Entrance animations only when motion is allowed — base state is always visible */
+.fade-in,
+.scale-in,
+.drawer-in {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fade-in {
+    animation: fadeIn 0.18s ease both;
+  }
+  .scale-in {
+    animation: scaleIn 0.16s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  }
+  .drawer-in {
+    animation: drawerIn 0.22s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  }
+}
+@keyframes fadeIn {
+  from {
+    transform: translateY(4px);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes scaleIn {
+  from {
+    transform: scale(0.98) translateY(6px);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes drawerIn {
+  from {
+    transform: translateX(26px);
+  }
+  to {
+    transform: none;
+  }
+}

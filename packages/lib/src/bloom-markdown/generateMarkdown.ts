@@ -98,6 +98,11 @@ export function getMarkdownFromBook(book: Book): string {
       if (page.isMasterPage) {
         pageComment += `master-page="true" `;
       }
+      if (page.flattenAsImage) {
+        pageComment += `flatten-as-image="${page.flattenAsImage}" `;
+        if (page.flattenScore !== undefined) pageComment += `flatten-score="${page.flattenScore}" `;
+        if (page.flattenLevel !== undefined) pageComment += `flatten-level="${page.flattenLevel}" `;
+      }
       pageComment = pageComment.trimEnd() + " -->"; // Generate page content
       let pageContent = "";
       for (const element of page.elements) {

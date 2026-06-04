@@ -334,6 +334,9 @@ export class BloomMarkdown {
       canvasTextBoxes: pageAttributes.canvasTextBoxes,
       importSourceHash: pageAttributes.importSourceHash,
       isMasterPage: pageAttributes.isMasterPage,
+      flattenAsImage: pageAttributes.flattenAsImage,
+      flattenScore: pageAttributes.flattenScore,
+      flattenLevel: pageAttributes.flattenLevel,
     };
   }
 
@@ -349,6 +352,9 @@ export class BloomMarkdown {
     canvasTextBoxes?: { x: number; y: number; w: number; h: number }[];
     importSourceHash?: string;
     isMasterPage?: boolean;
+    flattenAsImage?: string;
+    flattenScore?: number;
+    flattenLevel?: string;
   } {
     const attributes: {
       type?: string;
@@ -359,6 +365,9 @@ export class BloomMarkdown {
       canvasTextBoxes?: { x: number; y: number; w: number; h: number }[];
       importSourceHash?: string;
       isMasterPage?: boolean;
+      flattenAsImage?: string;
+      flattenScore?: number;
+      flattenLevel?: string;
     } = {};
 
     // Extract type attribute
@@ -411,6 +420,17 @@ export class BloomMarkdown {
     const masterPageMatch = pageComment.match(/master-page=["']?(true|false)["']?/);
     if (masterPageMatch) {
       attributes.isMasterPage = masterPageMatch[1] === "true";
+    }
+
+    // Marks a page the complexity check chose to import as a full-page image
+    // (see Stage 1 + `--complex-becomes-image`). The value is the rendered file.
+    const flattenMatch = pageComment.match(/flatten-as-image=["']?([^"'\s>]+)["']?/);
+    if (flattenMatch) {
+      attributes.flattenAsImage = flattenMatch[1];
+      const scoreMatch = pageComment.match(/flatten-score=["']?(\d+)["']?/);
+      if (scoreMatch) attributes.flattenScore = Number(scoreMatch[1]);
+      const levelMatch = pageComment.match(/flatten-level=["']?([^"'\s>]+)["']?/);
+      if (levelMatch) attributes.flattenLevel = levelMatch[1];
     }
 
     // Canvas text boxes: one or more "x,y,w,h" groups (separated by ";") marking
