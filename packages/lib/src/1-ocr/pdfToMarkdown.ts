@@ -331,7 +331,11 @@ export async function pdfToMarkdown(
         const masterAttr = matched ? ` master-page="true"` : "";
         // Pages skipped via `ocrOnlyPages` carry no hash.
         const hashAttr = hash ? ` import-source-hash="${hash}"` : "";
-        return `<!-- page index=${i + 1}${hashAttr}${masterAttr} -->\n${md}`;
+        // The true source-PDF page number. Unlike `index` (which generateMarkdown
+        // renumbers by array position after empty pages are dropped), this is
+        // preserved verbatim through the round-trips so the preview can align
+        // Bloom pages with their source page across blank/dropped-page gaps.
+        return `<!-- page index=${i + 1} source-pdf-page="${i + 1}"${hashAttr}${masterAttr} -->\n${md}`;
       })
       .join("\n\n");
 

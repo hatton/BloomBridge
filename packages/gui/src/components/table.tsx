@@ -15,7 +15,7 @@ import {
   effStatus,
   ElapsedTimer,
 } from "./primitives";
-import type { Mark, Run, Source } from "../types";
+import type { Mark, Params, Run, Source } from "../types";
 
 const COLS = "30px minmax(170px,1fr) 124px 186px 92px";
 
@@ -45,6 +45,7 @@ interface CenterTableProps {
   onConfigRun: (s: Source, r: Run) => void;
   onExpandAll: () => void;
   allExpanded: boolean;
+  defaults?: Params;
 }
 
 export function CenterTable(props: CenterTableProps) {
@@ -74,6 +75,7 @@ export function CenterTable(props: CenterTableProps) {
     onConfigRun,
     onExpandAll,
     allExpanded,
+    defaults,
   } = props;
 
   // flatten + filter (book-level, on unified status)
@@ -225,6 +227,7 @@ export function CenterTable(props: CenterTableProps) {
               onCancelRun={onCancelRun}
               onPreview={onPreview}
               onConfigRun={onConfigRun}
+              defaults={defaults}
             />
           ))}
         </div>
@@ -518,6 +521,7 @@ function SourceRow({
   onCancelRun,
   onPreview,
   onConfigRun,
+  defaults,
 }: {
   source: Source;
   expanded: boolean;
@@ -534,6 +538,7 @@ function SourceRow({
   onCancelRun: (sid: string, rid: string) => void;
   onPreview: (r: Run) => void;
   onConfigRun: (s: Source, r: Run) => void;
+  defaults?: Params;
 }) {
   const runs = source.runs;
 
@@ -596,6 +601,12 @@ function SourceRow({
           >
             <Icon name="chevron" size={13} />
           </button>
+          <img
+            src="/pdf.svg"
+            alt=""
+            aria-hidden="true"
+            style={{ width: 18, height: 18, flexShrink: 0 }}
+          />
           <div style={{ minWidth: 0 }}>
             <div
               style={{
@@ -633,6 +644,7 @@ function SourceRow({
             onCheck={(v) => onCheck(r.id, v)}
             selected={selectedRunId === r.id}
             onSelect={() => onSelectRun(source.id, r.id)}
+            defaults={defaults}
           />
         ))}
       {expanded && runs.length === 0 && (
@@ -662,18 +674,25 @@ export function bookStatus(source: Source) {
   return effStatus(runs[0]); // most recent run (failed / disapproved / completed)
 }
 
-/** A concise amalgamation of the settings a run used (shown instead of the
- *  opaque run id, which becomes a small suffix). */
-function runSummary(run: Run): string {
+/** A concise amalgamation of the settings a run used that differ from the
+ *  current defaults. Default settings are omitted (they add no signal); when
+ *  every setting is a default it reads "Using defaults". */
+function runSummary(run: Run, defaults?: Params): string {
   const p: any = run.params || {};
+  const d: any = defaults || {};
   const parts: string[] = [];
-  if (p.ocrMethod) parts.push((BLOOM.ocrMethods[p.ocrMethod] || p.ocrMethod).split(" ")[0]);
-  if (p.model) parts.push((BLOOM.MODELS[p.model]?.label || p.model).replace(" (default)", ""));
-  parts.push(p.visionFormatting === false ? "no-vision" : "vision");
-  if (p.complexBecomesImage && p.complexBecomesImage !== "off")
+  const differs = (key: string) => key in p && p[key] !== d[key];
+  if (differs("ocrMethod"))
+    parts.push((BLOOM.ocrMethods[p.ocrMethod] || p.ocrMethod).split(" ")[0]);
+  if (differs("model"))
+    parts.push((BLOOM.MODELS[p.model]?.label || p.model).replace(" (default)", ""));
+  if (differs("visionFormatting"))
+    parts.push(p.visionFormatting === false ? "no-vision" : "vision");
+  if (differs("coverMode")) parts.push("cover: " + (BLOOM.coverModes[p.coverMode] || p.coverMode));
+  if (differs("complexBecomesImage") && p.complexBecomesImage !== "off")
     parts.push(p.complexBecomesImage === "always" ? "all-images" : "flat≥" + p.complexBecomesImage);
-  if (p.target) parts.push("→ " + (BLOOM.targets[p.target] || p.target));
-  return parts.join(" · ") || run.id;
+  if (differs("target")) parts.push("→ " + (BLOOM.targets[p.target] || p.target));
+  return parts.join(" · ") || "Using defaults";
 }
 
 // ---------- Run row ----------
@@ -683,12 +702,14 @@ function RunRow({
   onCheck,
   selected,
   onSelect,
+  defaults,
 }: {
   run: Run;
   checked: boolean;
   onCheck: (v: boolean) => void;
   selected: boolean;
   onSelect: () => void;
+  defaults?: Params;
 }) {
   const running = run.status === "running";
   const failed = run.status === "failed";
@@ -735,8 +756,14 @@ function RunRow({
               alignSelf: "center",
             }}
           />
+          <img
+            src="/run.svg"
+            alt=""
+            aria-hidden="true"
+            style={{ width: 16, height: 16, flexShrink: 0, alignSelf: "center" }}
+          />
           <span
-            title={runSummary(run)}
+            title={runSummary(run, defaults)}
             style={{
               fontSize: 11.5,
               color: "var(--text)",
@@ -746,10 +773,7 @@ function RunRow({
               minWidth: 0,
             }}
           >
-            {runSummary(run)}
-          </span>
-          <span className="mono" style={{ fontSize: 9, color: "var(--text-3)", flexShrink: 0 }}>
-            {run.id}
+            {runSummary(run, defaults)}
           </span>
         </div>
         <div title={failed && run.error ? run.error.message : undefined}>

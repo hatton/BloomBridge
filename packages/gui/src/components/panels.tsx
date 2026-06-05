@@ -314,7 +314,9 @@ export function DetailPanel({
               {source.pages ? ` · ${source.pages}p` : ""}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <StatusPill status={effStatus(run)} />
+              {/* The disapproval is already conveyed by MarkControl below, so skip the
+                  redundant "Disapproved" pill. */}
+              {effStatus(run) !== "disapproved" && <StatusPill status={effStatus(run)} />}
               {run.status === "done" && (
                 <MarkControl mark={run.mark} onChange={(v) => onMark(source.id, run.id, v)} />
               )}
@@ -399,9 +401,6 @@ export function DetailPanel({
             Run from last successful stage
           </Btn>
         )}
-
-        {/* notes */}
-        <NotesTags run={run} source={source} onNotes={onNotes} />
       </div>
 
       {/* error banner */}
@@ -416,42 +415,53 @@ export function DetailPanel({
           borderBottom: "1px solid var(--border)",
         }}
       >
-        {[
-          ["log", "Log"],
-          ["artifacts", "Artifacts"],
-          ["details", "Settings"],
-          ["metrics", "Metrics"],
-        ].map(([v, l]) => (
-          <button
-            key={v}
-            onClick={() => setTab(v)}
-            style={{
-              position: "relative",
-              padding: "7px 11px 9px",
-              border: "none",
-              background: "transparent",
-              fontSize: 12,
-              fontWeight: 600,
-              color: tab === v ? "var(--text)" : "var(--text-3)",
-              cursor: "pointer",
-            }}
-          >
-            {l}
-            {tab === v && (
-              <span
-                style={{
-                  position: "absolute",
-                  left: 8,
-                  right: 8,
-                  bottom: -1,
-                  height: 2,
-                  borderRadius: 2,
-                  background: "var(--accent)",
-                }}
-              />
-            )}
-          </button>
-        ))}
+        {(
+          [
+            ["log", "Log"],
+            ["artifacts", "Artifacts"],
+            ["details", "Settings"],
+            ["metrics", "Metrics"],
+            ["notes", "Notes"],
+          ] as [string, string][]
+        ).map(([v, l]) => {
+          // Highlight the Notes tab (and show a text icon) whenever it holds content.
+          const hasNotes = v === "notes" && !!run.notes && run.notes.trim().length > 0;
+          return (
+            <button
+              key={v}
+              onClick={() => setTab(v)}
+              style={{
+                position: "relative",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "7px 11px 9px",
+                border: "none",
+                background: "transparent",
+                fontSize: 12,
+                fontWeight: 600,
+                color: tab === v ? "var(--text)" : hasNotes ? "var(--accent)" : "var(--text-3)",
+                cursor: "pointer",
+              }}
+            >
+              {hasNotes && <Icon name="note" size={12} />}
+              {l}
+              {tab === v && (
+                <span
+                  style={{
+                    position: "absolute",
+                    left: 8,
+                    right: 8,
+                    bottom: -1,
+                    height: 2,
+                    borderRadius: 2,
+                    background: "var(--accent)",
+                  }}
+                />
+              )}
+            </button>
+          );
+        })}
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
@@ -459,6 +469,7 @@ export function DetailPanel({
         {tab === "details" && <DetailsTab run={run} source={source} />}
         {tab === "metrics" && <MetricsTab run={run} />}
         {tab === "artifacts" && <ArtifactsTab run={run} />}
+        {tab === "notes" && <NotesTab run={run} source={source} onNotes={onNotes} />}
       </div>
     </aside>
   );
@@ -717,8 +728,8 @@ function DetailsTab({ run, source }: { run: Run; source: Source }) {
   );
 }
 
-// notes block (lives at top of run detail)
-function NotesTags({
+// ---------- Notes tab ----------
+function NotesTab({
   run,
   source,
   onNotes,
@@ -728,17 +739,21 @@ function NotesTags({
   onNotes: (sid: string, rid: string, patch: Partial<Run>) => void;
 }) {
   return (
-    <div style={{ marginTop: 11 }}>
+    <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", flex: 1 }}>
+      <SectionLabel>Notes</SectionLabel>
       <textarea
         value={run.notes}
         onChange={(e) => onNotes(source.id, run.id, { notes: e.target.value })}
         placeholder="Add a note about this run…"
+        autoFocus
         style={{
           width: "100%",
-          minHeight: 38,
+          flex: 1,
+          minHeight: 140,
           resize: "vertical",
-          padding: "7px 9px",
-          fontSize: 12,
+          padding: "9px 11px",
+          fontSize: 12.5,
+          lineHeight: 1.55,
           color: "var(--text)",
           background: "var(--surface-2)",
           border: "1px solid var(--border)",
@@ -2259,27 +2274,120 @@ export function RunSelectionPane({
   );
 }
 
+// Dark backdrop shared by the compare-mode header and the paired-pages view, so
+// the heading reads as part of the same dark pane as the PDF/Bloom columns below.
+const COMPARE_BACKDROP = "#202124";
+
+// Bright blue marks everything that comes from the source PDF — the "PDF" labels
+// and the onion-skin tint — so the PDF layer reads as "blue" throughout the tab.
+// Applied as a "screen"-blend overlay (not a hue-rotate filter): screen maps the
+// PDF's black text → solid blue and white → white. A hue-rotate filter can't tint
+// pure black (no chroma to rotate), so it leaves glyph bodies black and only blues
+// the anti-aliased edges — text shows as a hollow outline. See the onion branch.
+const PDF_BLUE = "#5b9bff";
+
 // ============ PDF preview pane (far-right, collapsible + resizable) ============
+type PagePairsInfo = {
+  ready: boolean;
+  reason?: string;
+  pdfPages: number;
+  bloomPages: number;
+  // Explicit column alignment from the server: one entry per row. A null on either
+  // side means that side has no counterpart (a blank/dropped source page, or a
+  // Bloom-added xMatter page), so that cell renders as empty space.
+  rows: { pdfPage: number | null; bloomPage: number | null }[];
+  pageSize: string;
+  bookReady: boolean;
+};
+
+// Page-pairs data + the Bloom (re-)processing action. Lifted out of
+// PairedPagesView so the action button can live in the pane header (next to the
+// close button) while the page grid renders in the body below.
+function usePagePairs(runId?: string) {
+  const [info, setInfo] = React.useState<PagePairsInfo | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [processing, setProcessing] = React.useState(false);
+  const [procError, setProcError] = React.useState<string | null>(null);
+  // Bumped after Bloom re-processes the book so the page iframes reload the
+  // now-styled HTML (same URL, new content).
+  const [reloadKey, setReloadKey] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!runId) {
+      setLoading(false);
+      setInfo(null);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    setInfo(null);
+    api
+      .pagePairs(runId)
+      .then((r) => {
+        if (alive) setInfo(r);
+      })
+      .catch(() => {
+        if (alive) setInfo({ ready: false, reason: "Could not load this run's pages." } as any);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [runId]);
+
+  const processInBloom = React.useCallback(() => {
+    if (!runId) return;
+    setProcessing(true);
+    setProcError(null);
+    api
+      .processBook(runId)
+      .then(() => api.pagePairs(runId))
+      .then((r) => {
+        setInfo(r);
+        setReloadKey((k) => k + 1);
+      })
+      .catch((e) => setProcError(e?.message || "Processing failed."))
+      .finally(() => setProcessing(false));
+  }, [runId]);
+
+  return { info, loading, processing, procError, reloadKey, processInBloom };
+}
+
+// Overlay/diff modes for the compare view. "off" = side-by-side (the default);
+// "onion" = the PDF faded over the Bloom page (opacity slider); "diff" =
+// mix-blend difference, so matching pixels go dark and any shift/resize glows.
+type DiffMode = { mode: "off" | "onion" | "diff"; opacity: number };
+
 export function PdfViewerPane({
   source,
   multiSelected,
   width,
   onResize,
   onClose,
+  runId,
+  mode = "pdf",
 }: {
   source?: Source | null;
   multiSelected: boolean;
   width: number;
   onResize: (w: number) => void;
   onClose: () => void;
+  runId?: string;
+  mode?: "run" | "pdf";
 }) {
+  const pairs = usePagePairs(mode === "run" ? runId : undefined);
+  const [diff, setDiff] = React.useState<DiffMode>({ mode: "off", opacity: 0.5 });
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
     const startW = width;
     const onMove = (ev: MouseEvent) => {
-      // handle is on the left edge: dragging left widens the pane
-      onResize(Math.max(260, Math.min(900, startW + (startX - ev.clientX))));
+      // handle is on the left edge: dragging left widens the pane. Cap only at the
+      // viewport edge (less a sliver) so it can be dragged almost all the way left.
+      const max = Math.max(260, window.innerWidth - 80);
+      onResize(Math.max(260, Math.min(max, startW + (startX - ev.clientX))));
     };
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
@@ -2340,40 +2448,90 @@ export function PdfViewerPane({
           alignItems: "center",
           justifyContent: "space-between",
           padding: "11px 14px 10px",
-          borderBottom: "1px solid var(--border)",
+          // In compare mode the header is part of the dark paired-pages pane.
+          ...(mode === "run"
+            ? { background: COMPARE_BACKDROP }
+            : { borderBottom: "1px solid var(--border)" }),
         }}
       >
-        <div style={{ minWidth: 0 }}>
-          <span
-            style={{
-              fontSize: 10.5,
-              fontWeight: 700,
-              letterSpacing: ".7px",
-              textTransform: "uppercase",
-              color: "var(--text-3)",
-            }}
-          >
-            PDF preview
-          </span>
-          {source && !multiSelected && (
-            <div
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          {/* preview.svg (PDF→Bloom) in compare mode, pdf.svg in pure-PDF mode. */}
+          <img
+            src={mode === "run" ? "/preview.svg" : "/pdf.svg"}
+            alt=""
+            aria-hidden="true"
+            style={{ height: mode === "run" ? 24 : 20, width: "auto", flexShrink: 0 }}
+          />
+          <div style={{ minWidth: 0 }}>
+            <span
               style={{
-                fontSize: 11.5,
-                fontWeight: 600,
-                color: "var(--text)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                fontSize: 10.5,
+                fontWeight: 700,
+                letterSpacing: ".7px",
+                textTransform: "uppercase",
+                color: mode === "run" ? "#bdc1c6" : "var(--text-3)",
               }}
             >
-              {source.name}
-            </div>
-          )}
+              {mode === "run" ? "Compare PDF to Bloom Version" : "PDF preview"}
+            </span>
+            {/* In compare mode the page rows are labelled themselves, so the book
+              title under the heading would just be redundant. */}
+            {mode !== "run" && source && !multiSelected && (
+              <div
+                style={{
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  color: "var(--text)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {source.name}
+              </div>
+            )}
+          </div>
         </div>
-        <IconBtn name="x" iconSize={15} size={22} title="Hide PDF preview" onClick={onClose} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          {mode === "run" && pairs.info?.ready && (
+            <Btn
+              variant={pairs.info.bookReady ? "ghost" : "primary"}
+              size="sm"
+              icon={pairs.processing ? undefined : "refresh"}
+              onClick={pairs.processInBloom}
+              disabled={pairs.processing}
+            >
+              {pairs.processing
+                ? "Processing in Bloom…"
+                : pairs.info.bookReady
+                  ? "Re-process in Bloom"
+                  : "Process in Bloom"}
+            </Btn>
+          )}
+          <IconBtn
+            name="x"
+            iconSize={15}
+            size={22}
+            title="Hide PDF preview"
+            onClick={onClose}
+            color={mode === "run" ? "#bdc1c6" : undefined}
+          />
+        </div>
       </div>
       {multiSelected ? (
         empty("Multiple PDFs selected — select a single PDF to preview it.")
+      ) : mode === "run" && runId ? (
+        <PairedPagesView
+          runId={runId}
+          paneWidth={width}
+          info={pairs.info}
+          loading={pairs.loading}
+          processing={pairs.processing}
+          procError={pairs.procError}
+          reloadKey={pairs.reloadKey}
+          diff={diff}
+          onDiff={setDiff}
+        />
       ) : source?.path ? (
         <iframe
           key={source.path}
@@ -2385,5 +2543,538 @@ export function PdfViewerPane({
         empty("Select a PDF to preview it here.")
       )}
     </aside>
+  );
+}
+
+// Page dimensions (mm) by Bloom page-size token, mirroring html-generator's
+// pagePx(). Used to set the iframe's natural pixel size so we can scale it to fit
+// the column. Falls back to A5 for unknown sizes.
+const PAGE_DIMS_MM: Record<string, [number, number]> = {
+  A3: [297, 420],
+  A4: [210, 297],
+  A5: [148, 210],
+  A6: [105, 148],
+  Letter: [215.9, 279.4],
+  Legal: [215.9, 355.6],
+};
+const MM_TO_PX = 96 / 25.4;
+
+function pagePxSize(pageSize: string): { w: number; h: number } {
+  const base = pageSize.replace(/(Portrait|Landscape)$/, "");
+  const landscape = pageSize.endsWith("Landscape");
+  const [shortMm, longMm] = PAGE_DIMS_MM[base] ?? PAGE_DIMS_MM.A5;
+  const wMm = landscape ? longMm : shortMm;
+  const hMm = landscape ? shortMm : longMm;
+  return { w: Math.round(wMm * MM_TO_PX), h: Math.round(hMm * MM_TO_PX) };
+}
+
+/** True once `ref` has scrolled near the viewport; gates iframe loading. */
+function useInView(ref: React.RefObject<HTMLElement>): boolean {
+  const [inView, setInView] = React.useState(false);
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el || inView) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setInView(true);
+      },
+      { rootMargin: "300px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref, inView]);
+  return inView;
+}
+
+// ============ Paired per-page view (source PDF | resulting Bloom page) ============
+// Shown in the PDF-preview pane when a conversion RUN is selected. Naïve index
+// pairing: row i shows PDF page i and Bloom page i; whichever side runs out shows
+// a placeholder (Bloom adds xMatter pages, so counts often differ).
+function PairedPagesView({
+  runId,
+  paneWidth,
+  info,
+  loading,
+  processing,
+  procError,
+  reloadKey,
+  diff,
+  onDiff,
+}: {
+  runId: string;
+  paneWidth: number;
+  info: PagePairsInfo | null;
+  loading: boolean;
+  processing: boolean;
+  procError: string | null;
+  reloadKey: number;
+  diff: DiffMode;
+  onDiff: (d: DiffMode) => void;
+}) {
+  const center = (msg: string) => (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        textAlign: "center",
+        color: "var(--text-3)",
+        fontSize: 12.5,
+      }}
+    >
+      {msg}
+    </div>
+  );
+
+  // Bloom is restyling the book — show a spinner over the dark backdrop until it
+  // finishes (the pages then reload via reloadKey).
+  if (processing)
+    return (
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 14,
+          background: COMPARE_BACKDROP,
+          color: "#bdc1c6",
+          fontSize: 12.5,
+        }}
+      >
+        <div className="spinner" style={{ width: 34, height: 34, borderWidth: 3 }} />
+        Processing in Bloom…
+      </div>
+    );
+
+  if (loading) return center("Loading pages…");
+  if (!info || !info.ready) return center(info?.reason || "No pages to show.");
+
+  const { w: natW, h: natH } = pagePxSize(info.pageSize);
+  const aspect = natW / natH;
+  const rows = info.rows;
+
+  // Dark backdrop so the white PDF/Bloom pages read as distinct cards floating on
+  // a neutral surface, with clear separation between successive page rows.
+  const BACKDROP = COMPARE_BACKDROP;
+
+  // "PDF | Bloom" column banner, shown in side-by-side mode. Lives inside the
+  // sticky header wrapper below, so the labels stay visible while paging down.
+  const columnHeader = (
+    <div style={{ display: "flex", gap: 8 }}>
+      {[
+        { label: "PDF", count: info.pdfPages },
+        { label: "Bloom", count: info.bloomPages },
+      ].map((c) => (
+        <div
+          key={c.label}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            alignItems: "baseline",
+            justifyContent: "center",
+            gap: 6,
+            textAlign: "center",
+            fontSize: 12,
+            fontWeight: 800,
+            letterSpacing: ".8px",
+            textTransform: "uppercase",
+            color: c.label === "PDF" ? PDF_BLUE : "#f1f1f1",
+            padding: "6px 0",
+            borderRadius: 5,
+            background: "rgba(255,255,255,.05)",
+          }}
+        >
+          {c.label}
+          <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: ".3px", opacity: 0.7 }}>
+            {c.count} pages
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Mode buttons + (for onion skin) the fade slider. Lets you flip the two pages
+  // from side-by-side into a single overlaid box to spot drift directly.
+  const diffBtn = (m: DiffMode["mode"], label: string, title: string) => (
+    <button
+      key={m}
+      onClick={() => onDiff({ ...diff, mode: m })}
+      title={title}
+      style={{
+        flex: 1,
+        padding: "5px 8px",
+        fontSize: 11,
+        fontWeight: 600,
+        cursor: "pointer",
+        border: "none",
+        borderRadius: 5,
+        background: diff.mode === m ? "var(--accent)" : "rgba(255,255,255,.06)",
+        color: diff.mode === m ? "#fff" : "#cdd1d6",
+      }}
+    >
+      {label}
+    </button>
+  );
+  const diffControls = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+      <div style={{ display: "flex", gap: 4 }}>
+        {diffBtn("off", "Side by side", "Show the PDF and Bloom pages in two columns")}
+        {diffBtn("onion", "Onion skin", "Fade the PDF over the Bloom page")}
+        {diffBtn("diff", "Difference", "Blend the two — matching pixels go dark, changes glow")}
+      </div>
+      {diff.mode === "onion" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 2px" }}>
+          <span style={{ fontSize: 10, color: "#9aa0a6", whiteSpace: "nowrap" }}>Bloom</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.02}
+            value={diff.opacity}
+            onChange={(e) => onDiff({ ...diff, opacity: Number(e.target.value) })}
+            style={{ flex: 1 }}
+            aria-label="PDF / Bloom blend"
+          />
+          <span style={{ fontSize: 10, fontWeight: 700, color: PDF_BLUE, whiteSpace: "nowrap" }}>
+            PDF
+          </span>
+        </div>
+      )}
+    </div>
+  );
+
+  // In overlay modes the two-column banner makes no sense — the pages are stacked
+  // into one box — so show a single explanatory caption instead.
+  const overlayLabel = (
+    <div
+      style={{
+        textAlign: "center",
+        padding: "6px 0",
+        fontSize: 11.5,
+        fontWeight: 700,
+        letterSpacing: ".4px",
+        color: "#f1f1f1",
+        borderRadius: 5,
+        background: "rgba(255,255,255,.05)",
+      }}
+    >
+      {diff.mode === "onion" ? (
+        <>
+          <span style={{ color: PDF_BLUE }}>PDF</span> faded over Bloom
+        </>
+      ) : (
+        "Difference — matching areas dark, changes glow"
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto", background: BACKDROP, padding: "8px 10px 24px" }}>
+      {procError && (
+        <div
+          style={{
+            margin: "0 0 10px",
+            padding: "7px 10px",
+            borderRadius: 6,
+            background: "var(--danger-bg, #fde8e8)",
+            border: "1px solid var(--danger, #e06464)",
+            color: "var(--danger, #b53d3d)",
+            fontSize: 11,
+            lineHeight: 1.4,
+          }}
+        >
+          {procError}
+        </div>
+      )}
+      {/* Until Bloom has styled the book there's nothing meaningful to compare, so
+          we withhold both columns entirely and just prompt to process. */}
+      {!info.bookReady ? (
+        !procError && (
+          <div
+            style={{
+              margin: "10px 0 0",
+              padding: "14px 14px",
+              borderRadius: 6,
+              background: "rgba(255,255,255,.05)",
+              border: "1px solid rgba(255,255,255,.12)",
+              color: "#bdc1c6",
+              fontSize: 12,
+              lineHeight: 1.5,
+              textAlign: "center",
+            }}
+          >
+            Click <strong>Process in Bloom</strong> above to build the styled version, then compare
+            it against the PDF here.
+          </div>
+        )
+      ) : (
+        <>
+          {/* Sticky header: diff controls above, then the column banner (side-by-
+              side) or overlay caption. Padding covers scrolling pages behind it. */}
+          <div
+            style={{
+              position: "sticky",
+              top: 0,
+              zIndex: 3,
+              background: BACKDROP,
+              padding: "4px 0 10px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            {diffControls}
+            {diff.mode === "off" ? columnHeader : overlayLabel}
+          </div>
+          {rows.map((row, i) => (
+            <PairedRow
+              key={i}
+              runId={runId}
+              pdfPage={row.pdfPage}
+              bloomPage={row.bloomPage}
+              aspect={aspect}
+              natW={natW}
+              natH={natH}
+              paneWidth={paneWidth}
+              reloadKey={reloadKey}
+              diff={diff}
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function PairedRow({
+  runId,
+  pdfPage,
+  bloomPage,
+  aspect,
+  natW,
+  natH,
+  paneWidth,
+  reloadKey,
+  diff,
+}: {
+  runId: string;
+  // Source-PDF page rendered on the left, and the Bloom page's document index
+  // rendered on the right. Either may be null (no counterpart → empty cell).
+  pdfPage: number | null;
+  bloomPage: number | null;
+  aspect: number;
+  natW: number;
+  natH: number;
+  paneWidth: number;
+  reloadKey: number;
+  diff: DiffMode;
+}) {
+  const rowRef = React.useRef<HTMLDivElement>(null);
+  const colRef = React.useRef<HTMLDivElement>(null);
+  const inView = useInView(rowRef);
+  const [colW, setColW] = React.useState(0);
+  // Real rendered geometry of the visible .bloom-page, measured from the
+  // (same-origin) iframe after load. natW/natH are only a guess from the page-
+  // size token; the actual page can differ (wrong/missing token, body margins,
+  // an unstyled book), so we scale from what's really on screen and translate
+  // away any body offset. Null until first measured.
+  const [measured, setMeasured] = React.useState<{
+    w: number;
+    h: number;
+    left: number;
+    top: number;
+  } | null>(null);
+
+  React.useEffect(() => {
+    const el = colRef.current;
+    if (!el) return;
+    const measure = () => setColW(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // diff.mode is a dep because the measured element (half-width column vs.
+    // full-width overlay box) changes when toggling, so colW must re-measure.
+  }, [paneWidth, diff.mode]);
+
+  // Re-measure on reload (Bloom re-process swaps styled HTML in at the same URL).
+  React.useEffect(() => setMeasured(null), [reloadKey]);
+
+  const measureBloomPage = (e: React.SyntheticEvent<HTMLIFrameElement>) => {
+    try {
+      const doc = e.currentTarget.contentDocument;
+      const view = e.currentTarget.contentWindow;
+      if (!doc || !view) return;
+      const pages = Array.from(doc.querySelectorAll<HTMLElement>("body > .bloom-page"));
+      const visible = pages.find((p) => view.getComputedStyle(p).display !== "none") ?? pages[0];
+      if (!visible) return;
+      const r = visible.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        setMeasured({ w: r.width, h: r.height, left: r.left, top: r.top });
+      }
+    } catch {
+      /* not ready or unreadable — keep the natW/natH guess */
+    }
+  };
+
+  const colStyle: React.CSSProperties = { flex: 1, minWidth: 0 };
+
+  // Overlay only when both sides exist; a row missing a counterpart has nothing
+  // to stack, so it falls back to the side-by-side (single-cell) layout.
+  const overlay = diff.mode !== "off" && pdfPage !== null && bloomPage !== null;
+
+  // The white page box that clips the scaled Bloom iframe. Reused by both layouts.
+  const boxStyle: React.CSSProperties = {
+    width: "100%",
+    // Use the page's real aspect once measured; fall back to the page-size-token
+    // guess so the box is roughly right pre-load.
+    aspectRatio: String(measured ? measured.w / measured.h : aspect),
+    overflow: "hidden",
+    borderRadius: 4,
+    border: "1px solid var(--border)",
+    background: "#fff",
+    position: "relative",
+  };
+
+  const bloomIframe = inView && colW > 0 && bloomPage !== null && (
+    <iframe
+      key={reloadKey}
+      title={`Bloom page ${bloomPage}`}
+      src={api.bookPageUrl(runId, bloomPage, reloadKey)}
+      scrolling="no"
+      onLoad={measureBloomPage}
+      style={{
+        // Sized to contain the page (incl. any body offset); the container clips
+        // the overflow. transform maps the page's real top-left to (0,0) and
+        // scales it to the column width.
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: measured ? measured.left + measured.w : natW,
+        height: measured ? measured.top + measured.h : natH,
+        border: "none",
+        transform: measured
+          ? `scale(${colW / measured.w}) translate(${-measured.left}px, ${-measured.top}px)`
+          : `scale(${colW / natW})`,
+        transformOrigin: "top left",
+        pointerEvents: "none",
+      }}
+    />
+  );
+
+  // PDF page, rendered for whichever layout/mode is active.
+  const onImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    (e.currentTarget as HTMLImageElement).style.display = "none";
+  };
+  const pdfSrc = pdfPage !== null ? api.pdfPageUrl(runId, pdfPage) : "";
+  let pdfImg: React.ReactNode = null;
+  if (pdfPage !== null && !overlay) {
+    // Side-by-side: a plain, faithful block image of the source page.
+    pdfImg = (
+      <img
+        src={pdfSrc}
+        alt={`PDF page ${pdfPage}`}
+        loading="lazy"
+        style={{
+          width: "100%",
+          display: "block",
+          borderRadius: 4,
+          border: "1px solid var(--border)",
+          background: "var(--surface-2)",
+        }}
+        onError={onImgError}
+      />
+    );
+  } else if (pdfPage !== null && diff.mode === "diff") {
+    // Difference: blend straight over Bloom, untinted (a tint would make aligned
+    // content glow). Fills the same box so page edges register.
+    pdfImg = (
+      <img
+        src={pdfSrc}
+        alt={`PDF page ${pdfPage}`}
+        loading="lazy"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "fill",
+          mixBlendMode: "difference",
+          pointerEvents: "none",
+        }}
+        onError={onImgError}
+      />
+    );
+  } else if (pdfPage !== null) {
+    // Onion skin: tint the PDF blue, then fade the whole layer over Bloom. The blue
+    // "screen" overlay sits on the PDF only — `isolation: isolate` keeps the blend
+    // from reaching the Bloom iframe behind. opacity drives the fade.
+    pdfImg = (
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          opacity: diff.opacity,
+          isolation: "isolate",
+          pointerEvents: "none",
+        }}
+      >
+        <img
+          src={pdfSrc}
+          alt={`PDF page ${pdfPage}`}
+          loading="lazy"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "fill",
+          }}
+          onError={onImgError}
+        />
+        <div
+          style={{ position: "absolute", inset: 0, background: PDF_BLUE, mixBlendMode: "screen" }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div ref={rowRef} style={{ marginBottom: 14 }}>
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: ".5px",
+          color: "#9aa0a6",
+          marginBottom: 4,
+        }}
+      >
+        {pdfPage !== null ? `PAGE ${pdfPage}` : " "}
+      </div>
+      {overlay ? (
+        // Stacked: Bloom underneath, PDF blended/faded on top, in one box.
+        <div ref={colRef} style={{ width: "100%" }}>
+          <div style={boxStyle}>
+            {bloomIframe}
+            {pdfImg}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <div ref={colRef} style={colStyle}>
+            {pdfImg}
+          </div>
+          <div style={colStyle}>
+            {bloomPage !== null && <div style={boxStyle}>{bloomIframe}</div>}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

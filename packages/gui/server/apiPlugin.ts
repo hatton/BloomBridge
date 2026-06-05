@@ -13,6 +13,9 @@ import {
   bringBloomToFront,
   reloadBloomCollection,
   selectBookInBloom,
+  processBookInBloom,
+  renderPdfPageToImage,
+  getPdfPageInfo,
 } from "@pdf-to-bloom/lib";
 import { getSettings, saveSettings, redactSettings } from "./settings";
 import {
@@ -38,6 +41,41 @@ function send(res: ServerResponse, status: number, body: unknown) {
   res.setHeader("Content-Type", "application/json");
   res.end(json);
 }
+
+/** Map a file extension to a Content-Type for serving raw book/preview assets. */
+function contentTypeFor(ext: string): string {
+  switch (ext.toLowerCase()) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".svg":
+      return "image/svg+xml";
+    case ".css":
+      return "text/css";
+    case ".htm":
+    case ".html":
+      return "text/html";
+    case ".js":
+    case ".mjs":
+      return "text/javascript";
+    case ".json":
+      return "application/json";
+    case ".woff":
+      return "font/woff";
+    case ".woff2":
+      return "font/woff2";
+    case ".ttf":
+      return "font/ttf";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+// On-demand rendered source-PDF page images for the paired run preview live here,
+// keyed by run id; a new run gets a new id, so cached pages never go stale.
+const PREVIEW_CACHE = path.join(os.tmpdir(), "pdf2bloom-preview");
 
 async function readBody(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
@@ -332,6 +370,92 @@ export function conversionApiPlugin(): Plugin {
             return send(res, 200, { runIds: created.map((r) => r.id) });
           }
 
+          // Serve a file from a run's Bloom book folder (the .htm, its sibling CSS,
+          // and relative images) so the paired-preview iframe renders with styling.
+          // Placed before the generic /api/runs/:id/:action matcher, which is
+          // anchored and would not match the extra `/book/...` path segment anyway.
+          const bookMatch = p.match(/^\/api\/runs\/([^/]+)\/book\/(.*)$/);
+          if (bookMatch && method === "GET") {
+            const runId = decodeURIComponent(bookMatch[1]);
+            const rel = decodeURIComponent(bookMatch[2]);
+            const rec = await getRunRecord(runId);
+            if (!rec || !rec.bookFolderPath) {
+              res.statusCode = 404;
+              return res.end();
+            }
+            const root = path.resolve(rec.bookFolderPath);
+
+            // Synthetic single-page document: the full book .htm with all but the
+            // Nth bloom-page hidden. It sits at the same path depth as the real
+            // assets, so relative CSS/image URLs resolve without a <base> tag.
+            const pageDoc = rel.match(/^__page-(\d+)\.html$/);
+            if (pageDoc) {
+              const n = Number(pageDoc[1]);
+              let htmName: string | undefined;
+              try {
+                htmName = (await fs.readdir(root)).find((f) => /\.html?$/i.test(f));
+              } catch {
+                /* unreadable */
+              }
+              if (!htmName) {
+                res.statusCode = 404;
+                return res.end();
+              }
+              let html = await fs.readFile(path.join(root, htmName), "utf-8");
+              const inject =
+                // Hide every page but the Nth, and the data div (Bloom's basePage.css
+                // normally hides #bloomDataDiv; an un-processed book has no such CSS,
+                // so it would otherwise leak its data-book fields atop the page).
+                `<style>body > .bloom-page{display:none}#bloomDataDiv{display:none!important}` +
+                // Render Bloom's page-type label (e.g. "Canvas") as a small pill in
+                // the page's top-right corner instead of bare text. Per-type colour
+                // is applied inline below; this background is just the fallback.
+                `.bloom-page .pageLabel{position:absolute;top:6px;right:6px;left:auto;z-index:1000;` +
+                `display:inline-block;width:auto;min-width:0;max-width:none;margin:0;padding:2px 9px;` +
+                `background:#5f6368;color:#fff;border-radius:999px;` +
+                `font-size:10px;font-weight:600;letter-spacing:.3px;line-height:1.4;` +
+                `text-transform:none;box-shadow:0 1px 3px rgba(0,0,0,.3)}</style>` +
+                `<script>document.addEventListener('DOMContentLoaded',function(){` +
+                `var ps=document.querySelectorAll('body > .bloom-page');` +
+                `var el=ps[${n - 1}];if(!el)return;el.style.display='block';` +
+                // A Canvas page whose canvas holds only the background image (no
+                // floating text elements) is really just one big picture, so label
+                // it "Full Page Image" rather than repeating the generic "Canvas".
+                `var lbl=el.querySelector('.pageLabel');` +
+                `if(lbl){var cv=el.querySelector('.bloom-canvas');` +
+                `if(cv&&lbl.textContent.trim()==='Canvas'){` +
+                `var els=cv.querySelectorAll(':scope > .bloom-canvas-element');` +
+                `if(els.length===1&&els[0].classList.contains('bloom-backgroundImage'))` +
+                `lbl.textContent='Full Page Image';}` +
+                // Distinct colours: blue for editable Canvas, magenta for a flattened
+                // full-page image; grey fallback for any other Bloom page-type label.
+                `var t=lbl.textContent.trim();` +
+                `lbl.style.background=t==='Full Page Image'?'#9334e6':t==='Canvas'?'#1a73e8':'#5f6368';}` +
+                `});</script>`;
+              html = /<\/head>/i.test(html)
+                ? html.replace(/<\/head>/i, inject + "</head>")
+                : inject + html;
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "text/html; charset=utf-8");
+              return res.end(html);
+            }
+
+            const full = path.resolve(root, rel);
+            if (!full.startsWith(root)) {
+              return send(res, 403, { error: "outside book folder" });
+            }
+            try {
+              const buf = await fs.readFile(full);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", contentTypeFor(path.extname(full)));
+              res.end(buf);
+            } catch {
+              res.statusCode = 404;
+              res.end();
+            }
+            return;
+          }
+
           // /api/runs/:id/<action>
           const m = p.match(/^\/api\/runs\/([^/]+)(?:\/([^/]+))?$/);
           if (m) {
@@ -361,6 +485,206 @@ export function conversionApiPlugin(): Plugin {
             }
             if (action === "log" && method === "GET") {
               return send(res, 200, await getRunLog(runId));
+            }
+            // Render (and cache) a single source-PDF page as a JPEG for the paired
+            // run preview. Reuses the OCR poppler renderer; nothing client-supplied
+            // is trusted — the PDF path comes from the run record.
+            if (action === "pdf-page" && method === "GET") {
+              const page = Math.floor(Number(u.searchParams.get("page") || "0"));
+              const dpi = Math.floor(Number(u.searchParams.get("dpi") || "150")) || 150;
+              if (!Number.isInteger(page) || page < 1) return send(res, 400, { error: "bad page" });
+              const rec = await getRunRecord(runId);
+              if (!rec || !rec.sourcePath) {
+                res.statusCode = 404;
+                return res.end();
+              }
+              const dir = path.join(PREVIEW_CACHE, runId);
+              const cachePath = path.join(dir, `pdf-${page}@${dpi}.jpg`);
+              try {
+                let buf: Buffer;
+                try {
+                  buf = await fs.readFile(cachePath);
+                } catch {
+                  await fs.mkdir(dir, { recursive: true });
+                  await renderPdfPageToImage(rec.sourcePath, page, cachePath, { dpi });
+                  buf = await fs.readFile(cachePath);
+                }
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "image/jpeg");
+                return res.end(buf);
+              } catch {
+                // out-of-range page, missing PDF, or render failure
+                res.statusCode = 404;
+                return res.end();
+              }
+            }
+            // Counts + page geometry driving the paired run preview.
+            if (action === "page-pairs" && method === "GET") {
+              const rec = await getRunRecord(runId);
+              if (!rec) return send(res, 200, { ready: false, reason: "Run not found." });
+              if (rec.status !== "done" || !rec.bookFolderPath)
+                return send(res, 200, {
+                  ready: false,
+                  reason: "This run hasn't produced a Bloom book yet.",
+                });
+              const root = rec.bookFolderPath;
+              let htmName: string | undefined;
+              try {
+                htmName = (await fs.readdir(root)).find((f) => /\.html?$/i.test(f));
+              } catch {
+                /* unreadable */
+              }
+              if (!htmName)
+                return send(res, 200, {
+                  ready: false,
+                  reason: "No Bloom HTML found in the book folder.",
+                });
+              const htm = await fs.readFile(path.join(root, htmName), "utf-8");
+              // Scan the body's bloom-page divs in document order. `bloomPage` below
+              // is this 1-based document index — the same index `__page-N.html` uses
+              // (it shows the Nth `body > .bloom-page`). Each page may carry
+              // data-source-pdf-page (emitted by html-generator) linking it to its
+              // source-PDF page; Bloom-inserted xMatter has none.
+              const bloom: { docIndex: number; src?: number }[] = [];
+              const tagRe = /<div\b[^>]*\bbloom-page\b[^>]*>/g;
+              let tag: RegExpExecArray | null;
+              while ((tag = tagRe.exec(htm))) {
+                const sp = tag[0].match(/data-source-pdf-page="(\d+)"/);
+                bloom.push({ docIndex: bloom.length + 1, src: sp ? Number(sp[1]) : undefined });
+              }
+              const bloomPages = bloom.length;
+              const sizeMatch = htm.match(
+                /class="[^"]*\b(A3|A4|A5|A6|Letter|Legal|Device16x9|HalfLetter|QuarterLetter)(Portrait|Landscape)\b/,
+              );
+              const pageSize = sizeMatch ? sizeMatch[1] + sizeMatch[2] : "A5Portrait";
+              let pdfPages = 0;
+              try {
+                pdfPages = (await getPdfPageInfo(rec.sourcePath)).pageCount;
+              } catch {
+                /* PDF gone/unreadable — leave 0 */
+              }
+              let bookReady = false;
+              try {
+                await fs.access(path.join(root, "basePage.css"));
+                bookReady = true;
+              } catch {
+                /* CSS not written yet */
+              }
+
+              // Align the two columns. When Bloom pages carry source-page numbers we
+              // merge by them (so a blank/dropped source page shows a PDF-only row and
+              // a Bloom-added page shows a Bloom-only row, instead of shifting
+              // everything after it). Without that mapping (older books, or Bloom
+              // stripped the attribute on import) we fall back to naïve index pairing.
+              const rows: { pdfPage: number | null; bloomPage: number | null }[] = [];
+              const haveMapping = pdfPages > 0 && bloom.some((b) => b.src !== undefined);
+              if (!haveMapping) {
+                const n = Math.max(pdfPages, bloomPages);
+                for (let i = 1; i <= n; i++) {
+                  rows.push({
+                    pdfPage: i <= pdfPages ? i : null,
+                    bloomPage: i <= bloomPages ? i : null,
+                  });
+                }
+              } else {
+                let si = 1; // source-PDF page cursor
+                let bi = 0; // bloom-page cursor
+                while (si <= pdfPages || bi < bloom.length) {
+                  const b = bi < bloom.length ? bloom[bi] : undefined;
+                  if (b && b.src === undefined) {
+                    // Bloom-added page (cover/title/credits) with no source page.
+                    rows.push({ pdfPage: null, bloomPage: b.docIndex });
+                    bi++;
+                  } else if (b && b.src !== undefined && b.src < si) {
+                    // A source ref we've already passed (e.g. two pages claim it).
+                    rows.push({ pdfPage: null, bloomPage: b.docIndex });
+                    bi++;
+                  } else if (si <= pdfPages && (b === undefined || (b.src as number) > si)) {
+                    // Source page with no Bloom page — blank/dropped. Bloom side empty.
+                    rows.push({ pdfPage: si, bloomPage: null });
+                    si++;
+                  } else if (b && b.src === si) {
+                    rows.push({ pdfPage: si <= pdfPages ? si : null, bloomPage: b.docIndex });
+                    if (si <= pdfPages) si++;
+                    bi++;
+                  } else if (b) {
+                    rows.push({ pdfPage: null, bloomPage: b.docIndex });
+                    bi++;
+                  } else {
+                    break;
+                  }
+                }
+              }
+
+              return send(res, 200, {
+                ready: true,
+                pdfPages,
+                bloomPages,
+                rows,
+                pageSize,
+                bookReady,
+              });
+            }
+            // Ask the running Bloom to fully process this run's book (apply the
+            // browser-only fix-ups + write the CSS), then copy the styled result
+            // back into the run's workspace folder so the paired preview renders
+            // it. process-book operates on a book in Bloom's open collection, so
+            // we stage a copy there first (same as Preview), notify/select it, run
+            // the processing, then copy the rewritten files back.
+            if (action === "process" && method === "POST") {
+              const rec = await getRunRecord(runId);
+              if (!rec || !rec.bookFolderPath)
+                return send(res, 400, { error: "This run hasn't produced a Bloom book yet." });
+              let isBook = false;
+              try {
+                await fs.access(path.join(rec.bookFolderPath, "meta.json"));
+                isBook = true;
+              } catch {
+                /* no meta.json */
+              }
+              if (!isBook)
+                return send(res, 400, { error: "This run has no Bloom book to process." });
+
+              const bloom = await getRunningBloomCollection();
+              if (!bloom)
+                return send(res, 400, {
+                  error:
+                    "Bloom isn't running. Open Bloom with a collection, switch to the Collection tab, then try again.",
+                });
+
+              const dest = path.join(bloom.collectionFolder, "preview - " + rec.bookName);
+              try {
+                await copyDir(rec.bookFolderPath, dest);
+              } catch (e: any) {
+                return send(res, 500, { error: "copy failed: " + (e?.message || e) });
+              }
+
+              const notify = await notifyBloomOfBook(dest);
+              if (!notify.bookId)
+                return send(res, 400, {
+                  error: "Could not read the book id from meta.json.",
+                });
+              // process-book requires the Collection tab to be active; bring Bloom
+              // forward and select the book to nudge it there.
+              await bringBloomToFront(bloom.port);
+              await selectBookInBloom(notify.bookId, bloom.port);
+
+              const result = await processBookInBloom(notify.bookId, bloom.port);
+              if (!result.ok)
+                return send(res, 502, {
+                  error: result.error || "Bloom couldn't process the book.",
+                });
+
+              // Copy the processed book (now with CSS + fix-ups) back over the run's
+              // workspace folder. copyFile overwrites; the run's intermediate .md
+              // artifacts are left untouched.
+              try {
+                await copyDir(dest, rec.bookFolderPath);
+              } catch (e: any) {
+                return send(res, 500, { error: "copy-back failed: " + (e?.message || e) });
+              }
+
+              return send(res, 200, { ok: true, processed: result.processed });
             }
             if (action === "artifacts" && method === "GET") {
               return send(res, 200, await getRunArtifacts(runId));

@@ -90,6 +90,12 @@ export function getMarkdownFromBook(book: Book): string {
         const boxes = page.canvasTextBoxes.map((b) => `${b.x},${b.y},${b.w},${b.h}`).join(";");
         pageComment += `canvas-text-boxes="${boxes}" `;
       }
+      // The true source-PDF page number must survive verbatim (NOT be replaced by
+      // `index`, which is array position) so the paired preview can align Bloom
+      // pages to their source page across blank/dropped-page gaps.
+      if (page.sourcePdfPage !== undefined) {
+        pageComment += `source-pdf-page="${page.sourcePdfPage}" `;
+      }
       // Master-page substitution attributes must survive the round-trip through
       // the Book object too (stages 3 and 4), or the page can't be matched/spliced.
       if (page.importSourceHash) {

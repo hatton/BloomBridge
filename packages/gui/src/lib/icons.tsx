@@ -65,6 +65,34 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   file: <path d="M4 2.5h5l3 3v8a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 4 13.5v-11ZM9 2.5v3h3" />,
+  pdf: (
+    <>
+      <path d="M4 2.5h5l3 3v8a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 4 13.5v-11ZM9 2.5v3h3" />
+      <text
+        x="8"
+        y="12.1"
+        fontSize="4.6"
+        fontWeight={700}
+        fill="currentColor"
+        stroke="none"
+        textAnchor="middle"
+        fontFamily="var(--font-sans, sans-serif)"
+      >
+        PDF
+      </text>
+    </>
+  ),
+  // Bloom — stylized flower (petals around a center), evoking the Bloom logo.
+  bloom: (
+    <>
+      <circle cx="8" cy="3.9" r="1.85" />
+      <circle cx="11.7" cy="6.6" r="1.85" />
+      <circle cx="10.3" cy="11" r="1.85" />
+      <circle cx="5.7" cy="11" r="1.85" />
+      <circle cx="4.3" cy="6.6" r="1.85" />
+      <circle cx="8" cy="8" r="1.6" />
+    </>
+  ),
   image: (
     <>
       <rect x="2.5" y="3" width="11" height="10" rx="1.2" />

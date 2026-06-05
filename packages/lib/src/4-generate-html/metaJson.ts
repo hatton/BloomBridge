@@ -150,8 +150,11 @@ export function hasFullPageFrontCover(book: Book): boolean {
 
 /**
  * A book "looks full-bleed" when its art runs to the page edge: a full-page cover
- * (front or back) or any Canvas page (full-page background image with floating
- * text). For these, we tell Bloom to render full-bleed (no page margins).
+ * (front or back), any Canvas page (full-page background image with floating
+ * text), or any page we flattened into a single full-page image (the
+ * `--complex-becomes-image` / "always" trick). For these, we tell Bloom to render
+ * full-bleed (no page margins) so the imported page image reaches every edge.
+ * (fullBleed is a whole-book appearance setting, so one such page flips it on.)
  */
 function looksFullBleed(book: Book): boolean {
   const hasFullCover = book.pages.some((page) =>
@@ -162,7 +165,8 @@ function looksFullBleed(book: Book): boolean {
     ),
   );
   const hasCanvasPage = book.pages.some((page) => !!page.canvasTextBoxes?.length);
-  return hasFullCover || hasCanvasPage;
+  const hasFlattenedPage = book.pages.some((page) => !!page.flattenAsImage);
+  return hasFullCover || hasCanvasPage || hasFlattenedPage;
 }
 
 /**

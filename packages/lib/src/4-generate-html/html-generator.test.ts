@@ -119,6 +119,8 @@ describe("generateHtmlDocument", () => {
     expect(result).toContain("data-conversion-note=");
     expect(result).toContain("complex-page-flattened");
     expect(result).toContain("--complex-becomes-image off");
+    // A flattened full-page image suppresses its page number (no number on the art).
+    expect(result).toContain("--pageNumber-show: none;");
     // The questions text is NOT laid out as editable bubbles — the page is an image.
     expect(result).not.toContain("You can use these questions");
     // A numeric complexity level is NOT "always" mode → no xMatter suppression.

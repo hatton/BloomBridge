@@ -332,6 +332,7 @@ export class BloomMarkdown {
       horizontalAlign: pageAttributes.horizontalAlign,
       backgroundColor: pageAttributes.backgroundColor,
       canvasTextBoxes: pageAttributes.canvasTextBoxes,
+      sourcePdfPage: pageAttributes.sourcePdfPage,
       importSourceHash: pageAttributes.importSourceHash,
       isMasterPage: pageAttributes.isMasterPage,
       flattenAsImage: pageAttributes.flattenAsImage,
@@ -350,6 +351,7 @@ export class BloomMarkdown {
     horizontalAlign?: HorizontalAlign;
     backgroundColor?: string;
     canvasTextBoxes?: { x: number; y: number; w: number; h: number }[];
+    sourcePdfPage?: number;
     importSourceHash?: string;
     isMasterPage?: boolean;
     flattenAsImage?: string;
@@ -363,6 +365,7 @@ export class BloomMarkdown {
       horizontalAlign?: HorizontalAlign;
       backgroundColor?: string;
       canvasTextBoxes?: { x: number; y: number; w: number; h: number }[];
+      sourcePdfPage?: number;
       importSourceHash?: string;
       isMasterPage?: boolean;
       flattenAsImage?: string;
@@ -407,6 +410,13 @@ export class BloomMarkdown {
     const backgroundMatch = pageComment.match(/background-color=["']?([^"'\s>]+)["']?/);
     if (backgroundMatch) {
       attributes.backgroundColor = backgroundMatch[1];
+    }
+
+    // True source-PDF page number (preserved verbatim across round-trips, unlike
+    // the renumbered `index`). Drives paired-preview alignment.
+    const sourcePageMatch = pageComment.match(/source-pdf-page=["']?(\d+)["']?/);
+    if (sourcePageMatch) {
+      attributes.sourcePdfPage = Number(sourcePageMatch[1]);
     }
 
     // Hash of the source PDF page render, used for master-page substitution.

@@ -112,6 +112,50 @@ export async function selectBookInBloom(bookId: string, port?: number): Promise<
   return false;
 }
 
+/**
+ * Ask the running Bloom to run its full "make it right" pass on a book in the open
+ * collection (POST external/process-book with the book's bookInstanceId). Bloom
+ * brings the book structurally up to date, processes every page off-screen in a
+ * real browser (applying the browser-only fix-ups — image sizing, canvas-element
+ * layout, CSS, etc. — that raw generated HTML lacks), and saves it back to disk.
+ *
+ * Preconditions enforced by Bloom: the book must already be in the editable
+ * collection (call notifyBloomOfBook first) and Bloom must be on the Collection
+ * tab. If not, Bloom replies with an error, surfaced here as `ok: false`.
+ *
+ * The call BLOCKS until processing finishes, which can take a while, so we set no
+ * request timeout.
+ */
+export async function processBookInBloom(
+  bookId: string,
+  port?: number,
+): Promise<{ ok: boolean; processed?: number; error?: string }> {
+  const ports = port ? [port] : CANDIDATE_PORTS;
+  for (const p of ports) {
+    try {
+      const response = await fetch(`http://localhost:${p}/bloom/api/external/process-book`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: bookId }),
+      });
+      if (response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { processed?: number };
+        logger.info(`✅ Bloom processed the book (${data?.processed ?? "?"} page(s)).`);
+        return { ok: true, processed: data?.processed };
+      }
+      // Bloom answered but refused (e.g. not on the Collection tab). The other
+      // candidate ports won't have a running Bloom, so stop and report this.
+      const text = await response.text().catch(() => "");
+      const error = `Bloom rejected process-book (HTTP ${response.status}): ${text || response.statusText}`;
+      logger.warn(error);
+      return { ok: false, error };
+    } catch {
+      // Nothing listening on this port; keep scanning.
+    }
+  }
+  return { ok: false, error: "No running Bloom found." };
+}
+
 /** Bring the running Bloom window to the foreground (POST external/bringToFront). */
 export async function bringBloomToFront(port?: number): Promise<boolean> {
   const ports = port ? [port] : CANDIDATE_PORTS;

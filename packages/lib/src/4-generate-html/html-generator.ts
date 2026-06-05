@@ -510,13 +510,26 @@ export class HtmlGenerator {
    * the rendered page fills edge-to-edge. A `data-conversion-note` records why and
    * how to turn it off, for a human or a later conversion report.
    */
+  /**
+   * ` data-source-pdf-page="N"` for a page that knows its source-PDF page number,
+   * else "". The paired preview reads this to align each Bloom page with its source
+   * page, so blank/dropped pages and Bloom-inserted xMatter don't shift the columns.
+   */
+  private static sourcePageAttr(page: Page): string {
+    return page.sourcePdfPage !== undefined ? ` data-source-pdf-page="${page.sourcePdfPage}"` : "";
+  }
+
   private static generateFullPageImagePage(page: Page, metadata: FrontMatterMetadata): string {
     const src = page.flattenAsImage!;
     const pageSize = metadata.pageSize || "A5Portrait";
-    // Size the background to the FULL page (not the marginBox) so the image bleeds
-    // to every edge — same as a full-bleed cover. Pairs with appearance.json's
-    // `fullBleed: true`; sizing to canvasW/canvasH instead leaves white margins.
-    const { pageW, pageH } = this.pagePx(pageSize);
+    // Size the canvas to the marginBox (canvasW × canvasH), NOT the full page.
+    // A content "numberedPage" lays its bloom-canvas out inside the marginBox; if
+    // we declare a full-page-sized canvas with a different aspect ratio, Bloom
+    // scales it down to fit and letterboxes it — leaving large top/bottom margins.
+    // Sizing to the marginBox (matching Bloom's own master books) lets the
+    // object-fit:cover image fill the printable area with no letterbox. (Full-page
+    // sizing is correct only for bloom-customLayout COVER pages, which bleed.)
+    const { canvasW, canvasH } = this.pagePx(pageSize);
     const pageId = randomUUID();
     const bgBubble = this.COVER_DATA_BUBBLE;
 
@@ -534,13 +547,18 @@ export class HtmlGenerator {
     // Single-quote the attribute so the JSON value can use normal double quotes.
     const noteAttr = ` data-conversion-note='${JSON.stringify(note)}'`;
 
-    return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang=""${noteAttr}>
+    // A flattened page is a single full-bleed image with no editable text, so a
+    // page number floating on top of the art is just visual noise (and often lands
+    // on the picture). Suppress it with Bloom's `--pageNumber-show` appearance
+    // variable. This is a content page, never xMatter, so front/back-matter page
+    // numbering is unaffected.
+    return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang="" style="--pageNumber-show: none;"${noteAttr}${this.sourcePageAttr(page)}>
       <div class="pageLabel" data-i18n="TemplateBooks.PageLabel.Canvas">Canvas</div>
       <div class="pageDescription"></div>
       <div class="marginBox">
         <div class="split-pane-component-inner">
-          <div class="bloom-canvas bloom-has-canvas-element" data-tool-id="canvas" data-imgsizebasedon="${pageW},${pageH}" title="">
-            <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${pageW}px; height: ${pageH}px; top: 0px; left: 0px;" data-bubble="${bgBubble}">
+          <div class="bloom-canvas bloom-has-canvas-element" data-tool-id="canvas" data-imgsizebasedon="${canvasW},${canvasH}" title="">
+            <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${canvasW}px; height: ${canvasH}px; top: 0px; left: 0px;" data-bubble="${bgBubble}">
               <div class="bloom-imageContainer" data-tool-id="canvas" style="direction: ltr;">
                 <img src="${escapeHtml(src)}" class="bloom-imageObjectFit-cover" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
               </div>
@@ -643,7 +661,7 @@ export class HtmlGenerator {
       ? ` style="--page-background-color: ${page.backgroundColor}"`
       : "";
 
-    return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang=""${sourceHashAttr}${pageStyleAttr}>
+    return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang=""${sourceHashAttr}${pageStyleAttr}${this.sourcePageAttr(page)}>
       <div class="pageLabel" data-i18n="TemplateBooks.PageLabel.Canvas">Canvas</div>
       <div class="pageDescription"></div>
       <div class="marginBox">
@@ -694,6 +712,7 @@ ${textElementsHtml}
     kind: "front" | "back",
     imageSrc: string,
     pageSize: string = "A5Portrait",
+    sourcePdfPage?: number,
   ): string {
     const pageId = randomUUID();
     const isFront = kind === "front";
@@ -708,7 +727,10 @@ ${textElementsHtml}
       ? "TemplateBooks.PageLabel.Front Cover"
       : "TemplateBooks.PageLabel.Outside Back Cover";
 
-    return `    <div class="${pageClasses}" data-page="required singleton" data-export="${dataExport}" data-xmatter-page="${xmatterPage}" data-custom-layout-id="${customLayoutId}" id="${pageId}">
+    const sourcePageAttr =
+      sourcePdfPage !== undefined ? ` data-source-pdf-page="${sourcePdfPage}"` : "";
+
+    return `    <div class="${pageClasses}" data-page="required singleton" data-export="${dataExport}" data-xmatter-page="${xmatterPage}" data-custom-layout-id="${customLayoutId}" id="${pageId}"${sourcePageAttr}>
       <div class="pageLabel" data-i18n="${i18n}">${label}</div>
       <div class="pageDescription"></div>
       <div class="marginBox">
@@ -724,7 +746,7 @@ ${textElementsHtml}
     // (placeholder) content here.
     if (page.isMasterPage && page.importSourceHash) {
       const pageSize = metadata.pageSize || "A5Portrait";
-      return `    <div class="bloom-page customPage ${pageSize}" id="${randomUUID()}" data-import-source-hash="${page.importSourceHash}">
+      return `    <div class="bloom-page customPage ${pageSize}" id="${randomUUID()}" data-import-source-hash="${page.importSourceHash}"${this.sourcePageAttr(page)}>
       <div class="marginBox"></div>
     </div>`;
     }
@@ -750,6 +772,7 @@ ${textElementsHtml}
         coverImage.src === FRONT_COVER_IMAGE_FILENAME ? "front" : "back",
         coverImage.src,
         metadata.pageSize || "A5Portrait",
+        page.sourcePdfPage,
       );
     }
 
@@ -884,7 +907,7 @@ ${textElementsHtml}
     // we just emit `numberedPage` so the page lays out correctly. We deliberately do
     // NOT emit the other things Bloom's "repair" adds (data-pagelineage, pageLabel,
     // pageDescription) — they don't affect layout and Bloom regenerates them.
-    return `    <div class="bloom-page numberedPage customPage ${pageSize}" id="${pageId}"${pageStyleAttr}${sourceHashAttr}>
+    return `    <div class="bloom-page numberedPage customPage ${pageSize}" id="${pageId}"${pageStyleAttr}${sourceHashAttr}${this.sourcePageAttr(page)}>
       <div class="marginBox">
         ${origamiContent}
       </div>

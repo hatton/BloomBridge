@@ -113,6 +113,29 @@ export const api = {
       broughtToFront?: boolean;
       selected?: boolean;
     }>(`/api/runs/${runId}/preview`, "POST"),
+  // Paired run preview: counts + page geometry, plus URL builders for the
+  // per-page source-PDF image and the isolated single Bloom page.
+  pagePairs: (runId: string) =>
+    getJson<{
+      ready: boolean;
+      reason?: string;
+      pdfPages: number;
+      bloomPages: number;
+      // Explicit per-row alignment: each row renders one source-PDF page and/or one
+      // Bloom page (the page's 1-based document index for bookPageUrl). A null on
+      // either side means that side has no counterpart (blank/dropped or xMatter).
+      rows: { pdfPage: number | null; bloomPage: number | null }[];
+      pageSize: string;
+      bookReady: boolean;
+    }>(`/api/runs/${runId}/page-pairs`),
+  pdfPageUrl: (runId: string, page: number, dpi = 150) =>
+    `/api/runs/${runId}/pdf-page?page=${page}&dpi=${dpi}`,
+  bookPageUrl: (runId: string, page: number, v = 0) =>
+    `/api/runs/${runId}/book/__page-${page}.html${v ? `?v=${v}` : ""}`,
+  // Ask Bloom to fully process this run's book (writes CSS + browser fix-ups),
+  // copied back into the run folder. Blocks until Bloom finishes.
+  processBook: (runId: string) =>
+    sendJson<{ ok: boolean; processed?: number }>(`/api/runs/${runId}/process`, "POST"),
 };
 
 /** Map a GUI rating (mark) to the server rating vocabulary. */

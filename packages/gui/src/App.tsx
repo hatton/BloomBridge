@@ -266,7 +266,6 @@ export function App() {
   };
   const onSelectPdf = (sid: string) => {
     setFocus({ type: "pdf", sourceId: sid });
-    setExpanded((e) => new Set(e).add(sid));
     setPanelOpen(true);
   };
   const onToggleExpand = (id: string) =>
@@ -572,6 +571,7 @@ export function App() {
             onConfigRun={onConfigRun}
             onExpandAll={onExpandAll}
             allExpanded={allExpanded}
+            defaults={defaults}
           />
         ) : (
           <EmptyWorkspace recentFolders={recentFolders} onPick={pickFolder} />
@@ -644,12 +644,26 @@ export function App() {
           <PdfViewerPane
             source={checkedPdfs.size > 1 ? null : focusedSource}
             multiSelected={checkedPdfs.size > 1}
+            runId={
+              checkedPdfs.size <= 1 && focus && focus.type === "run"
+                ? (focus as any).runId
+                : undefined
+            }
+            mode={checkedPdfs.size <= 1 && focus && focus.type === "run" ? "run" : "pdf"}
             width={pdfWidth}
             onResize={setPdfWidth}
             onClose={() => setPdfOpen(false)}
           />
         ) : (
-          <RightRail icon="file" label="PDF preview" onExpand={() => setPdfOpen(true)} />
+          <RightRail
+            icon={
+              checkedPdfs.size <= 1 && focus && focus.type === "run"
+                ? "/preview-collapsed.svg"
+                : "/pdf.svg"
+            }
+            label="PDF preview"
+            onExpand={() => setPdfOpen(true)}
+          />
         )}
       </div>
 
@@ -777,22 +791,7 @@ function TopBar({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 26,
-            height: 26,
-            borderRadius: 7,
-            background: "var(--accent)",
-            color: "var(--accent-fg)",
-            fontWeight: 800,
-            fontSize: 13,
-          }}
-        >
-          B
-        </span>
+        <img src="/app.svg" alt="" width={26} height={26} style={{ borderRadius: 7 }} />
         <div style={{ lineHeight: 1.1 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: "-.2px" }}>PDF → Bloom</div>
           <div style={{ fontSize: 9.5, color: "var(--text-3)", fontWeight: 500 }}>
@@ -993,10 +992,11 @@ function RightRail({
   label,
   onExpand,
 }: {
-  icon: string;
+  icon: string | string[];
   label: string;
   onExpand: () => void;
 }) {
+  const icons = Array.isArray(icon) ? icon : [icon];
   return (
     <aside
       style={{
@@ -1018,8 +1018,10 @@ function RightRail({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          width: 28,
+          gap: 2,
+          minWidth: 28,
           height: 28,
+          padding: "0 5px",
           borderRadius: 6,
           border: "1px solid var(--border)",
           background: "var(--surface-2)",
@@ -1027,7 +1029,19 @@ function RightRail({
           cursor: "pointer",
         }}
       >
-        <Icon name={icon} size={15} />
+        {icons.map((n, i) =>
+          n.startsWith("/") ? (
+            <img
+              key={i}
+              src={n}
+              alt=""
+              aria-hidden="true"
+              style={{ maxHeight: 26, maxWidth: 18, width: "auto", height: "auto" }}
+            />
+          ) : (
+            <Icon key={i} name={n} size={icons.length > 1 ? 13 : 15} />
+          ),
+        )}
       </button>
       <button
         onClick={onExpand}
@@ -1085,22 +1099,7 @@ function EmptyWorkspace({
       >
         <Icon name="file" size={36} strokeWidth={1.1} />
         <Icon name="chevron" size={22} strokeWidth={1.4} />
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 44,
-            height: 44,
-            borderRadius: 11,
-            background: "var(--accent)",
-            color: "var(--accent-fg)",
-            fontWeight: 800,
-            fontSize: 20,
-          }}
-        >
-          B
-        </span>
+        <img src="/app.svg" alt="" width={44} height={44} style={{ borderRadius: 11 }} />
       </div>
       <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 6px" }}>
         Convert PDFs into Bloom books

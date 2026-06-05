@@ -98,6 +98,12 @@ export interface Page {
   // blocks floating on top (a Bloom "Canvas" page); each box is where one text
   // block sits over the image, in reading order (top to bottom).
   canvasTextBoxes?: TextBox[];
+  // 1-based page number of the source PDF this page came from. Captured at OCR time
+  // and preserved verbatim through the markdown round-trips (unlike the page-comment
+  // `index`, which generateMarkdown re-numbers by array position). Emitted to the
+  // generated HTML as `data-source-pdf-page` so the paired preview can align each
+  // Bloom page with its source page even when blank/dropped pages create gaps.
+  sourcePdfPage?: number;
   // Hash of the source PDF page's render (see 1-ocr/pageImageHash.ts). Carried in
   // the page comment so master-page substitution can recognize a page that
   // matches one in a "master" book.
