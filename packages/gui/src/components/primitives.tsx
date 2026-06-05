@@ -27,10 +27,45 @@ export const fmt = {
       r = Math.round(s % 60);
     return m + ":" + String(r).padStart(2, "0");
   },
+  // Elapsed wall-clock: bare seconds under a minute, then m:ss.
+  elapsed(s?: number) {
+    if (s == null) return "";
+    if (s < 60) return s + "s";
+    const m = Math.floor(s / 60),
+      r = s % 60;
+    return m + ":" + String(r).padStart(2, "0");
+  },
   date(ts?: string) {
     return ts ? ts.replace(/^2026-/, "").replace(/-/, "/") : "—";
   },
 };
+
+// Live-ticking elapsed time. Counts up every second while running; freezes at
+// (finishedAt - startedAt) once the run ends.
+export function ElapsedTimer({
+  startedAt,
+  finishedAt,
+  style,
+}: {
+  startedAt?: number;
+  finishedAt?: number;
+  style?: React.CSSProperties;
+}) {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (finishedAt || !startedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startedAt, finishedAt]);
+  if (!startedAt) return null;
+  const end = finishedAt || now;
+  const s = Math.max(0, Math.floor((end - startedAt) / 1000));
+  return (
+    <span className="mono" style={style}>
+      {fmt.elapsed(s)}
+    </span>
+  );
+}
 
 export const STATUS_META: Record<string, { label: string; st: string; icon?: string }> = {
   notrun: { label: "Not run", st: "idle" },

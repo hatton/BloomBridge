@@ -82,11 +82,13 @@ export const api = {
     collection?: string,
   ) => sendJson<{ runIds: string[] }>("/api/runs", "POST", { sources, params, collection }),
   cancel: (runId: string) => sendJson<{ ok: boolean }>(`/api/runs/${runId}/cancel`, "POST"),
+  resume: (runId: string) => sendJson<{ runId: string }>(`/api/runs/${runId}/resume`, "POST"),
   remove: (runId: string) => sendJson<{ ok: boolean }>(`/api/runs/${runId}`, "DELETE"),
   rate: (runId: string, rating: "none" | "keeper" | "disapproved") =>
     sendJson<{ ok: boolean }>(`/api/runs/${runId}/rating`, "POST", { rating }),
   notes: (runId: string, notes: string) =>
     sendJson<{ ok: boolean }>(`/api/runs/${runId}/notes`, "POST", { notes }),
+  runLog: (runId: string) => getJson<{ lines: string[] }>(`/api/runs/${runId}/log`),
   artifacts: (runId: string) =>
     getJson<{
       tree: { name: string; path: string; kind: string; stage: string }[];
@@ -109,6 +111,7 @@ export const api = {
       collectionName?: string;
       notified?: boolean;
       broughtToFront?: boolean;
+      selected?: boolean;
     }>(`/api/runs/${runId}/preview`, "POST"),
 };
 
@@ -135,6 +138,20 @@ export function subscribeEvents(handlers: {
     try {
       const { sourceId, runId } = JSON.parse((e as MessageEvent).data);
       handlers.onRunDeleted(sourceId, runId);
+    } catch {
+      /* ignore */
+    }
+  });
+  return () => es.close();
+}
+
+/** Subscribe to a single run's live log lines. Returns an unsubscribe function. */
+export function subscribeRunLog(runId: string, onLine: (line: string) => void): () => void {
+  const es = new EventSource("/api/events");
+  es.addEventListener("run-log", (e) => {
+    try {
+      const data = JSON.parse((e as MessageEvent).data);
+      if (data.runId === runId && typeof data.line === "string") onLine(data.line);
     } catch {
       /* ignore */
     }

@@ -13,6 +13,7 @@ import {
   fmt,
   STATUS_META,
   effStatus,
+  ElapsedTimer,
 } from "./primitives";
 import type { Mark, Run, Source } from "../types";
 
@@ -40,8 +41,6 @@ interface CenterTableProps {
   sort: string;
   sortDir: string;
   onSortClick: (key: string) => void;
-  parallelism: number;
-  onParallel: (v: number) => void;
   onCleanup: () => void;
   onConfigRun: (s: Source, r: Run) => void;
   onExpandAll: () => void;
@@ -71,8 +70,6 @@ export function CenterTable(props: CenterTableProps) {
     sort,
     sortDir,
     onSortClick,
-    parallelism,
-    onParallel,
     onCleanup,
     onConfigRun,
     onExpandAll,
@@ -135,8 +132,6 @@ export function CenterTable(props: CenterTableProps) {
           allExpanded,
           sources,
           count: sorted.length,
-          parallelism,
-          onParallel,
           onCleanup,
         }}
       />
@@ -289,19 +284,6 @@ function SortHead({
   );
 }
 
-const stepBtn: React.CSSProperties = {
-  width: 20,
-  height: 22,
-  border: "none",
-  background: "transparent",
-  color: "var(--text-2)",
-  fontSize: 14,
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
 function statusRank(s: Source) {
   if (s.runs.some((r) => r.status === "running")) return 6;
   if (s.runs.some((r) => r.status === "queued")) return 5;
@@ -327,8 +309,6 @@ function Toolbar({
   allExpanded,
   count,
   sources,
-  parallelism,
-  onParallel,
   onCleanup,
 }: {
   statusFilter: string;
@@ -337,8 +317,6 @@ function Toolbar({
   allExpanded: boolean;
   count: number;
   sources: Source[];
-  parallelism: number;
-  onParallel: (v: number) => void;
   onCleanup: () => void;
 }) {
   const n = (fn: (s: Source) => boolean) => sources.filter(fn).length;
@@ -382,47 +360,6 @@ function Toolbar({
       </span>
 
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 11, color: "var(--text-2)", fontWeight: 600 }}>
-            Max concurrent
-          </span>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-            }}
-          >
-            <button
-              onClick={() => onParallel(parallelism - 1)}
-              title="Fewer concurrent runs"
-              style={stepBtn}
-            >
-              –
-            </button>
-            <span
-              className="mono"
-              style={{
-                width: 18,
-                textAlign: "center",
-                fontSize: 11.5,
-                fontWeight: 700,
-                color: "var(--text)",
-              }}
-            >
-              {parallelism}
-            </span>
-            <button
-              onClick={() => onParallel(parallelism + 1)}
-              title="More concurrent runs"
-              style={stepBtn}
-            >
-              +
-            </button>
-          </div>
-        </div>
         <button
           onClick={onCleanup}
           title="Remove failed & disapproved runs, delete previews from the collection, and reload Bloom"
@@ -734,7 +671,7 @@ function runSummary(run: Run): string {
   if (p.model) parts.push((BLOOM.MODELS[p.model]?.label || p.model).replace(" (default)", ""));
   parts.push(p.visionFormatting === false ? "no-vision" : "vision");
   if (p.complexBecomesImage && p.complexBecomesImage !== "off")
-    parts.push("flat≥" + p.complexBecomesImage);
+    parts.push(p.complexBecomesImage === "always" ? "all-images" : "flat≥" + p.complexBecomesImage);
   if (p.target) parts.push("→ " + (BLOOM.targets[p.target] || p.target));
   return parts.join(" · ") || run.id;
 }
@@ -850,6 +787,11 @@ function RunRow({
           <div style={{ flex: 1, maxWidth: 320 }}>
             <ProgressBar value={runProgress(run)} />
           </div>
+          <ElapsedTimer
+            startedAt={run.startedAt}
+            finishedAt={run.finishedAt}
+            style={{ fontSize: 10.5, color: "var(--text-3)", flexShrink: 0, minWidth: 34 }}
+          />
         </div>
       )}
     </div>

@@ -166,6 +166,7 @@ export function RunConfig({
   run,
   mode,
   parallelism,
+  defaults,
   onClose,
   onConfirm,
 }: {
@@ -173,6 +174,7 @@ export function RunConfig({
   run?: Run | null;
   mode: string;
   parallelism: number;
+  defaults?: Params;
   onClose: () => void;
   onConfirm: (v: { params: Params; start: Stage }) => void;
 }) {
@@ -261,7 +263,7 @@ export function RunConfig({
 
         {/* raw settings */}
         <SectionLabel>Conversion settings</SectionLabel>
-        <ParamControls params={p} onChange={set} />
+        <ParamControls params={p} onChange={set} defaults={defaults} />
 
         {/* command summary */}
         <SectionLabel>Command summary</SectionLabel>
@@ -688,7 +690,9 @@ export function SettingsModal({
                     <Icon name="key" size={13} />
                   </span>
                   <input
-                    type="password"
+                    type="text"
+                    spellCheck={false}
+                    autoComplete="off"
                     value={(s[k] as string) || ""}
                     onChange={(e) => upd(k, e.target.value)}
                     placeholder={ph}
@@ -696,7 +700,7 @@ export function SettingsModal({
                     style={{
                       width: "100%",
                       height: 32,
-                      padding: "0 10px 0 30px",
+                      padding: "0 70px 0 30px",
                       fontSize: 12,
                       color: "var(--text)",
                       background: "var(--surface-2)",
@@ -705,6 +709,38 @@ export function SettingsModal({
                       outline: "none",
                     }}
                   />
+                  <button
+                    type="button"
+                    title="Paste from clipboard"
+                    onClick={async () => {
+                      try {
+                        const text = (await navigator.clipboard.readText()).trim();
+                        if (text) upd(k, text);
+                      } catch {
+                        /* clipboard unavailable / denied */
+                      }
+                    }}
+                    style={{
+                      position: "absolute",
+                      right: 5,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      height: 24,
+                      padding: "0 8px",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "var(--text-2)",
+                      background: "var(--surface-3)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--radius-sm)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Icon name="copy" size={11} /> Paste
+                  </button>
                 </div>
               </Field>
             ))}

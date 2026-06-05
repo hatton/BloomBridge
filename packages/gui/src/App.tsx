@@ -254,12 +254,6 @@ export function App() {
   };
   const rescan = () => folder && pickFolder(folder);
 
-  const setParallel = (v: number) => {
-    const clamped = Math.max(1, Math.min(6, v));
-    setMaxParallel(clamped);
-    api.saveSettings({ maxParallel: clamped }).catch(() => {});
-  };
-
   // ---- focus / selection ----
   const focusedSource = sources.find((s) => s.id === (focus ? focus.sourceId : null));
   const focusedRun =
@@ -377,6 +371,12 @@ export function App() {
   };
   const onCancelRun = (_sid: string, rid: string) => {
     api.cancel(rid).catch(() => {});
+  };
+  const onResumeRun = (_s: Source, run: Run) => {
+    api
+      .resume(run.id)
+      .then(() => showToast("ok", "Resuming from the last successful stage…"))
+      .catch((e) => showToast("error", e?.message || "Could not resume this run."));
   };
   const onDeleteRun = (_sid: string, rid: string) =>
     setModal({
@@ -568,8 +568,6 @@ export function App() {
             sort={sort}
             sortDir={sortDir}
             onSortClick={onSortClick}
-            parallelism={maxParallel}
-            onParallel={setParallel}
             onCleanup={onCleanup}
             onConfigRun={onConfigRun}
             onExpandAll={onExpandAll}
@@ -613,6 +611,7 @@ export function App() {
               collections={collections}
               onClose={() => setPanelOpen(false)}
               onRunNow={(params) => quickStart(focusedSource, params)}
+              onPreview={onPreview}
               onSelectRun={onSelectRun}
               onMark={onMark}
             />
@@ -626,6 +625,7 @@ export function App() {
               onCancel={onCancelRun}
               onPreview={onPreview}
               onConfigRerun={(s, r) => onConfigRun(s, r)}
+              onResume={onResumeRun}
               onCompare={(s) =>
                 setModal({
                   type: "compare",
@@ -637,32 +637,10 @@ export function App() {
             />
           )
         ) : (
-          <button
-            onClick={() => setPanelOpen(true)}
-            title="Show detail panel"
-            style={{
-              position: "absolute",
-              right: 0,
-              top: "50%",
-              transform: "translateY(-50%)",
-              width: 24,
-              height: 60,
-              border: "1px solid var(--border)",
-              borderRight: "none",
-              borderRadius: "8px 0 0 8px",
-              background: "var(--surface)",
-              color: "var(--text-3)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Icon name="panel-right" size={15} />
-          </button>
+          <RightRail icon="panel-right" label="Details" onExpand={() => setPanelOpen(true)} />
         )}
 
-        {pdfOpen && (
+        {pdfOpen ? (
           <PdfViewerPane
             source={checkedPdfs.size > 1 ? null : focusedSource}
             multiSelected={checkedPdfs.size > 1}
@@ -670,14 +648,14 @@ export function App() {
             onResize={setPdfWidth}
             onClose={() => setPdfOpen(false)}
           />
+        ) : (
+          <RightRail icon="file" label="PDF preview" onExpand={() => setPdfOpen(true)} />
         )}
       </div>
 
       <QueueBar
         runningCount={runningCount}
         queuedCount={queuedCount}
-        parallelism={maxParallel}
-        onParallel={setParallel}
         sources={sources}
         folder={folder}
         bookCount={sources.length}
@@ -689,6 +667,7 @@ export function App() {
           run={modal.run}
           mode={t.configMode}
           parallelism={maxParallel}
+          defaults={defaults}
           onClose={() => setModal(null)}
           onConfirm={onConfirmRun}
         />
@@ -878,15 +857,11 @@ function TopBar({
 function QueueBar({
   runningCount,
   queuedCount,
-  parallelism,
-  onParallel,
   folder,
   bookCount,
 }: {
   runningCount: number;
   queuedCount: number;
-  parallelism: number;
-  onParallel: (v: number) => void;
   sources: Source[];
   folder: string | null;
   bookCount: number;
@@ -936,53 +911,10 @@ function QueueBar({
           <Icon name="clock" size={12} style={{ color: "var(--st-queued-fg)" }} />
           {queuedCount} queued
         </span>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 11 }}>Max parallel</span>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-            }}
-          >
-            <button onClick={() => onParallel(parallelism - 1)} style={qbtn}>
-              –
-            </button>
-            <span
-              className="mono"
-              style={{
-                width: 18,
-                textAlign: "center",
-                fontSize: 11.5,
-                fontWeight: 700,
-                color: "var(--text)",
-              }}
-            >
-              {parallelism}
-            </span>
-            <button onClick={() => onParallel(parallelism + 1)} style={qbtn}>
-              +
-            </button>
-          </div>
-        </div>
       </div>
     </footer>
   );
 }
-const qbtn: React.CSSProperties = {
-  width: 20,
-  height: 20,
-  border: "none",
-  background: "transparent",
-  color: "var(--text-2)",
-  fontSize: 14,
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
 
 // ---------- Collapsed left rail ----------
 function LeftRail({
@@ -1049,6 +981,73 @@ function LeftRail({
         }}
       >
         <Icon name="chevron" size={14} />
+      </button>
+    </aside>
+  );
+}
+
+// A collapsed right-hand column. Mirrors LeftRail: a thin, full-height column
+// (so the layout keeps a column there) with a vertical label + expand button.
+function RightRail({
+  icon,
+  label,
+  onExpand,
+}: {
+  icon: string;
+  label: string;
+  onExpand: () => void;
+}) {
+  return (
+    <aside
+      style={{
+        width: 40,
+        flexShrink: 0,
+        background: "var(--surface)",
+        borderLeft: "1px solid var(--border)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        paddingTop: 10,
+        gap: 10,
+      }}
+    >
+      <button
+        onClick={onExpand}
+        title={`Show ${label}`}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 28,
+          height: 28,
+          borderRadius: 6,
+          border: "1px solid var(--border)",
+          background: "var(--surface-2)",
+          color: "var(--text-2)",
+          cursor: "pointer",
+        }}
+      >
+        <Icon name={icon} size={15} />
+      </button>
+      <button
+        onClick={onExpand}
+        title={`Show ${label}`}
+        style={{
+          flex: 1,
+          width: "100%",
+          border: "none",
+          background: "transparent",
+          color: "var(--text-3)",
+          cursor: "pointer",
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: ".5px",
+          writingMode: "vertical-rl",
+          textTransform: "uppercase",
+          padding: "8px 0",
+        }}
+      >
+        {label}
       </button>
     </aside>
   );

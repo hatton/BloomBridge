@@ -121,6 +121,33 @@ describe("generateHtmlDocument", () => {
     expect(result).toContain("--complex-becomes-image off");
     // The questions text is NOT laid out as editable bubbles — the page is an image.
     expect(result).not.toContain("You can use these questions");
+    // A numeric complexity level is NOT "always" mode → no xMatter suppression.
+    expect(result).not.toContain('name="xmatter"');
+  });
+
+  it('suppresses xMatter in "always"-flatten mode', () => {
+    const book: Book = {
+      frontMatterMetadata: { languages: { en: "English" }, l1: "en" },
+      pages: [
+        {
+          type: "content" as const,
+          flattenAsImage: "page-1.jpg",
+          flattenLevel: "always",
+          elements: [],
+        },
+        {
+          type: "content" as const,
+          flattenAsImage: "page-2.jpg",
+          flattenLevel: "always",
+          elements: [],
+        },
+      ],
+    };
+
+    const result = HtmlGenerator.generateHtmlDocument(book, () => {});
+
+    // Every page is a full-page image, so Bloom must add no front/back xMatter.
+    expect(result).toContain('<meta name="xmatter" content="Null" />');
   });
 
   describe("multiple pages", () => {

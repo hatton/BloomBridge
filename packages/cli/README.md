@@ -213,7 +213,28 @@ pdf-to-bloom mybook.pdf --collection recent --complex-becomes-image 4
 | `1`             | timid — flatten at the slightest complexity |
 | `2`–`4`         | progressively braver                        |
 | `5`             | only flatten the most complex pages         |
+| `always`        | import **every** page as a full-page image  |
 
 Lower = flattens more readily. Each flattened page carries a `data-conversion-note`
 recording why and how to change it. Requires a PDF input (the page is rendered from the
 PDF), so it runs on the `--ocr gpt`/`gemini` path.
+
+### `always` — the whole book as page images
+
+```bash
+pdf-to-bloom mybook.pdf --collection recent --complex-becomes-image always
+```
+
+`always` is a different mode from the numeric levels. Instead of judging each page, it
+imports **every** PDF page as a full-page image, producing a Bloom book that looks
+exactly like the source with no per-page reconstruction. To still fill in the book's
+metadata (title, author, license) and detect its languages for Bloom, it OCRs just a
+handful of pages — the **first 4 and the last 2** — and runs the LLM on those. It
+**skips** all per-page layout analysis: cover detection, vision-formatting (text
+alignment / background color), and canvas-page detection are all turned off.
+
+Use it for books that are too richly designed to rebuild as editable text and where a
+faithful picture of each page is good enough. The trade-off is the whole book is
+pictures: not editable, translatable, or searchable in Bloom. (On the `--ocr mistral`
+and `--ocr unpdf` paths the OCR can't be limited to a few pages, so the savings apply
+only to the default `gpt` path; every page is still imported as an image.)

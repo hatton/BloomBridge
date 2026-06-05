@@ -33,6 +33,8 @@ export interface NotifyBloomResult {
   reason: string;
   /** The port of the Bloom instance we talked to, if any. */
   port?: number;
+  /** The book's bookInstanceId (from meta.json), if it could be read. */
+  bookId?: string;
 }
 
 /** Normalize a path for case-insensitive comparison with trailing slashes removed. */
@@ -79,6 +81,27 @@ export async function reloadBloomCollection(port?: number): Promise<boolean> {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
+        signal: AbortSignal.timeout(PORT_PROBE_TIMEOUT_MS),
+      });
+      if (response.ok) return true;
+    } catch {
+      // keep scanning
+    }
+  }
+  return false;
+}
+
+/** Ask the running Bloom to select (open) a book by its bookInstanceId
+ *  (POST external/selectBook). Used as the final step of Preview so Bloom
+ *  actually shows the previewed book. */
+export async function selectBookInBloom(bookId: string, port?: number): Promise<boolean> {
+  const ports = port ? [port] : CANDIDATE_PORTS;
+  for (const p of ports) {
+    try {
+      const response = await fetch(`http://localhost:${p}/bloom/api/external/selectBook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: bookId }),
         signal: AbortSignal.timeout(PORT_PROBE_TIMEOUT_MS),
       });
       if (response.ok) return true;
@@ -177,7 +200,7 @@ export async function notifyBloomOfBook(bookFolder: string): Promise<NotifyBloom
       "No running Bloom found with this book's collection open; skipping live refresh. " +
       "Bloom will pick up the book the next time that collection is opened.";
     logger.info(reason);
-    return { notified: false, reason };
+    return { notified: false, reason, bookId };
   }
 
   try {
@@ -190,15 +213,15 @@ export async function notifyBloomOfBook(bookFolder: string): Promise<NotifyBloom
     if (response.ok) {
       const reason = `Notified the running Bloom on port ${port} to add/refresh this book.`;
       logger.info(`✅ ${reason}`);
-      return { notified: true, reason, port };
+      return { notified: true, reason, port, bookId };
     }
 
     const reason = `Found a running Bloom on port ${port}, but it rejected the update (HTTP ${response.status} ${response.statusText}).`;
     logger.warn(reason);
-    return { notified: false, reason, port };
+    return { notified: false, reason, port, bookId };
   } catch (error) {
     const reason = `Found a running Bloom on port ${port}, but the update request failed: ${error instanceof Error ? error.message : String(error)}`;
     logger.warn(reason);
-    return { notified: false, reason, port };
+    return { notified: false, reason, port, bookId };
   }
 }

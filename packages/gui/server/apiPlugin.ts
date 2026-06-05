@@ -12,17 +12,20 @@ import {
   notifyBloomOfBook,
   bringBloomToFront,
   reloadBloomCollection,
+  selectBookInBloom,
 } from "@pdf-to-bloom/lib";
 import { getSettings, saveSettings, redactSettings } from "./settings";
 import {
   addClient,
   enqueueRuns,
+  enqueueResume,
   cancelRun,
   deleteRun,
   setRating,
   setNotes,
   getFolderTree,
   getRunArtifacts,
+  getRunLog,
   readArtifactFile,
   getRunRecord,
   osOpen,
@@ -104,6 +107,24 @@ async function copyDir(src: string, dest: string) {
     if (e.isDirectory()) await copyDir(s, d);
     else await fs.copyFile(s, d);
   }
+}
+
+/**
+ * Resolve a configured collection value into a real, absolute folder we can copy
+ * into — or null if there's no valid target. The "__running__" sentinel (and a
+ * missing/"recent" value) resolves to the running Bloom's open collection;
+ * anything else must be an absolute path. This guards against ever writing a
+ * "preview - …"/keeper copy into a *literal* folder named "__running__" or
+ * "recent" under the server's working directory.
+ */
+function resolveWritableCollection(
+  candidate: string | undefined,
+  runningBloomFolder?: string,
+): string | null {
+  if (candidate === "__running__" || candidate === "recent" || !candidate) {
+    return runningBloomFolder || null;
+  }
+  return path.isAbsolute(candidate) ? candidate : runningBloomFolder || null;
 }
 
 export function conversionApiPlugin(): Plugin {
@@ -324,6 +345,10 @@ export function conversionApiPlugin(): Plugin {
               await cancelRun(runId);
               return send(res, 200, { ok: true });
             }
+            if (action === "resume" && method === "POST") {
+              const rec = await enqueueResume(runId);
+              return send(res, 200, { runId: rec.id });
+            }
             if (action === "rating" && method === "POST") {
               const body = await readBody(req);
               await setRating(runId, body.rating);
@@ -333,6 +358,9 @@ export function conversionApiPlugin(): Plugin {
               const body = await readBody(req);
               await setNotes(runId, String(body.notes ?? ""));
               return send(res, 200, { ok: true });
+            }
+            if (action === "log" && method === "GET") {
+              return send(res, 200, await getRunLog(runId));
             }
             if (action === "artifacts" && method === "GET") {
               return send(res, 200, await getRunArtifacts(runId));
@@ -368,8 +396,12 @@ export function conversionApiPlugin(): Plugin {
               const bloom = await getRunningBloomCollection();
               const settings = await getSettings();
               const collection =
-                bloom?.collectionFolder || rec.collection || settings.defaultCollection;
-              if (!collection)
+                bloom?.collectionFolder ||
+                resolveWritableCollection(
+                  rec.collection || settings.defaultCollection,
+                  bloom?.collectionFolder,
+                );
+              if (!collection || !path.isAbsolute(collection))
                 return send(res, 400, {
                   error:
                     "No Bloom collection to preview into. Open a collection in Bloom, or set a default collection in Settings.",
@@ -382,6 +414,9 @@ export function conversionApiPlugin(): Plugin {
               }
               const notify = await notifyBloomOfBook(dest);
               const broughtToFront = bloom ? await bringBloomToFront(bloom.port) : false;
+              // Final step: ask Bloom to actually select/open the previewed book.
+              const selected =
+                bloom && notify.bookId ? await selectBookInBloom(notify.bookId, bloom.port) : false;
               return send(res, 200, {
                 ok: true,
                 dest,
@@ -389,14 +424,23 @@ export function conversionApiPlugin(): Plugin {
                 collectionName: bloom?.collectionName,
                 notified: notify.notified,
                 broughtToFront,
+                selected,
               });
             }
             if (action === "keeper" && method === "POST") {
               const rec = await getRunRecord(runId);
               if (!rec || !rec.bookFolderPath) return send(res, 400, { error: "no book folder" });
               const settings = await getSettings();
-              const collection = rec.collection || settings.defaultCollection;
-              if (!collection) return send(res, 400, { error: "no target collection configured" });
+              const bloom = await getRunningBloomCollection();
+              const collection = resolveWritableCollection(
+                rec.collection || settings.defaultCollection,
+                bloom?.collectionFolder,
+              );
+              if (!collection || !path.isAbsolute(collection))
+                return send(res, 400, {
+                  error:
+                    "No target collection. Open a collection in Bloom, or set a default collection in Settings.",
+                });
               const dest = path.join(collection, rec.bookName);
               try {
                 await copyDir(rec.bookFolderPath, dest);

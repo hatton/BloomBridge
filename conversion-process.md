@@ -87,6 +87,7 @@ Entry point: `packages/cli/src/index.ts` (Commander) → `Arguments` → `makeTh
 | `--vision-model <model>`                         | `google/gemini-3.1-pro-preview` | Stage 1                     | Model for the vision-formatting pass, **independent of `--model`**.                                                                                                                                                                                                                                              |
 | `--model <model>`                                | `google/gemini-3.1-pro-preview` | Stage 2                     | OpenRouter model for the LLM **enrichment** stage.                                                                                                                                                                                                                                                               |
 | `--prompt <path>`                                | (built-in)                      | Stage 1 (GPT OCR) + Stage 2 | Override prompt file. Used as the per-page OCR prompt on the GPT path and/or the enrichment prompt.                                                                                                                                                                                                              |
+| `--complex-becomes-image <level>`                | `off`                           | Stage 1 (+ Stage 4 render)  | Flatten pages to full-page images instead of reconstructing text. `off` never; `0`–`5` flatten canvas pages by complexity (lower = more readily; see §5.7); `always` imports **every** page as an image and does only minimal OCR/LLM for metadata (see §5.7).                                                   |
 | `--emit-source-hashes`                           | off                             | Stage 4                     | **Master-creation mode** (see §9.7). Keeps the `data-import-source-hash` on every page and **skips** master substitution. Use it once to build a master book; off (the default) for normal imports.                                                                                                              |
 | `--verbose`                                      | off                             | all                         | Verbose logging via the log callback.                                                                                                                                                                                                                                                                            |
 
@@ -251,9 +252,41 @@ border-sampling used by vision-formatting, `detectBackgroundColor.ts`) and emits
 the full-bleed art doesn’t leave a white border (see 9.4). Skipped if
 vision-formatting already set a `background-color`.
 
+### 5.7 Flatten pages to images — `--complex-becomes-image` (`flattenComplexPages` / `flattenAllPages`)
+
+Some pages are too intricate to rebuild as editable text. Rather than approximate
+them, we render the page to a **single full-page image** and import that instead. The
+decision and rendering happen here in Stage 1; the marker rides through the rest of
+the pipeline and Stage 4 turns it into a full-page image page (§9.2/§9.3). The flag has
+two distinct modes:
+
+- **Scalar levels `0`–`5` (`off` = never).** Only **canvas** pages (§5.6) are
+  candidates. `complexThreshold` maps the level to a score threshold (`level + 1`),
+  the score is the canvas page's text-box count, and any page at/above the threshold is
+  rendered to `page-<N>.jpg` and tagged `flatten-as-image="…" flatten-score="…"
+flatten-level="…"`. Lower numbers flatten more readily (`0` = every canvas page).
+- **`always` — every page as an image.** A different mode: we render **every** page to
+  `page-<N>.jpg` and tag every page comment `flatten-as-image`. To still recover the
+  book's metadata + languages we OCR only a handful of pages — the **first 4 and last
+  2** (`pagesForMetadata`, passed to `pdfToMarkdown` as `ocrOnlyPages`); every other
+  page gets a `_(page imported as image)_` placeholder body (no hash) so it parses as a
+  page and survives the LLM round-trip. All per-page analysis is skipped: `prepareCovers`,
+  `addVisionFormatting`, and `detectCanvasPages` don't run (and image extraction is
+  skipped — the per-page images aren't referenced). `detectNormalStyle` still runs (page
+  size is needed). On the `mistral`/`unpdf` OCR paths the OCR can't be limited to a few
+  pages, so the cost saving applies only to the default `gpt` path; every page is still
+  imported as an image.
+
+Either way, flattened pages carry a `data-conversion-note` in the HTML recording why
+and how to revert (see §9.2). The `flatten-as-image`/`flatten-score`/`flatten-level`
+attributes round-trip through `parseMarkdown`/`generateMarkdown`, and the LLM prompt is
+told to preserve them.
+
 > Stage 1 ordering in `process.ts`: OCR → `prepareCovers` → (optional)
 > `addVisionFormatting` → `detectNormalStyle` (prepends the book comment) →
-> `detectCanvasPages` (injects `canvas-text-boxes`) → write `.ocr.md`.
+> `detectCanvasPages` (injects `canvas-text-boxes`) → flatten (`flattenComplexPages`,
+> or `flattenAllPages` when `always`) → write `.ocr.md`. In `always` mode only OCR,
+> `detectNormalStyle`, and `flattenAllPages` run.
 
 ---
 

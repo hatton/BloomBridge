@@ -39,6 +39,7 @@ export {
   getRunningBloomCollection,
   bringBloomToFront,
   reloadBloomCollection,
+  selectBookInBloom,
 } from "./5-notify-bloom/notifyBloom";
 export type { NotifyBloomResult } from "./5-notify-bloom/notifyBloom";
 

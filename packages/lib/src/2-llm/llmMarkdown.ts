@@ -122,7 +122,17 @@ export async function llmMarkdown(
       if (finishReason === "content-filter") {
         throw new Error("Content was filtered by the AI model's safety systems");
       }
-      throw new Error(`Streaming finished with reason: ${finishReason}`);
+      // "unknown"/"other": the AI SDK couldn't map the provider's finish reason
+      // (seen with Gemini via OpenRouter after a long reasoning pass). The response
+      // is often still complete, so don't discard it — warn and let the validation
+      // below decide whether it's usable rather than failing the whole run.
+      if ((finishReason === "unknown" || finishReason === "other") && result.text?.trim()) {
+        logger.warn(
+          `LLM finished with unmapped reason "${finishReason}" but returned ${result.text.length} chars; proceeding to validation.`,
+        );
+      } else {
+        throw new Error(`Streaming finished with reason: ${finishReason}`);
+      }
     }
     let taggedContent = result.text;
 

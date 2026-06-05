@@ -77,7 +77,7 @@ program
   )
   .option(
     "--complex-becomes-image <level>",
-    "When a page is too complex to reconstruct as editable text, import it as a single full-page image instead. Scalar sensitivity: 'off' (never, default), '0' (every canvas page), '1' (timid — bail easily) … '5' (only the most complex). Lower = flattens more readily. Flattened pages carry a data-conversion-note. Requires PDF input.",
+    "When a page is too complex to reconstruct as editable text, import it as a single full-page image instead. Scalar sensitivity: 'off' (never, default), '0' (every canvas page), '1' (timid — bail easily) … '5' (only the most complex). Lower = flattens more readily. 'always' imports EVERY page as a full-page image, OCR-ing only a few pages for metadata/languages and skipping all per-page layout analysis. Flattened pages carry a data-conversion-note. Requires PDF input.",
     "off",
   )
   .option("--verbose", "Enable verbose logging to see detailed process steps")

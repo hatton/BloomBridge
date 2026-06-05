@@ -264,7 +264,6 @@ const sources: Source[] = [
           code: "PLAN_SCHEMA_INVALID",
           message:
             "Layout planner returned malformed JSON for page 14 (unterminated string). The page likely contains a full-bleed illustration the model tried to describe verbatim.",
-          hint: "Try raising 'complexity → flatten as image' so dense pages are kept as images, or re-run Plan only.",
         },
         preset: "balanced",
         params: { ...DEFAULT_PARAMS, model: "gpt-4o", complexBecomesImage: "1" },
@@ -485,7 +484,7 @@ export const BLOOM = {
     render: "Always render (first + last)",
     none: "Leave to Bloom xMatter",
   } as Record<string, string>,
-  // --complex-becomes-image level (off | 0..5). Lower = flattens more readily.
+  // --complex-becomes-image level (off | 0..5 | always). Lower = flattens more readily.
   complexLevels: {
     off: "Off — never flatten",
     "0": "0 — every canvas page",
@@ -494,8 +493,9 @@ export const BLOOM = {
     "3": "3",
     "4": "4",
     "5": "5 — only most complex",
+    always: "Always — every page as an image",
   } as Record<string, string>,
-  complexOrder: ["off", "0", "1", "2", "3", "4", "5"],
+  complexOrder: ["off", "0", "1", "2", "3", "4", "5", "always"],
   // --target output artifact
   targets: {
     images: "Images (extract only)",

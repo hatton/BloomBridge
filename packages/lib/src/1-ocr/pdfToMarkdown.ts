@@ -219,7 +219,12 @@ async function ocrPageImage(
  * @param options - Optional extras. `masterHashes` is the set of page-image
  *        hashes held by a "master" book; any source page whose render matches one
  *        skips OCR entirely (its content is supplied later by master-page
- *        substitution — see master/masterPages.ts).
+ *        substitution — see master/masterPages.ts). `ocrOnlyPages`, when given,
+ *        limits the actual OCR API calls to those page numbers; every other page
+ *        gets a short placeholder body (and no hash) so it still parses as a page
+ *        and survives the LLM round-trip. This is how `--complex-becomes-image
+ *        always` reads just a few pages for metadata while importing every page
+ *        as a full-page image.
  * @returns Promise resolving to the assembled markdown (with page markers)
  */
 export async function pdfToMarkdown(
@@ -228,7 +233,7 @@ export async function pdfToMarkdown(
   modelName: string = "gpt",
   logCallback?: (log: LogEntry) => void,
   customPrompt?: string,
-  options?: { masterHashes?: Set<string> },
+  options?: { masterHashes?: Set<string>; ocrOnlyPages?: Set<number> },
 ): Promise<string> {
   if (logCallback) logger.subscribe(logCallback);
 
@@ -254,8 +259,17 @@ export async function pdfToMarkdown(
     const pageNumbers = Array.from({ length: pageCount }, (_, i) => i + 1);
 
     const masterHashes = options?.masterHashes;
+    const ocrOnlyPages = options?.ocrOnlyPages;
 
     const pageResults = await mapWithConcurrency(pageNumbers, OCR_CONCURRENCY, async (page) => {
+      // "always"-flatten mode: skip the OCR API call for pages we don't need for
+      // metadata. They still become a page (with a placeholder body, no hash) and
+      // are imported as a full-page image downstream.
+      if (ocrOnlyPages && !ocrOnlyPages.has(page)) {
+        logger.event({ kind: "progress", stage: "ocr", page, pageCount });
+        return { md: "_(page imported as image)_", hash: "", matched: false, usage: undefined };
+      }
+
       const imagePath = path.join(tempDir!, `page-${page}.jpg`);
       await renderPdfPageToImage(pdfPath, page, imagePath, { dpi: OCR_RENDER_DPI });
       const hash = await hashPageImage(imagePath);
@@ -315,7 +329,9 @@ export async function pdfToMarkdown(
         // `master-page` forces the page to render as a splice target even if the
         // LLM classifies it as back-matter (which would otherwise be dropped).
         const masterAttr = matched ? ` master-page="true"` : "";
-        return `<!-- page index=${i + 1} import-source-hash="${hash}"${masterAttr} -->\n${md}`;
+        // Pages skipped via `ocrOnlyPages` carry no hash.
+        const hashAttr = hash ? ` import-source-hash="${hash}"` : "";
+        return `<!-- page index=${i + 1}${hashAttr}${masterAttr} -->\n${md}`;
       })
       .join("\n\n");
 

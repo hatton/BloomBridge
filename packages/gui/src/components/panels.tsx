@@ -20,7 +20,7 @@ import {
   effStatus,
 } from "./primitives";
 import type { ArtifactNode, Mark, Params, Run, Source, Stage } from "../types";
-import { api } from "../api";
+import { api, subscribeRunLog } from "../api";
 
 // ============ LEFT: SOURCE PANEL ============
 export function SourcePanel({
@@ -241,6 +241,7 @@ export function DetailPanel({
   onMark,
   onPreview,
   onConfigRerun,
+  onResume,
   onCompare,
   onDelete,
   onNotes,
@@ -252,15 +253,14 @@ export function DetailPanel({
   onMark: (sid: string, rid: string, v: Mark) => void;
   onPreview: (r: Run) => void;
   onConfigRerun: (s: Source, r: Run) => void;
+  onResume: (s: Source, r: Run) => void;
   onCompare: (s: Source) => void;
   onDelete: (sid: string, rid: string) => void;
   onNotes: (sid: string, rid: string, patch: Partial<Run>) => void;
   onCancel: (sid: string, rid: string) => void;
 }) {
+  // Keep the active tab when switching between runs (don't reset to "artifacts").
   const [tab, setTab] = React.useState("artifacts");
-  React.useEffect(() => {
-    setTab("artifacts");
-  }, [run && run.id]);
 
   if (!run || !source) {
     return (
@@ -383,6 +383,23 @@ export function DetailPanel({
           />
         </div>
 
+        {run.status === "failed" && (
+          <Btn
+            variant="ghost"
+            size="sm"
+            icon="layers"
+            onClick={() => onResume(source, run)}
+            style={{ width: "100%", marginTop: 6 }}
+            title={
+              run.resumeStage
+                ? `Reuse cached output through ${BLOOM.STAGE_LABELS[run.resumeStage] || run.resumeStage} and continue`
+                : "Start over from the PDF (no earlier stage completed)"
+            }
+          >
+            Run from last successful stage
+          </Btn>
+        )}
+
         {/* notes */}
         <NotesTags run={run} source={source} onNotes={onNotes} />
       </div>
@@ -400,6 +417,7 @@ export function DetailPanel({
         }}
       >
         {[
+          ["log", "Log"],
           ["artifacts", "Artifacts"],
           ["details", "Settings"],
           ["metrics", "Metrics"],
@@ -436,12 +454,97 @@ export function DetailPanel({
         ))}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto" }}>
+      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        {tab === "log" && <LogTab run={run} />}
         {tab === "details" && <DetailsTab run={run} source={source} />}
         {tab === "metrics" && <MetricsTab run={run} />}
         {tab === "artifacts" && <ArtifactsTab run={run} />}
       </div>
     </aside>
+  );
+}
+
+// ---------- Log tab (live conversion log) ----------
+function LogTab({ run }: { run: Run }) {
+  const [lines, setLines] = React.useState<string[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const boxRef = React.useRef<HTMLDivElement>(null);
+  const stick = React.useRef(true); // auto-scroll only while pinned to the bottom
+
+  // Load the current log, then follow live lines while the run is active.
+  React.useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    api
+      .runLog(run.id)
+      .then((r) => {
+        if (alive) setLines(r.lines);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    const unsub =
+      run.status === "running" || run.status === "queued"
+        ? subscribeRunLog(run.id, (line) => setLines((prev) => [...prev, line]))
+        : () => {};
+    return () => {
+      alive = false;
+      unsub();
+    };
+  }, [run.id, run.status]);
+
+  // Keep pinned to the bottom as new lines arrive (unless the user scrolled up).
+  React.useEffect(() => {
+    const el = boxRef.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+
+  const onScroll = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "8px 14px 6px",
+          fontSize: 11,
+          color: "var(--text-3)",
+        }}
+      >
+        <Icon name="info" size={12} />
+        {run.status === "running"
+          ? "Live — following the conversion as it runs."
+          : "Conversion log."}
+      </div>
+      <div
+        ref={boxRef}
+        onScroll={onScroll}
+        className="mono"
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          margin: "0 12px 12px",
+          padding: "9px 11px",
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-sm)",
+          fontSize: 11,
+          lineHeight: 1.55,
+          color: "var(--text-2)",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+        }}
+      >
+        {loading ? "Loading…" : lines.length ? lines.join("\n") : "No log output yet."}
+      </div>
+    </div>
   );
 }
 
@@ -491,30 +594,14 @@ function ErrorBanner({ error }: { error: NonNullable<Run["error"]> }) {
       >
         <Icon name="alert" size={15} />
         <span style={{ fontSize: 12, fontWeight: 700 }}>
-          Failed at {BLOOM.STAGE_LABELS[error.stage]} stage
+          {error.stage && BLOOM.STAGE_LABELS[error.stage]
+            ? `Failed during ${BLOOM.STAGE_LABELS[error.stage]}`
+            : "Conversion failed"}
         </span>
-        <code className="mono" style={{ marginLeft: "auto", fontSize: 9.5, opacity: 0.8 }}>
-          {error.code}
-        </code>
       </div>
-      <p style={{ fontSize: 11.5, color: "var(--text-2)", margin: "0 0 7px", lineHeight: 1.5 }}>
+      <p style={{ fontSize: 11.5, color: "var(--text-2)", margin: 0, lineHeight: 1.5 }}>
         {error.message}
       </p>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 6,
-          fontSize: 11,
-          color: "var(--text-2)",
-          background: "var(--surface)",
-          padding: "7px 9px",
-          borderRadius: 5,
-        }}
-      >
-        <Icon name="info" size={13} style={{ marginTop: 1, color: "var(--accent)" }} />
-        <span>{error.hint}</span>
-      </div>
     </div>
   );
 }
@@ -1448,10 +1535,9 @@ function buildRunReport(source: Source, run: Run) {
       `- Currently running: ${BLOOM.STAGE_LABELS[run.progress.stage]} (page ${run.progress.page}/${run.progress.pages})`,
     );
   if (run.status === "failed" && run.error) {
-    L.push(`- FAILED at ${BLOOM.STAGE_LABELS[run.error.stage]} stage`);
-    L.push(`  - Error code: ${run.error.code}`);
+    const st = run.error.stage ? BLOOM.STAGE_LABELS[run.error.stage] : null;
+    L.push(st ? `- FAILED during ${st}` : "- FAILED");
     L.push(`  - Message: ${run.error.message}`);
-    L.push(`  - Suggested fix: ${run.error.hint}`);
   }
   L.push("");
   L.push("## Outputs — metrics");
@@ -1465,7 +1551,7 @@ function buildRunReport(source: Source, run: Run) {
     L.push("|---|---|---|---|---|");
     run.breakdown.forEach((b) =>
       L.push(
-        `| ${BLOOM.STAGE_LABELS[b.stage]} | ${b.dur} | ${b.tin} | ${b.tout} | ${fmt.cost(b.cost)} |`,
+        `| ${b.label || BLOOM.STAGE_LABELS[b.stage as Stage] || b.stage} | ${b.dur} | ${b.tin} | ${b.tout} | ${fmt.cost(b.cost)} |`,
       ),
     );
   }
@@ -1573,67 +1659,100 @@ function fallbackCopy(text: string) {
 }
 
 // ============ Raw parameter controls (shared by config modal + PDF + batch panes) ============
+// Orange highlight for any setting whose value differs from the default.
+const CHANGED_OUTLINE = "3px solid #f97316";
+function Changed({ on, children }: { on: boolean; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        outline: on ? CHANGED_OUTLINE : undefined,
+        outlineOffset: on ? 2 : 0,
+        borderRadius: 7,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function ParamControls({
   params: p,
   onChange: set,
+  defaults,
 }: {
   params: Params;
   onChange: (k: keyof Params, v: any) => void;
+  defaults?: Params;
 }) {
+  const d = defaults || (BLOOM.DEFAULT_PARAMS as Params);
+  const chg = (k: keyof Params) => p[k] !== d[k];
   return (
     <React.Fragment>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 4 }}>
-        <Field label="OCR method">
-          <Select
-            full
-            value={p.ocrMethod}
-            onChange={(v) => set("ocrMethod", v)}
-            options={Object.entries(BLOOM.ocrMethods).map(([value, label]) => ({ value, label }))}
-          />
-        </Field>
-        <Field label="LLM model">
-          <Select
-            full
-            value={p.model}
-            onChange={(v) => set("model", v)}
-            options={Object.entries(BLOOM.MODELS).map(([value, m]) => ({ value, label: m.label }))}
-          />
-        </Field>
-        <Field label="Cover handling">
-          <Select
-            full
-            value={p.coverMode}
-            onChange={(v) => set("coverMode", v)}
-            options={Object.entries(BLOOM.coverModes).map(([value, label]) => ({ value, label }))}
-          />
-        </Field>
-        <Field label="Target output">
-          <Select
-            full
-            value={p.target}
-            onChange={(v) => set("target", v)}
-            options={BLOOM.targetOrder.map((v) => ({ value: v, label: BLOOM.targets[v] }))}
-          />
-        </Field>
+        <Changed on={chg("ocrMethod")}>
+          <Field label="OCR method">
+            <Select
+              full
+              value={p.ocrMethod}
+              onChange={(v) => set("ocrMethod", v)}
+              options={Object.entries(BLOOM.ocrMethods).map(([value, label]) => ({ value, label }))}
+            />
+          </Field>
+        </Changed>
+        <Changed on={chg("model")}>
+          <Field label="LLM model">
+            <Select
+              full
+              value={p.model}
+              onChange={(v) => set("model", v)}
+              options={Object.entries(BLOOM.MODELS).map(([value, m]) => ({
+                value,
+                label: m.label,
+              }))}
+            />
+          </Field>
+        </Changed>
+        <Changed on={chg("coverMode")}>
+          <Field label="Cover handling">
+            <Select
+              full
+              value={p.coverMode}
+              onChange={(v) => set("coverMode", v)}
+              options={Object.entries(BLOOM.coverModes).map(([value, label]) => ({ value, label }))}
+            />
+          </Field>
+        </Changed>
+        <Changed on={chg("target")}>
+          <Field label="Target output">
+            <Select
+              full
+              value={p.target}
+              onChange={(v) => set("target", v)}
+              options={BLOOM.targetOrder.map((v) => ({ value: v, label: BLOOM.targets[v] }))}
+            />
+          </Field>
+        </Changed>
       </div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "12px 0 10px",
-          marginTop: 8,
-          borderTop: "1px solid var(--border)",
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 12.5, fontWeight: 600 }}>Vision formatting</div>
-          <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
-            Preserve layout &amp; styling with model vision
+      <Changed on={chg("visionFormatting")}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "12px 0 10px",
+            marginTop: 8,
+            borderTop: "1px solid var(--border)",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Vision formatting</div>
+            <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+              Preserve layout &amp; styling with model vision
+            </div>
           </div>
+          <Toggle value={p.visionFormatting} onChange={(v) => set("visionFormatting", v)} />
         </div>
-        <Toggle value={p.visionFormatting} onChange={(v) => set("visionFormatting", v)} />
-      </div>
+      </Changed>
       <div
         style={{
           paddingBottom: 4,
@@ -1641,37 +1760,44 @@ export function ParamControls({
           pointerEvents: p.visionFormatting ? "auto" : "none",
         }}
       >
-        <Field
-          label={
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              Vision-formatting model <InfoDot tip="detects per-page text alignment" />
-            </span>
-          }
-        >
-          <Select
-            full
-            value={p.visionModel}
-            onChange={(v) => set("visionModel", v)}
-            options={Object.entries(BLOOM.MODELS).map(([value, m]) => ({ value, label: m.label }))}
-          />
-        </Field>
+        <Changed on={chg("visionModel")}>
+          <Field
+            label={
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                Vision-formatting model <InfoDot tip="detects per-page text alignment" />
+              </span>
+            }
+          >
+            <Select
+              full
+              value={p.visionModel}
+              onChange={(v) => set("visionModel", v)}
+              options={Object.entries(BLOOM.MODELS).map(([value, m]) => ({
+                value,
+                label: m.label,
+              }))}
+            />
+          </Field>
+        </Changed>
       </div>
       <div style={{ padding: "12px 0 4px", borderTop: "1px solid var(--border)" }}>
-        <Field
-          label={
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              Complex page → flatten as image{" "}
-              <InfoDot tip="When a page is too complex to rebuild as editable HTML, import it as a single full-page image. Lower numbers flatten more readily; 0 flattens every canvas page; off never does." />
-            </span>
-          }
-        >
-          <Select
-            full
-            value={p.complexBecomesImage}
-            onChange={(v) => set("complexBecomesImage", v)}
-            options={BLOOM.complexOrder.map((v) => ({ value: v, label: BLOOM.complexLevels[v] }))}
-          />
-        </Field>
+        <Changed on={chg("complexBecomesImage")}>
+          <Field
+            label={
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                When to just treat the page as an image{" "}
+                <InfoDot tip="When a page is too complex to rebuild as editable HTML, import it as a single full-page image. Lower numbers flatten more readily; 0 flattens every canvas page; off never does. 'Always' imports every page as an image (only a few pages are OCR'd for metadata/languages; no per-page layout analysis)." />
+              </span>
+            }
+          >
+            <Select
+              full
+              value={p.complexBecomesImage}
+              onChange={(v) => set("complexBecomesImage", v)}
+              options={BLOOM.complexOrder.map((v) => ({ value: v, label: BLOOM.complexLevels[v] }))}
+            />
+          </Field>
+        </Changed>
       </div>
     </React.Fragment>
   );
@@ -1709,6 +1835,7 @@ export function PdfDetail({
   collections,
   onClose,
   onRunNow,
+  onPreview,
 }: {
   source: Source;
   defaultParams?: Params;
@@ -1718,9 +1845,12 @@ export function PdfDetail({
   collections: { path: string; name: string }[];
   onClose: () => void;
   onRunNow: (params: Params) => void;
+  onPreview?: (r: Run) => void;
   onSelectRun?: (sid: string, rid: string) => void;
   onMark?: (sid: string, rid: string, v: Mark) => void;
 }) {
+  // Most recent run that produced a Bloom book (runs are newest-first).
+  const previewable = source.runs.find((r) => r.status === "done");
   const [params, setParams] = React.useState<Params>(() => ({
     ...(source.runs[0]?.params || defaultParams || BLOOM.DEFAULT_PARAMS),
   }));
@@ -1773,24 +1903,42 @@ export function PdfDetail({
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 18px" }}>
-        {/* prominent run */}
-        <Btn variant="primary" size="lg" icon="play" full onClick={() => onRunNow(params)}>
-          Run conversion
-        </Btn>
-        <div
-          style={{
-            fontSize: 10.5,
-            color: "var(--text-3)",
-            textAlign: "center",
-            margin: "7px 0 16px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 5,
-          }}
-        >
-          <Icon name="info" size={12} />
-          Runs with the settings below · queues if &gt; {parallelism} active
+        {/* Primary action: once a run has produced a Bloom book, Preview is the
+            highlighted default; otherwise Run conversion is. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 16 }}>
+          {previewable ? (
+            <>
+              <Btn
+                variant="primary"
+                size="lg"
+                icon="eye"
+                full
+                onClick={() => onPreview?.(previewable)}
+                title="Open the most recent completed run in Bloom"
+              >
+                Preview in Bloom
+              </Btn>
+              <Btn variant="default" size="md" icon="play" full onClick={() => onRunNow(params)}>
+                Run conversion
+              </Btn>
+            </>
+          ) : (
+            <>
+              <Btn variant="primary" size="lg" icon="play" full onClick={() => onRunNow(params)}>
+                Run conversion
+              </Btn>
+              <Btn
+                variant="default"
+                size="md"
+                icon="eye"
+                full
+                disabled
+                title="No completed run to preview yet"
+              >
+                Preview in Bloom
+              </Btn>
+            </>
+          )}
         </div>
 
         {/* target collection + raw settings */}
@@ -1798,7 +1946,7 @@ export function PdfDetail({
         <div style={{ marginBottom: 12 }}>
           <CollectionPicker value={collection} onChange={onCollection} collections={collections} />
         </div>
-        <ParamControls params={params} onChange={set} />
+        <ParamControls params={params} onChange={set} defaults={defaultParams} />
       </div>
     </aside>
   );
@@ -1942,7 +2090,7 @@ export function BatchPane({
         <div style={{ marginBottom: 12 }}>
           <CollectionPicker value={collection} onChange={onCollection} collections={collections} />
         </div>
-        <ParamControls params={params} onChange={set} />
+        <ParamControls params={params} onChange={set} defaults={defaultParams} />
 
         <button
           onClick={onClear}

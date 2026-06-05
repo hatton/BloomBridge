@@ -29,7 +29,7 @@ export interface Params {
   visionFormatting: boolean; // --vision-formatting / --no-vision-formatting
   visionModel: string; // --vision-model
   coverMode: string; // --cover (auto | render | none)
-  complexBecomesImage: string; // --complex-becomes-image (off | 0..5)
+  complexBecomesImage: string; // --complex-becomes-image (off | 0..5 | always)
   target: string; // --target (images | ocr | tagged | bloom)
 }
 
@@ -43,10 +43,9 @@ export interface StageBreakdown {
 }
 
 export interface RunError {
-  stage: Stage;
+  stage?: Stage;
   code: string;
   message: string;
-  hint: string;
 }
 
 export interface RunProgress {
@@ -67,6 +66,9 @@ export interface Run {
   cost: number;
   time: number;
   ts: string;
+  /** Epoch ms when the run started executing / finished (for elapsed display). */
+  startedAt?: number;
+  finishedAt?: number;
   notes: string;
   tags: string[];
   params: Params;
@@ -74,6 +76,8 @@ export interface Run {
   breakdown: StageBreakdown[];
   progress?: RunProgress;
   error?: RunError;
+  /** When failed: the last stage that succeeded, if any (for resume). */
+  resumeStage?: Stage;
 }
 
 export interface Source {

@@ -21,6 +21,10 @@ import { inlineMarkdownToHtml, blockMarkdownToHtml } from "./markdownToHtml.js";
 import { validateBloomHtml } from "./validateBloomHtml.js";
 import { LogEntry, logger } from "../logger";
 
+// Version of the PDF-to-Bloom generator, emitted in the HTML <meta name="Generator">.
+// Bump this when the generated HTML format changes meaningfully.
+const GENERATOR_VERSION = "6.4";
+
 // A note about bloom-monolingual, bloom-bilingual, and bloom-trilingual
 // Although they show up on page divs, they are put there at runtime, so
 // this converter doesn't need to add them, and if it does, they will
@@ -66,8 +70,9 @@ export class HtmlGenerator {
   <html>
     <head>
     <meta charset="UTF-8" />
-    <meta name="Generator" content="PDF-to-Bloom Converter" />
+    <meta name="Generator" content="PDF-to-Bloom Converter ${GENERATOR_VERSION}" />
     <meta name="BloomFormatVersion" content="2.1" />
+    ${this.generateXmatterMeta(book)}
     <title>${escapeHtml(titleRecord![l1Lang])}</title>
     ${this.generateUserModifiedStyles(book)}
     ${this.generateCoverBackgroundStyle(book)}
@@ -90,6 +95,19 @@ export class HtmlGenerator {
     }
 
     return html;
+  }
+
+  /**
+   * In "always"-flatten mode every PDF page is imported as a full-page image, so
+   * the book is a faithful page-by-page reproduction. Tell Bloom to add NO
+   * xMatter (front cover, title, credits, back cover) — otherwise it inserts
+   * extra pages in front of and after the imported page images. Detected from
+   * the per-page `flatten-level="always"` marker the OCR stage writes (numeric
+   * complexity levels write the level number, never the literal "always").
+   */
+  private static generateXmatterMeta(book: Book): string {
+    const flattenAlways = book.pages.some((page) => page.flattenLevel === "always");
+    return flattenAlways ? `<meta name="xmatter" content="Null" />` : "";
   }
 
   /**

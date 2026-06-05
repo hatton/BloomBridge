@@ -46,7 +46,7 @@ Your task in this part of the instructions to enrich the file by annotating it w
 Where To Add Text Block Comments:
 
 Introduce a new text block comment any time one or more of three things occurs at any point in the text:
-1: If you encounter a “<!-- page index=x -->" add a text block directly below it. Important: copy each "<!-- page ... -->" comment through to your output exactly as it appears, preserving every attribute on it (such as type, bilingual, vertical-align, horizontal-align, background-color, and canvas-text-box). Do not drop, reorder, or modify these attributes.
+1: If you encounter a “<!-- page index=x -->" add a text block directly below it. Important: copy each "<!-- page ... -->" comment through to your output exactly as it appears, preserving every attribute on it (such as type, bilingual, vertical-align, horizontal-align, background-color, canvas-text-box, and flatten-as-image). Do not drop, reorder, or modify these attributes. Some pages may have a placeholder body such as "_(page imported as image)_" and no other text — keep that page comment and its placeholder line; do not delete the page.
 2: Any time the language of some text does not match the language of the text directly above it.
 3: Directly above the location of one of the pieces of metadata information you are required to annotate.
 

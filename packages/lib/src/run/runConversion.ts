@@ -25,6 +25,7 @@ import { addVisionFormatting } from "../1-ocr/visionFormatting";
 import { detectNormalStyle } from "../1-ocr/detectNormalStyle";
 import { detectCanvasPages, type CanvasPageInfo } from "../1-ocr/detectCanvasPages";
 import { renderPdfPageToImage } from "../1-ocr/renderPdfPage";
+import { getPdfPageInfo } from "../1-ocr/coverDetection";
 import { llmMarkdown } from "../2-llm/llmMarkdown";
 import { attemptCleanup } from "../2-llm/post-llm-cleanup";
 import { addBloomPlanToMarkdown } from "../3-add-bloom-plan/addBloomPlan";
@@ -155,7 +156,7 @@ async function extractImages(pdfPath: string, outputDir: string, method: string)
 
 /** Map the `--complex-becomes-image` level to a complexity-score threshold. */
 function complexThreshold(level: string): number | null {
-  if (!level || level === "off") return null;
+  if (!level || level === "off" || level === "always") return null;
   const n = Number(level);
   if (!Number.isInteger(n) || n < 0 || n > 5) {
     logger.warn(`Unknown --complex-becomes-image value '${level}', treating as 'off'.`);
@@ -198,6 +199,51 @@ async function flattenComplexPages(
       `Page ${pageNum}: too complex (score ${score} ≥ ${threshold}); importing as full-page image ${file}.`,
     );
   }
+  return out;
+}
+
+/**
+ * Pages to OCR in `--complex-becomes-image always` mode: the first 4 and last 2
+ * (deduped and clamped to the page count). Every page becomes an image; we only
+ * read these few for the book's metadata + language detection.
+ */
+function pagesForMetadata(pageCount: number): Set<number> {
+  const pages = new Set<number>();
+  for (let p = 1; p <= Math.min(4, pageCount); p++) pages.add(p);
+  for (let p = Math.max(1, pageCount - 1); p <= pageCount; p++) pages.add(p);
+  return pages;
+}
+
+/**
+ * `--complex-becomes-image always`: render EVERY page to a full-page image and
+ * mark every page comment `flatten-as-image`, so the whole book imports as page
+ * pictures (no per-page text/layout reconstruction). Metadata + languages still
+ * come from the handful of pages OCR'd via `pagesForMetadata`.
+ */
+async function flattenAllPages(
+  markdown: string,
+  pdfPath: string,
+  bookFolder: string,
+): Promise<string> {
+  const { pageCount } = await getPdfPageInfo(pdfPath);
+  let out = markdown;
+  for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
+    const file = `page-${pageNum}.jpg`;
+    try {
+      await renderPdfPageToImage(pdfPath, pageNum, path.join(bookFolder, file), { dpi: 200 });
+    } catch (error) {
+      logger.warn(`Could not render page ${pageNum} to an image: ${String(error)}`);
+      continue;
+    }
+    const re = new RegExp(`(<!--\\s*page\\s+index=${pageNum}\\b)([^>]*?)(\\s*-->)`);
+    if (re.test(out)) {
+      out = out.replace(re, `$1$2 flatten-as-image="${file}" flatten-level="always"$3`);
+    } else {
+      // No page marker from this OCR path — append one so the page still imports.
+      out += `\n\n<!-- page index=${pageNum} flatten-as-image="${file}" flatten-level="always" -->\n_(page imported as image)_\n`;
+    }
+  }
+  logger.info(`Flatten 'always': imported all ${pageCount} page(s) as full-page images.`);
   return out;
 }
 
@@ -270,6 +316,12 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
   if (visionFormatting && !openrouterKey) {
     logger.warn(
       "Skipping vision-formatting: it needs an OpenRouter key (or pass --no-vision-formatting to silence this).",
+    );
+    visionFormatting = false;
+  }
+  if (visionFormatting && args.complexBecomesImage === "always") {
+    logger.info(
+      "Skipping vision-formatting: --complex-becomes-image always imports every page as an image, so per-page layout isn't needed.",
     );
     visionFormatting = false;
   }
@@ -431,6 +483,11 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
       logger.info(`-> Converting PDF to Markdown...`);
       startStage("ocr");
 
+      // "always"-flatten: import every PDF page as a full-page image, doing only
+      // enough OCR (a few pages) + LLM to recover the book's metadata/languages,
+      // and skipping all per-page layout analysis (covers, vision, canvas).
+      const flattenAll = plan.complexBecomesImage === "always";
+
       let markdownContent: string;
 
       if (plan.ocrMethod === "unpdf") {
@@ -453,25 +510,39 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
         if (plan.masterFolderPath && !plan.emitSourceHashes) {
           masterHashes = await readMasterHashes(plan.masterFolderPath);
         }
+        let ocrOnlyPages: Set<number> | undefined;
+        if (flattenAll) {
+          const { pageCount } = await getPdfPageInfo(plan.pdfPath!);
+          ocrOnlyPages = pagesForMetadata(pageCount);
+          logger.info(
+            `Flatten 'always': OCR-ing only page(s) ${[...ocrOnlyPages].join(", ")} of ${pageCount} for metadata; every page will be imported as an image.`,
+          );
+        }
         markdownContent = await pdfToMarkdown(
           plan.pdfPath!,
           plan.openrouterKey!,
           plan.ocrMethod,
           undefined,
           customPrompt,
-          { masterHashes },
+          { masterHashes, ocrOnlyPages },
         );
-        await extractImages(plan.pdfPath!, plan.bookFolderPath!, plan.imager);
+        // In "always" mode the extracted images aren't referenced (each page
+        // renders as its own full-page picture), so skip the extra extraction.
+        if (!flattenAll) await extractImages(plan.pdfPath!, plan.bookFolderPath!, plan.imager);
       }
 
-      markdownContent = await prepareCovers(
-        plan.pdfPath!,
-        markdownContent,
-        plan.bookFolderPath!,
-        plan.coverMode,
-      );
+      // Per-page analysis (covers, vision, canvas) is meaningless in "always"
+      // mode — every page becomes an image — so skip straight to flattening.
+      if (!flattenAll) {
+        markdownContent = await prepareCovers(
+          plan.pdfPath!,
+          markdownContent,
+          plan.bookFolderPath!,
+          plan.coverMode,
+        );
+      }
 
-      if (plan.visionFormatting) {
+      if (plan.visionFormatting && !flattenAll) {
         logger.info(`-> Detecting page layout with vision model...`);
         markdownContent = await addVisionFormatting(
           plan.pdfPath!,
@@ -492,28 +563,36 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
         markdownContent = `<!-- book${attrs} -->\n\n${markdownContent}`;
       }
 
-      const canvasPages = await detectCanvasPages(plan.pdfPath!);
-      for (const [pageNum, info] of canvasPages) {
-        const re = new RegExp(`(<!--\\s*page\\s+index=${pageNum}\\b)([^>]*?)(\\s*-->)`);
-        const boxes = (info.textBoxes.length ? info.textBoxes : [info])
-          .map((b) => `${b.x},${b.y},${b.w},${b.h}`)
-          .join(";");
-        markdownContent = markdownContent.replace(re, (_m, open, attrs, close) => {
-          let addition = ` canvas-text-boxes="${boxes}"`;
-          if (info.backgroundColor && !/background-color=/.test(attrs)) {
-            addition += ` background-color="${info.backgroundColor}"`;
-          }
-          return `${open}${attrs}${addition}${close}`;
-        });
-      }
+      if (flattenAll) {
+        markdownContent = await flattenAllPages(
+          markdownContent,
+          plan.pdfPath!,
+          plan.bookFolderPath!,
+        );
+      } else {
+        const canvasPages = await detectCanvasPages(plan.pdfPath!);
+        for (const [pageNum, info] of canvasPages) {
+          const re = new RegExp(`(<!--\\s*page\\s+index=${pageNum}\\b)([^>]*?)(\\s*-->)`);
+          const boxes = (info.textBoxes.length ? info.textBoxes : [info])
+            .map((b) => `${b.x},${b.y},${b.w},${b.h}`)
+            .join(";");
+          markdownContent = markdownContent.replace(re, (_m, open, attrs, close) => {
+            let addition = ` canvas-text-boxes="${boxes}"`;
+            if (info.backgroundColor && !/background-color=/.test(attrs)) {
+              addition += ` background-color="${info.backgroundColor}"`;
+            }
+            return `${open}${attrs}${addition}${close}`;
+          });
+        }
 
-      markdownContent = await flattenComplexPages(
-        markdownContent,
-        canvasPages,
-        plan.pdfPath!,
-        plan.bookFolderPath!,
-        plan.complexBecomesImage,
-      );
+        markdownContent = await flattenComplexPages(
+          markdownContent,
+          canvasPages,
+          plan.pdfPath!,
+          plan.bookFolderPath!,
+          plan.complexBecomesImage,
+        );
+      }
 
       logger.info(`Writing OCR'd markdown to: ${plan.markdownFromOCRPath}`);
       await fs.writeFile(plan.markdownFromOCRPath!, markdownContent);

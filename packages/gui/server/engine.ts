@@ -42,11 +42,16 @@ export interface RunRecord {
   startedAt?: string;
   finishedAt?: string;
   error?: string;
+  /** The pipeline stage that was running when the run failed (for the UI banner). */
+  failedStage?: string;
   stages: Record<string, StageMetric>;
   progress?: { stage: string; page: number; pageCount: number };
   notes: string;
   runDir: string;
   bookFolderPath?: string;
+  /** When set, the conversion reads from this artifact instead of `sourcePath`
+   *  (used to resume a failed run from its last successful stage). */
+  inputOverride?: string;
 }
 
 const STAGES = ["ocr", "llm", "plan", "html"] as const;
@@ -70,6 +75,53 @@ const cancelFlags = new Set<string>();
 const queue: string[] = [];
 let running = 0;
 let loaded = false;
+
+// Live human-readable log lines per run (capped). Kept out of run.json to avoid
+// bloating it; persisted to <runDir>/run.log when a run finishes.
+const runLogs = new Map<string, string[]>();
+const LOG_CAP = 4000;
+const LOG_STAGE_LABEL: Record<string, string> = {
+  ocr: "OCR",
+  vision: "Vision",
+  llm: "Think (LLM)",
+  plan: "Plan",
+  html: "HTML",
+};
+
+function eventToLogLine(e: ConversionEvent): string | null {
+  const t = new Date().toTimeString().slice(0, 8);
+  const stage = e.stage ? LOG_STAGE_LABEL[e.stage] || e.stage : "";
+  switch (e.kind) {
+    case "stage-start":
+      return `[${t}] ▶ ${stage} — started`;
+    case "stage-end":
+      return `[${t}] ✓ ${stage} — done${
+        typeof e.durationMs === "number" ? ` (${Math.round(e.durationMs / 1000)}s)` : ""
+      }`;
+    case "progress":
+      return e.pageCount ? `[${t}]    ${stage}: page ${e.page}/${e.pageCount}` : null;
+    case "tokens":
+      return `[${t}]    ${stage}: ${e.tokensIn || 0} tok in / ${e.tokensOut || 0} out${
+        typeof e.costUsd === "number" ? ` · $${e.costUsd.toFixed(4)}` : ""
+      }`;
+    case "error":
+      return `[${t}] ✗ ERROR: ${e.message || ""}`;
+    case "done":
+      return `[${t}] ✓ Conversion complete`;
+    case "log":
+      return `[${t}] ${e.level && e.level !== "info" ? `[${e.level}] ` : ""}${e.message || ""}`;
+    default:
+      return null;
+  }
+}
+
+function appendLog(runId: string, line: string) {
+  const buf = runLogs.get(runId) || [];
+  buf.push(line);
+  if (buf.length > LOG_CAP) buf.splice(0, buf.length - LOG_CAP);
+  runLogs.set(runId, buf);
+  broadcast("run-log", { runId, line });
+}
 
 type Client = (event: string, data: unknown) => void;
 const clients = new Set<Client>();
@@ -181,6 +233,69 @@ export async function enqueueRuns(
   return created;
 }
 
+async function copyDir(src: string, dest: string) {
+  await fs.mkdir(dest, { recursive: true });
+  const entries = await fs.readdir(src, { withFileTypes: true });
+  for (const e of entries) {
+    const s = path.join(src, e.name);
+    const d = path.join(dest, e.name);
+    if (e.isDirectory()) await copyDir(s, d);
+    else await fs.copyFile(s, d);
+  }
+}
+
+/**
+ * Re-run a failed run starting from its last successful stage: find the furthest
+ * intermediate artifact the failed run produced, copy that run's book folder
+ * (intermediates + extracted images) into a fresh run folder, and start the
+ * pipeline from that artifact. If nothing usable exists, this is a full re-run.
+ */
+export async function enqueueResume(runId: string): Promise<RunRecord> {
+  await ensureLoaded();
+  const orig = runs.get(runId);
+  if (!orig) throw new Error("run not found");
+  const { workspace } = await getSettings();
+  const baseName = path.parse(orig.sourcePath).name;
+
+  const newRunId = "r" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+  const runDir = path.join(workspace, orig.sourceId + "-" + slug(orig.bookName), newRunId);
+
+  let inputOverride: string | undefined;
+  if (orig.bookFolderPath) {
+    const a = await detectArtifacts(orig.bookFolderPath, baseName);
+    // Furthest produced intermediate, in pipeline order (latest wins).
+    const furthest = a.bloomMd || a.llmMd || a.rawLlmMd || a.ocrMd;
+    if (furthest) {
+      const destBook = path.join(runDir, baseName);
+      await copyDir(orig.bookFolderPath, destBook);
+      inputOverride = path.join(destBook, path.basename(furthest));
+    }
+  }
+
+  const rec: RunRecord = {
+    id: newRunId,
+    sourceId: orig.sourceId,
+    sourcePath: orig.sourcePath,
+    bookName: orig.bookName,
+    status: "queued",
+    rating: "none",
+    params: { ...orig.params },
+    collection: orig.collection,
+    target: orig.target,
+    createdAt: new Date().toISOString(),
+    stages: {},
+    notes: "",
+    runDir,
+    inputOverride,
+  };
+  runs.set(newRunId, rec);
+  await writeRunJson(rec);
+  queue.push(newRunId);
+  pushRun(rec);
+  pump();
+  return rec;
+}
+
 async function pump() {
   const { maxParallel } = await getSettings();
   while (running < Math.max(1, maxParallel) && queue.length > 0) {
@@ -208,6 +323,8 @@ async function executeRun(rec: RunRecord) {
   pushRun(rec);
 
   const settings = await getSettings();
+  // Track the most recent stage that started, so a failure can name where it died.
+  let lastStage: string | undefined;
   const onEvent = (e: ConversionEvent) => {
     if (e.stage) {
       // Keep OCR / vision / LLM separate so their costs show individually.
@@ -218,11 +335,17 @@ async function executeRun(rec: RunRecord) {
         m.tokensOut = (m.tokensOut || 0) + (e.tokensOut || 0);
         if (typeof e.costUsd === "number") m.costUsd = (m.costUsd || 0) + e.costUsd;
       }
-      if (e.kind === "stage-start") rec.progress = { stage: e.stage, page: 0, pageCount: 0 };
+      if (e.kind === "stage-start") {
+        lastStage = e.stage;
+        rec.progress = { stage: e.stage, page: 0, pageCount: 0 };
+      }
       if (e.kind === "progress") {
+        lastStage = e.stage;
         rec.progress = { stage: e.stage, page: e.page || 0, pageCount: e.pageCount || 0 };
       }
     }
+    const line = eventToLogLine(e);
+    if (line) appendLog(rec.id, line);
     // Push updated run state on meaningful events (skip log spam).
     if (e.kind !== "log") pushRun(rec);
   };
@@ -237,7 +360,7 @@ async function executeRun(rec: RunRecord) {
   }
 
   const args: RunArgs = {
-    input: rec.sourcePath,
+    input: rec.inputOverride || rec.sourcePath,
     output: rec.runDir,
     collection: resolvedCollection,
     target: TARGET_MAP[rec.target] ?? Artifact.HTML,
@@ -260,16 +383,40 @@ async function executeRun(rec: RunRecord) {
     rec.bookFolderPath = result.bookFolderPath;
     rec.status = result.status === "completed" ? "done" : result.status;
     if (result.error) rec.error = result.error;
+    if (result.status === "failed") rec.failedStage = lastStage;
   } catch (err) {
     rec.status = "failed";
     rec.error = err instanceof Error ? err.message : String(err);
+    rec.failedStage = lastStage;
   } finally {
     cancelFlags.delete(rec.id);
     rec.progress = undefined;
     rec.finishedAt = new Date().toISOString();
     await writeRunJson(rec);
+    // Persist the run log alongside the run so it survives a server restart.
+    const buf = runLogs.get(rec.id);
+    if (buf && buf.length) {
+      await fs.writeFile(path.join(rec.runDir, "run.log"), buf.join("\n")).catch(() => {});
+    }
     pushRun(rec);
   }
+}
+
+/** The live (or persisted) human-readable log for a run. */
+export async function getRunLog(runId: string): Promise<{ lines: string[] }> {
+  await ensureLoaded();
+  const buf = runLogs.get(runId);
+  if (buf && buf.length) return { lines: buf };
+  const rec = runs.get(runId);
+  if (rec) {
+    try {
+      const txt = await fs.readFile(path.join(rec.runDir, "run.log"), "utf-8");
+      return { lines: txt.split("\n") };
+    } catch {
+      /* no persisted log */
+    }
+  }
+  return { lines: [] };
 }
 
 export async function cancelRun(runId: string) {
@@ -351,6 +498,9 @@ export interface GuiRun {
   cost: number;
   time: number;
   ts: string;
+  /** Epoch ms when the run started executing / finished (for elapsed display). */
+  startedAt?: number;
+  finishedAt?: number;
   notes: string;
   tags: string[];
   params: Record<string, any>;
@@ -363,7 +513,9 @@ export interface GuiRun {
     cost: number;
   }[];
   progress?: { stage: string; page: number; pages: number };
-  error?: { stage: string; code: string; message: string; hint: string };
+  error?: { stage?: string; code: string; message: string };
+  /** Stages a re-run could start from given the artifacts on disk (resume). */
+  resumeStage?: string;
 }
 
 function toGuiRun(rec: RunRecord): GuiRun {
@@ -422,6 +574,8 @@ function toGuiRun(rec: RunRecord): GuiRun {
     cost,
     time: Math.round(time),
     ts: rec.createdAt.replace("T", " ").slice(0, 16),
+    startedAt: rec.startedAt ? Date.parse(rec.startedAt) : undefined,
+    finishedAt: rec.finishedAt ? Date.parse(rec.finishedAt) : undefined,
     notes: rec.notes,
     tags: [],
     params: rec.params,
@@ -432,12 +586,12 @@ function toGuiRun(rec: RunRecord): GuiRun {
     error:
       rec.status === "failed" && rec.error
         ? {
-            stage: rec.progress?.stage || "?",
+            stage: rec.failedStage || rec.progress?.stage,
             code: "ERROR",
             message: rec.error,
-            hint: "Check the run's settings and API keys, then re-run.",
           }
         : undefined,
+    resumeStage: rec.status === "failed" ? [...STAGES].reverse().find((s) => done[s]) : undefined,
   };
 }
 
