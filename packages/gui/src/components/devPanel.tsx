@@ -14,7 +14,7 @@ export type Tweaks = {
   demoState: string;
 };
 
-const STORE_KEY = "pdf2bloom.tweaks";
+const STORE_KEY = "bloombridge.tweaks";
 
 export function useTweaks(defaults: Tweaks): [Tweaks, (k: keyof Tweaks, v: any) => void] {
   const [t, setT] = React.useState<Tweaks>(() => {

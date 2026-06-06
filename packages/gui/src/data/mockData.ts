@@ -1,4 +1,4 @@
-/* PDF → Bloom · mock data (ported from the design prototype's data.js).
+/* BloomBridge · mock data (ported from the design prototype's data.js).
    Exported as BLOOM; the server will later supply these same shapes. */
 import type {
   ArtifactNode,
@@ -69,7 +69,7 @@ const DEFAULT_PARAMS: Params = {
   visionFormatting: true,
   visionModel: "gpt-4o-mini",
   coverMode: "auto",
-  complexBecomesImage: "off",
+  complexBecomesImage: "busy",
   target: "bloom",
 };
 
@@ -121,7 +121,7 @@ const sources: Source[] = [
           ...DEFAULT_PARAMS,
           model: "gpt-4o-mini",
           visionFormatting: false,
-          complexBecomesImage: "2",
+          complexBecomesImage: "anyCanvas",
         },
         breakdown: bd(
           [21, 0, 0, 0],
@@ -222,7 +222,7 @@ const sources: Source[] = [
         stages: { ocr: true, llm: false, plan: false, html: false },
         progress: { stage: "ocr", page: 11, pages: 16 },
         preset: "high-fidelity",
-        params: { ...DEFAULT_PARAMS, complexBecomesImage: "5", coverMode: "render" },
+        params: { ...DEFAULT_PARAMS, complexBecomesImage: "covers", coverMode: "render" },
         breakdown: bd([22, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]),
       }),
     ],
@@ -266,7 +266,7 @@ const sources: Source[] = [
             "Layout planner returned malformed JSON for page 14 (unterminated string). The page likely contains a full-bleed illustration the model tried to describe verbatim.",
         },
         preset: "balanced",
-        params: { ...DEFAULT_PARAMS, model: "gpt-4o", complexBecomesImage: "1" },
+        params: { ...DEFAULT_PARAMS, model: "gpt-4o", complexBecomesImage: "all" },
         breakdown: bd([28, 0, 0, 0], [36, 21200, 2100, 0.072], [0, 0, 0, 0], [0, 0, 0, 0]),
       }),
     ],
@@ -293,7 +293,7 @@ const sources: Source[] = [
         ts: "2026-06-04 09:34",
         stages: { ocr: false, llm: false, plan: false, html: false },
         preset: "high-fidelity",
-        params: { ...DEFAULT_PARAMS, complexBecomesImage: "5" },
+        params: { ...DEFAULT_PARAMS, complexBecomesImage: "covers" },
       }),
     ],
   },
@@ -384,13 +384,13 @@ const presets: Record<string, { label: string; desc: string; params: Params }> =
       ...DEFAULT_PARAMS,
       model: "gpt-4o-mini",
       visionFormatting: false,
-      complexBecomesImage: "2",
+      complexBecomesImage: "anyCanvas",
     },
   },
   "high-fidelity": {
     label: "High fidelity",
     desc: "Sonnet 4, keep complex pages as images.",
-    params: { ...DEFAULT_PARAMS, complexBecomesImage: "5", coverMode: "render" },
+    params: { ...DEFAULT_PARAMS, complexBecomesImage: "covers", coverMode: "render" },
   },
 };
 
@@ -484,18 +484,15 @@ export const BLOOM = {
     render: "Always render (first + last)",
     none: "Leave to Bloom xMatter",
   } as Record<string, string>,
-  // --complex-becomes-image level (off | 0..5 | always). Lower = flattens more readily.
+  // --complex-becomes-image: which pages to snapshot instead of rebuilding as
+  // editable text (translatability ↔ fidelity). Additive: each includes the prior.
   complexLevels: {
-    off: "Off — never flatten",
-    "0": "0 — every canvas page",
-    "1": "1 — flatten readily",
-    "2": "2",
-    "3": "3",
-    "4": "4",
-    "5": "5 — only most complex",
-    always: "Always — every page as an image",
+    covers: "Only image covers",
+    busy: "Image covers + pages too busy to convert well",
+    anyCanvas: "Image covers + any page with text over a picture",
+    all: "All pages (maximum fidelity)",
   } as Record<string, string>,
-  complexOrder: ["off", "0", "1", "2", "3", "4", "5", "always"],
+  complexOrder: ["covers", "busy", "anyCanvas", "all"],
   // --target output artifact
   targets: {
     images: "Images (extract only)",

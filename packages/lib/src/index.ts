@@ -71,6 +71,18 @@ export type {
   HorizontalAlign,
 } from "./types";
 
+// EPUB front-end — deterministic EPUB → tagged Bloom Markdown (no OCR/LLM)
+export {
+  epubToBloomMarkdown,
+  getEpubPageCount,
+  getEpubPageImage,
+  getEpubPageRoles,
+  classifyEpubSpinePage,
+  renderEpubPage,
+  renderEpubPreviewHtml,
+} from "./epub/epubToBloomMarkdown";
+export type { EpubExtractResult, EpubPageRole } from "./epub/epubToBloomMarkdown";
+
 export { addVisionFormatting } from "./1-ocr/visionFormatting";
 export type { VisionFormattingOptions } from "./1-ocr/visionFormatting";
 export { detectNormalStyle } from "./1-ocr/detectNormalStyle";

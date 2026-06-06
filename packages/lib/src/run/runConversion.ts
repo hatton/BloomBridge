@@ -15,6 +15,7 @@ import { logger } from "../logger";
 
 import { pdfToMarkdownAndImageFiles as makeMarkdownFromPDF } from "../1-ocr/pdfToMarkdownAndImageFiles-Mistral";
 import { pdfToMarkdown } from "../1-ocr/pdfToMarkdown";
+import { epubToBloomMarkdown } from "../epub/epubToBloomMarkdown";
 import { pdfToMarkdownWithUnpdf } from "../1-ocr/pdfToMarkdownWithUnpdf";
 import {
   extractImagesWithPdfImages,
@@ -44,8 +45,17 @@ import {
   validateAndResolveCollectionPath,
   readBloomCollectionSettingsIfFound,
 } from "../collections/collections";
+import {
+  loadStageFingerprints,
+  optionKeysAffectingStage,
+  type PipelineStage,
+} from "./stageManifest";
+import { writeStageProvenance, hashFileContents, hashOptionsSubset } from "./provenance";
 
 export enum Artifact {
+  // EPUB is an input type (like PDF) but its front-end produces the tagged
+  // `.llm.md` directly (no OCR/LLM needed), so for ordering it sits before PDF.
+  EPUB,
   PDF,
   Images,
   MarkdownFromOCR,
@@ -56,6 +66,7 @@ export enum Artifact {
 }
 
 export const artifactNames: Record<Artifact, string> = {
+  [Artifact.EPUB]: "EPUB",
   [Artifact.PDF]: "PDF",
   [Artifact.Images]: "Images",
   [Artifact.MarkdownFromOCR]: "Markdown from OCR",
@@ -88,6 +99,7 @@ export interface RunArgs {
 
 /** A fully-resolved plan: every path, key, and mode the stage loop needs. */
 export interface RunPlan {
+  epubPath?: string;
   pdfPath?: string;
   markdownFromOCRPath?: string;
   markdownFromLLMPath?: string;
@@ -111,6 +123,66 @@ export interface RunPlan {
   emitSourceHashes: boolean;
   masterFolderPath?: string;
   complexBecomesImage: string;
+  /** Settings keyed by `optionsSchema` key, recorded in the provenance sidecar. */
+  optionsRecord: Record<string, unknown>;
+}
+
+/**
+ * The settings subset (keyed by `optionsSchema` key) that influences conversion
+ * output, derived from the raw run arguments. Used both to record stage provenance
+ * and, by `resolveStartStage`, to detect a settings change. `target`/`verbose` are
+ * intentionally excluded — they don't affect any stage's output.
+ *
+ * The resolver and the provenance writer MUST derive this the same way, so callers
+ * that want to resolve a start stage before running should use this helper too.
+ */
+export function runOptionsRecord(a: RunArgs): Record<string, unknown> {
+  return {
+    ocrMethod: a.ocrMethod ?? "gpt",
+    model: a.modelName ?? "",
+    visionFormatting: a.visionFormatting !== false,
+    visionModel: a.visionModelName ?? "",
+    coverMode: a.cover ?? "auto",
+    complexBecomesImage: a.complexBecomesImage ?? "busy",
+    prompt: a.promptPath ?? "",
+    imager: a.imager ?? "poppler",
+    parserEngine: a.parserEngine ?? "native",
+    emitSourceHashes: a.emitSourceHashes ?? false,
+  };
+}
+
+/** Map the input artifact to the earliest pipeline stage runnable from it. */
+export function inputArtifactToFloorStage(input: Artifact): PipelineStage {
+  switch (input) {
+    case Artifact.PDF:
+    case Artifact.Images:
+      return "ocr";
+    case Artifact.MarkdownFromOCR:
+    case Artifact.MarkdownFromLLMRaw:
+      return "llm";
+    // EPUB extraction produces the tagged `.llm.md`, so the first real pipeline
+    // stage it feeds is the Bloom plan.
+    case Artifact.EPUB:
+    case Artifact.MarkdownFromLLMCleaned:
+      return "plan";
+    case Artifact.MarkdownReadyForBloom:
+    case Artifact.HTML:
+      return "html";
+  }
+}
+
+/** Map a pipeline stage back to the input artifact that feeds it (its run floor). */
+export function stageToInputArtifact(stage: PipelineStage): Artifact {
+  switch (stage) {
+    case "ocr":
+      return Artifact.PDF;
+    case "llm":
+      return Artifact.MarkdownFromOCR;
+    case "plan":
+      return Artifact.MarkdownFromLLMCleaned;
+    case "html":
+      return Artifact.MarkdownReadyForBloom;
+  }
 }
 
 export interface RunHooks {
@@ -154,12 +226,42 @@ async function extractImages(pdfPath: string, outputDir: string, method: string)
   }
 }
 
-/** Map the `--complex-becomes-image` level to a complexity-score threshold. */
+/**
+ * "Too busy to convert well" cutoff for `--complex-becomes-image busy`: a canvas
+ * page is snapshotted when it has this many or more separate text blocks. This
+ * single constant replaces the old `2/3/4/5` numeric granularity; tune after
+ * testing on real books.
+ */
+const BUSY_THRESHOLD = 4;
+
+/** True when every page should be snapshotted (the whole-book image path). */
+function isFlattenAll(level: string): boolean {
+  return level === "all" || level === "always";
+}
+
+/**
+ * Map the `--complex-becomes-image` level to a per-canvas-page complexity-score
+ * threshold (the score is the page's text-block count). `null` means "don't
+ * flatten any canvas page here" — either we never flatten (`covers`) or every
+ * page is handled by the flatten-all path (`all`). Legacy values (`off`, `0..5`,
+ * `always`) are still accepted.
+ */
 function complexThreshold(level: string): number | null {
-  if (!level || level === "off" || level === "always") return null;
+  switch (level) {
+    case "covers":
+    case "off":
+    case "all":
+    case "always":
+      return null;
+    case "busy":
+      return BUSY_THRESHOLD;
+    case "anyCanvas":
+      return 1;
+  }
+  // Legacy numeric scale: "0" → 1, "1" → 2, … "5" → 6.
   const n = Number(level);
   if (!Number.isInteger(n) || n < 0 || n > 5) {
-    logger.warn(`Unknown --complex-becomes-image value '${level}', treating as 'off'.`);
+    logger.warn(`Unknown --complex-becomes-image value '${level}', treating as 'covers'.`);
     return null;
   }
   return n + 1;
@@ -263,6 +365,9 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
 
   let inputType: Artifact;
   switch (ext) {
+    case ".epub":
+      inputType = Artifact.EPUB;
+      break;
     case ".pdf":
       inputType = Artifact.PDF;
       break;
@@ -281,7 +386,7 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
       break;
     default:
       throw new Error(
-        `Unsupported input file type: ${ext}. Supported types: .pdf, .md, .ocr.md, .raw-llm.md, .llm.md, .bloom.md`,
+        `Unsupported input file type: ${ext}. Supported types: .epub, .pdf, .md, .ocr.md, .raw-llm.md, .llm.md, .bloom.md`,
       );
   }
 
@@ -319,14 +424,15 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
     );
     visionFormatting = false;
   }
-  if (visionFormatting && args.complexBecomesImage === "always") {
+  if (visionFormatting && isFlattenAll(args.complexBecomesImage ?? "busy")) {
     logger.info(
-      "Skipping vision-formatting: --complex-becomes-image always imports every page as an image, so per-page layout isn't needed.",
+      "Skipping vision-formatting: --complex-becomes-image all imports every page as an image, so per-page layout isn't needed.",
     );
     visionFormatting = false;
   }
 
   if (
+    inputType !== Artifact.EPUB && // EPUB extraction produces tagged markdown directly — no LLM stage
     inputType < Artifact.MarkdownFromLLMCleaned &&
     targetType >= Artifact.MarkdownFromLLMCleaned &&
     !openrouterKey
@@ -361,7 +467,10 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
       logger.warn(
         `Could not find recent collection (${String(error)}), falling back to current directory`,
       );
-      baseOutputDir = inputType === Artifact.PDF ? process.cwd() : path.dirname(fullInputPath);
+      baseOutputDir =
+        inputType === Artifact.PDF || inputType === Artifact.EPUB
+          ? process.cwd()
+          : path.dirname(fullInputPath);
     }
   }
 
@@ -372,6 +481,7 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
     collectionFolderPath &&
     !args.output &&
     inputType !== Artifact.PDF &&
+    inputType !== Artifact.EPUB &&
     fullInputPath.startsWith(collectionFolderPath)
   ) {
     bookDir = path.dirname(fullInputPath);
@@ -394,6 +504,7 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
   }
 
   return {
+    epubPath: inputType === Artifact.EPUB ? fullInputPath : undefined,
     pdfPath: inputType === Artifact.PDF ? fullInputPath : undefined,
     markdownFromOCRPath:
       inputType === Artifact.MarkdownFromOCR
@@ -428,7 +539,8 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
     visionModelName: args.visionModelName,
     emitSourceHashes,
     masterFolderPath,
-    complexBecomesImage: args.complexBecomesImage ?? "off",
+    complexBecomesImage: args.complexBecomesImage ?? "busy",
+    optionsRecord: runOptionsRecord(args),
   };
 }
 
@@ -454,12 +566,55 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
     logger.event({ kind: "stage-end", stage, durationMs: ms });
   };
 
+  // Provenance: after a stage writes its artifact, stamp the sidecar with the code +
+  // settings + consumed-input fingerprints that produced it, so a later run can skip
+  // stages whose code and settings are unchanged. Best-effort, never fails the run.
+  const fingerprints = await loadStageFingerprints();
+  const provBaseName = plan.bookFolderPath ? path.basename(plan.bookFolderPath) : undefined;
+  const recordStage = async (stage: PipelineStage, consumedPath?: string) => {
+    if (!plan.bookFolderPath || !provBaseName) return;
+    const keys = optionKeysAffectingStage(stage);
+    const subset: Record<string, unknown> = {};
+    for (const k of keys) subset[k] = plan.optionsRecord[k];
+    await writeStageProvenance(plan.bookFolderPath, provBaseName, stage, {
+      codeHash: fingerprints[stage] ?? "",
+      optionsHash: hashOptionsSubset(subset),
+      inputHash: await hashFileContents(consumedPath),
+      options: subset,
+      producedAt: new Date().toISOString(),
+    });
+  };
+
   let latestArtifact = plan.inputArtifact;
 
   try {
     logger.info(
       `Starting conversion from "${artifactNames[plan.inputArtifact]}" to "${artifactNames[plan.targetArtifact]}"`,
     );
+
+    // EPUB front-end — extract directly to the tagged `.llm.md` (no OCR, no LLM).
+    if (latestArtifact === Artifact.EPUB) {
+      if (cancelled())
+        return {
+          status: "cancelled",
+          finalArtifact: latestArtifact,
+          bookFolderPath: plan.bookFolderPath,
+        };
+      logger.info(`-> Extracting EPUB...`);
+      const { markdown } = await epubToBloomMarkdown(plan.epubPath!, plan.bookFolderPath!);
+      logger.info(`Writing tagged markdown to: ${plan.markdownCleanedAfterLLMPath}`);
+      await fs.writeFile(plan.markdownCleanedAfterLLMPath!, markdown);
+
+      latestArtifact = Artifact.MarkdownFromLLMCleaned;
+      // EPUB skips OCR/LLM; any target at or below tagged markdown is satisfied here.
+      if (plan.targetArtifact <= Artifact.MarkdownFromLLMCleaned) {
+        return {
+          status: "completed",
+          finalArtifact: latestArtifact,
+          bookFolderPath: plan.bookFolderPath,
+        };
+      }
+    }
 
     // Images-only target
     if (latestArtifact === Artifact.PDF && plan.targetArtifact === Artifact.Images) {
@@ -483,10 +638,10 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
       logger.info(`-> Converting PDF to Markdown...`);
       startStage("ocr");
 
-      // "always"-flatten: import every PDF page as a full-page image, doing only
+      // "all"-flatten: import every PDF page as a full-page image, doing only
       // enough OCR (a few pages) + LLM to recover the book's metadata/languages,
       // and skipping all per-page layout analysis (covers, vision, canvas).
-      const flattenAll = plan.complexBecomesImage === "always";
+      const flattenAll = isFlattenAll(plan.complexBecomesImage);
 
       let markdownContent: string;
 
@@ -596,6 +751,7 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
 
       logger.info(`Writing OCR'd markdown to: ${plan.markdownFromOCRPath}`);
       await fs.writeFile(plan.markdownFromOCRPath!, markdownContent);
+      await recordStage("ocr", plan.pdfPath);
       endStage("ocr");
 
       latestArtifact = Artifact.MarkdownFromOCR;

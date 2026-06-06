@@ -4,7 +4,7 @@ _Last updated: 2026-06-02. Branch: `migrate-to-vite-plus`._
 
 ## Goal
 
-Make `@pdf-to-bloom` able to faithfully import
+Make BloomBridge able to faithfully import
 `large-local-test-inputs/4788 A Thief In The Night_2xpage A4.pdf` into a **valid**
 Bloom book that includes:
 

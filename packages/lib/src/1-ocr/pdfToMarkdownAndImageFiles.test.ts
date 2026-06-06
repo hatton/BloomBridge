@@ -49,7 +49,7 @@ describe("pdfToMarkdownAndImageFiles", () => {
 
   beforeEach(() => {
     // Create a unique temporary directory for each test
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-to-bloom-test-"));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "bloombridge-test-"));
 
     // Create a mock PDF file for testing
     const testPdfPath = path.join(tempDir, "testme.pdf");

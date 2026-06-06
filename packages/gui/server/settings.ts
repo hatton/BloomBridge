@@ -1,5 +1,5 @@
 /* Local settings store for the Conversion Manager (API keys, workspace, defaults).
-   Persisted to ~/.pdf2bloom/settings.json. Server-side only. */
+   Persisted to ~/.bloombridge/settings.json. Server-side only. */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -12,13 +12,13 @@ export interface ServerSettings {
   maxParallel: number;
 }
 
-const CONFIG_DIR = path.join(os.homedir(), ".pdf2bloom");
+const CONFIG_DIR = path.join(os.homedir(), ".bloombridge");
 const SETTINGS_PATH = path.join(CONFIG_DIR, "settings.json");
 
 function defaults(): ServerSettings {
   // The GUI deliberately does NOT fall back to the OPENROUTER_KEY/MISTRAL_API_KEY
   // environment variables. Keys must be entered in the Settings dialog and are
-  // stored in ~/.pdf2bloom/settings.json, so the GUI behaves the same regardless
+  // stored in ~/.bloombridge/settings.json, so the GUI behaves the same regardless
   // of how the shell that launched it was configured.
   return {
     openrouterKey: "",

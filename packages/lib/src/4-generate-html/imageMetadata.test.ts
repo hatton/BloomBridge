@@ -77,7 +77,7 @@ describe("collectImageIntellectualProperty", () => {
 });
 
 describe("writeImageMetadata (round-trip via exiftool)", () => {
-  const tmp = path.join(os.tmpdir(), `pdf2bloom-imgmeta-${process.pid}`);
+  const tmp = path.join(os.tmpdir(), `bloombridge-imgmeta-${process.pid}`);
 
   afterAll(async () => {
     await fs.rm(tmp, { recursive: true, force: true });

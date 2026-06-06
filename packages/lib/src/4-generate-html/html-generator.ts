@@ -21,7 +21,7 @@ import { inlineMarkdownToHtml, blockMarkdownToHtml } from "./markdownToHtml.js";
 import { validateBloomHtml } from "./validateBloomHtml.js";
 import { LogEntry, logger } from "../logger";
 
-// Version of the PDF-to-Bloom generator, emitted in the HTML <meta name="Generator">.
+// Version of the BloomBridge generator, emitted in the HTML <meta name="Generator">.
 // Bump this when the generated HTML format changes meaningfully.
 const GENERATOR_VERSION = "6.4";
 
@@ -70,7 +70,7 @@ export class HtmlGenerator {
   <html>
     <head>
     <meta charset="UTF-8" />
-    <meta name="Generator" content="PDF-to-Bloom Converter ${GENERATOR_VERSION}" />
+    <meta name="Generator" content="BloomBridge Converter ${GENERATOR_VERSION}" />
     <meta name="BloomFormatVersion" content="2.1" />
     ${this.generateXmatterMeta(book)}
     <title>${escapeHtml(titleRecord![l1Lang])}</title>

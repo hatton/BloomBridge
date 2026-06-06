@@ -1,4 +1,4 @@
-import { logger, planConversion, runConversion, Artifact, type RunArgs } from "@pdf-to-bloom/lib";
+import { logger, planConversion, runConversion, Artifact, type RunArgs } from "@bloombridge/lib";
 import { createLogCallback, getApiKeys } from "./processUtils";
 
 // The conversion orchestration now lives in the lib (shared with the GUI server).

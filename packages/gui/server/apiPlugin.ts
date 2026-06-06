@@ -16,7 +16,12 @@ import {
   processBookInBloom,
   renderPdfPageToImage,
   getPdfPageInfo,
-} from "@pdf-to-bloom/lib";
+  getEpubPageCount,
+  getEpubPageImage,
+  getEpubPageRoles,
+  renderEpubPage,
+  renderEpubPreviewHtml,
+} from "@bloombridge/lib";
 import { getSettings, saveSettings, redactSettings } from "./settings";
 import {
   addClient,
@@ -25,6 +30,7 @@ import {
   cancelRun,
   deleteRun,
   setRating,
+  setPinned,
   setNotes,
   getFolderTree,
   getRunArtifacts,
@@ -32,6 +38,7 @@ import {
   readArtifactFile,
   getRunRecord,
   osOpen,
+  pickFolder,
   cleanupRuns,
 } from "./engine";
 
@@ -75,7 +82,7 @@ function contentTypeFor(ext: string): string {
 
 // On-demand rendered source-PDF page images for the paired run preview live here,
 // keyed by run id; a new run gets a new id, so cached pages never go stale.
-const PREVIEW_CACHE = path.join(os.tmpdir(), "pdf2bloom-preview");
+const PREVIEW_CACHE = path.join(os.tmpdir(), "bloombridge-preview");
 
 async function readBody(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
@@ -88,7 +95,7 @@ async function readBody(req: IncomingMessage): Promise<any> {
   }
 }
 
-const RECENT_PATH = path.join(os.homedir(), ".pdf2bloom", "recent-folders.json");
+const RECENT_PATH = path.join(os.homedir(), ".bloombridge", "recent-folders.json");
 async function getRecentFolders(): Promise<string[]> {
   try {
     return JSON.parse(await fs.readFile(RECENT_PATH, "utf-8"));
@@ -167,7 +174,7 @@ function resolveWritableCollection(
 
 export function conversionApiPlugin(): Plugin {
   return {
-    name: "pdf2bloom-api",
+    name: "bloombridge-api",
     configureServer(server: ViteDevServer) {
       server.middlewares.use(async (req, res, next) => {
         const url = req.url || "";
@@ -237,6 +244,15 @@ export function conversionApiPlugin(): Plugin {
             return send(res, 200, { folders: await getRecentFolders() });
           }
 
+          // Native OS folder-picker dialog. Returns the chosen path, or
+          // { path: null } if the user cancelled.
+          if (p === "/api/pick-folder" && method === "POST") {
+            const body = await readBody(req);
+            const initial = typeof body.initial === "string" ? body.initial : undefined;
+            const picked = await pickFolder(initial);
+            return send(res, 200, { path: picked });
+          }
+
           // Open a workspace file/folder with the OS (File Explorer / default app / VS Code).
           if (p === "/api/os-open" && method === "POST") {
             const body = await readBody(req);
@@ -304,6 +320,28 @@ export function conversionApiPlugin(): Plugin {
             return;
           }
 
+          // Serve a source EPUB rendered as one scrollable HTML doc (the EPUB analogue
+          // of the PDF iframe). Restricted to EPUBs inside a known/recent source folder.
+          if (p === "/api/source-epub" && method === "GET") {
+            const fp = u.searchParams.get("path") || "";
+            const resolved = path.resolve(fp);
+            if (!resolved.toLowerCase().endsWith(".epub"))
+              return send(res, 400, { error: "not an epub" });
+            const recents = await getRecentFolders();
+            const allowed = recents.some((r) => resolved.startsWith(path.resolve(r)));
+            if (!allowed) return send(res, 403, { error: "epub is outside known source folders" });
+            try {
+              const html = renderEpubPreviewHtml(resolved);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "text/html; charset=utf-8");
+              res.end(html);
+            } catch {
+              res.statusCode = 404;
+              res.end();
+            }
+            return;
+          }
+
           if (p === "/api/folder" && method === "GET") {
             const folder = u.searchParams.get("path");
             if (!folder) return send(res, 400, { error: "path query param required" });
@@ -319,7 +357,7 @@ export function conversionApiPlugin(): Plugin {
           if (p === "/api/folder-settings" && (method === "GET" || method === "PUT")) {
             const folder = u.searchParams.get("path");
             if (!folder) return send(res, 400, { error: "path query param required" });
-            const file = path.join(folder, ".pdf2bloom.json");
+            const file = path.join(folder, ".bloombridge.json");
             if (method === "GET") {
               try {
                 return send(res, 200, JSON.parse(await fs.readFile(file, "utf-8")));
@@ -478,6 +516,11 @@ export function conversionApiPlugin(): Plugin {
               await setRating(runId, body.rating);
               return send(res, 200, { ok: true });
             }
+            if (action === "pin" && method === "POST") {
+              const body = await readBody(req);
+              await setPinned(runId, !!body.pinned);
+              return send(res, 200, { ok: true });
+            }
             if (action === "notes" && method === "POST") {
               const body = await readBody(req);
               await setNotes(runId, String(body.notes ?? ""));
@@ -498,6 +541,22 @@ export function conversionApiPlugin(): Plugin {
                 res.statusCode = 404;
                 return res.end();
               }
+              // EPUB source: serve the spine page's illustration directly (no render).
+              if (rec.sourcePath.toLowerCase().endsWith(".epub")) {
+                try {
+                  const img = getEpubPageImage(rec.sourcePath, page);
+                  if (!img) {
+                    res.statusCode = 404;
+                    return res.end();
+                  }
+                  res.statusCode = 200;
+                  res.setHeader("Content-Type", img.contentType);
+                  return res.end(img.buffer);
+                } catch {
+                  res.statusCode = 404;
+                  return res.end();
+                }
+              }
               const dir = path.join(PREVIEW_CACHE, runId);
               const cachePath = path.join(dir, `pdf-${page}@${dpi}.jpg`);
               try {
@@ -514,6 +573,32 @@ export function conversionApiPlugin(): Plugin {
                 return res.end(buf);
               } catch {
                 // out-of-range page, missing PDF, or render failure
+                res.statusCode = 404;
+                return res.end();
+              }
+            }
+            // Render one source EPUB spine page (illustration + prose, in the EPUB's
+            // own layout) as a self-contained HTML doc for the paired preview's left
+            // column — the faithful page, not just the extracted illustration the
+            // pdf-page endpoint serves. The EPUB path comes from the run record.
+            if (action === "epub-page" && method === "GET") {
+              const page = Math.floor(Number(u.searchParams.get("page") || "0"));
+              if (!Number.isInteger(page) || page < 1) return send(res, 400, { error: "bad page" });
+              const rec = await getRunRecord(runId);
+              if (!rec || !rec.sourcePath?.toLowerCase().endsWith(".epub")) {
+                res.statusCode = 404;
+                return res.end();
+              }
+              try {
+                const html = renderEpubPage(rec.sourcePath, page);
+                if (!html) {
+                  res.statusCode = 404;
+                  return res.end();
+                }
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "text/html; charset=utf-8");
+                return res.end(html);
+              } catch {
                 res.statusCode = 404;
                 return res.end();
               }
@@ -544,24 +629,34 @@ export function conversionApiPlugin(): Plugin {
               // is this 1-based document index — the same index `__page-N.html` uses
               // (it shows the Nth `body > .bloom-page`). Each page may carry
               // data-source-pdf-page (emitted by html-generator) linking it to its
-              // source-PDF page; Bloom-inserted xMatter has none.
-              const bloom: { docIndex: number; src?: number }[] = [];
+              // source page; Bloom-regenerated xMatter has none, but does carry
+              // data-xmatter-page (frontCover/titlePage/credits/outsideBackCover/…),
+              // which lets us align EPUB matter pages by role below.
+              const bloom: { docIndex: number; src?: number; xmatter?: string }[] = [];
               const tagRe = /<div\b[^>]*\bbloom-page\b[^>]*>/g;
               let tag: RegExpExecArray | null;
               while ((tag = tagRe.exec(htm))) {
                 const sp = tag[0].match(/data-source-pdf-page="(\d+)"/);
-                bloom.push({ docIndex: bloom.length + 1, src: sp ? Number(sp[1]) : undefined });
+                const xm = tag[0].match(/data-xmatter-page="([^"]+)"/);
+                bloom.push({
+                  docIndex: bloom.length + 1,
+                  src: sp ? Number(sp[1]) : undefined,
+                  xmatter: xm ? xm[1] : undefined,
+                });
               }
               const bloomPages = bloom.length;
               const sizeMatch = htm.match(
                 /class="[^"]*\b(A3|A4|A5|A6|Letter|Legal|Device16x9|HalfLetter|QuarterLetter)(Portrait|Landscape)\b/,
               );
               const pageSize = sizeMatch ? sizeMatch[1] + sizeMatch[2] : "A5Portrait";
+              const isEpub = !!rec.sourcePath?.toLowerCase().endsWith(".epub");
               let pdfPages = 0;
               try {
-                pdfPages = (await getPdfPageInfo(rec.sourcePath)).pageCount;
+                pdfPages = isEpub
+                  ? getEpubPageCount(rec.sourcePath!)
+                  : (await getPdfPageInfo(rec.sourcePath)).pageCount;
               } catch {
-                /* PDF gone/unreadable — leave 0 */
+                /* source gone/unreadable — leave 0 */
               }
               let bookReady = false;
               try {
@@ -578,7 +673,41 @@ export function conversionApiPlugin(): Plugin {
               // stripped the attribute on import) we fall back to naïve index pairing.
               const rows: { pdfPage: number | null; bloomPage: number | null }[] = [];
               const haveMapping = pdfPages > 0 && bloom.some((b) => b.src !== undefined);
-              if (!haveMapping) {
+              // EPUB: Bloom rebuilds the cover/title/credits/back pages as its own
+              // xMatter and strips their source-page link, so a pure source-page merge
+              // orphans both sides' matter into mismatched single-column rows. Instead
+              // walk the Bloom pages in document order and, for each, find its EPUB
+              // spine page — by source-page for content, or by role for xMatter — so
+              // e.g. Bloom's credits page lines up with the EPUB's (trailing) copyright
+              // spine page. Any spine page never matched is appended as a source-only
+              // row so nothing is silently dropped.
+              const epubRoleAlign = isEpub && haveMapping;
+              if (epubRoleAlign) {
+                let roles: { index: number; role: string }[] = [];
+                try {
+                  roles = getEpubPageRoles(rec.sourcePath!);
+                } catch {
+                  /* source gone — leave empty; falls through to source-only rows */
+                }
+                const XMATTER_TO_ROLE: Record<string, string> = {
+                  frontCover: "front-cover",
+                  titlePage: "title",
+                  credits: "credits",
+                  outsideBackCover: "back-cover",
+                };
+                const byRole = (role: string) => roles.find((r) => r.role === role)?.index ?? null;
+                const consumed = new Set<number>();
+                for (const b of bloom) {
+                  let epubPage: number | null = null;
+                  if (b.src !== undefined) epubPage = b.src;
+                  else if (b.xmatter && XMATTER_TO_ROLE[b.xmatter])
+                    epubPage = byRole(XMATTER_TO_ROLE[b.xmatter]);
+                  if (epubPage !== null) consumed.add(epubPage);
+                  rows.push({ pdfPage: epubPage, bloomPage: b.docIndex });
+                }
+                for (const r of roles)
+                  if (!consumed.has(r.index)) rows.push({ pdfPage: r.index, bloomPage: null });
+              } else if (!haveMapping) {
                 const n = Math.max(pdfPages, bloomPages);
                 for (let i = 1; i <= n; i++) {
                   rows.push({
@@ -618,6 +747,7 @@ export function conversionApiPlugin(): Plugin {
 
               return send(res, 200, {
                 ready: true,
+                sourceKind: isEpub ? "epub" : "pdf",
                 pdfPages,
                 bloomPages,
                 rows,

@@ -28,6 +28,25 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
     <path d="M11 8.5 8.5 13.5a1.6 1.6 0 0 1-1.5-1.6V9.5H3.8a1.2 1.2 0 0 1-1.2-1.4l.8-4.2a1.2 1.2 0 0 1 1.2-1h7.4m0 6.6V2.5h1.8a.7.7 0 0 1 .7.7v4.6a.7.7 0 0 1-.7.7H11Z" />
   ),
   flag: <path d="M4 14V2.5M4 3h7l-1.5 3 1.5 3H4" />,
+  // Pushpin (Lucide "pin"), scaled from a 24-box into our 16-box like `settings`.
+  // Outline form = unpinned state.
+  pin: (
+    <g transform="translate(8 8) scale(.6) translate(-12 -12)" strokeWidth={2.4}>
+      <path d="M12 17v5" />
+      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+    </g>
+  ),
+  // Solid form = pinned state (filled head/body, the needle stays a stroke).
+  "pin-filled": (
+    <g transform="translate(8 8) scale(.6) translate(-12 -12)" strokeWidth={2.4}>
+      <path d="M12 17v5" />
+      <path
+        fill="currentColor"
+        stroke="none"
+        d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"
+      />
+    </g>
+  ),
   settings: (
     <g transform="translate(8 8) scale(.62) translate(-12 -12)" strokeWidth={2.4}>
       <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />

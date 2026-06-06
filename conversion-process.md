@@ -1,4 +1,4 @@
-# PDF → Bloom Conversion Process
+# BloomBridge Conversion Process
 
 This is the orientation doc for the conversion pipeline. It explains **what we are
 doing, why, and how every stage works**, the CLI parameters that influence each
@@ -47,6 +47,7 @@ from the input artifact up to the target artifact.
 
 | Artifact (enum order)    | File suffix   | Produced by              | `--target` value   |
 | ------------------------ | ------------- | ------------------------ | ------------------ |
+| `EPUB`                   | `.epub`       | (input)                  | —                  |
 | `PDF`                    | `.pdf`        | (input)                  | —                  |
 | `Images`                 | (image files) | Stage 1 image extraction | `images`           |
 | `MarkdownFromOCR`        | `.ocr.md`     | Stage 1                  | `ocr` / `markdown` |
@@ -71,25 +72,25 @@ every stage: `Foo.ocr.md`, `Foo.raw-llm.md`, `Foo.llm.md`, `Foo.bloom.md`, `Foo.
 Entry point: `packages/cli/src/index.ts` (Commander) → `Arguments` → `makeThePlan`
 → `processConversion` (`process.ts`).
 
-| Option                                           | Default                         | Stage(s) affected           | Effect                                                                                                                                                                                                                                                                                                           |
-| ------------------------------------------------ | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<input>` (positional)                           | —                               | all                         | Path ending in `.pdf`, `.ocr.md`, `.raw-llm.md`, `.llm.md`, or `.bloom.md`. Determines the **start** stage.                                                                                                                                                                                                      |
-| `-t, --target`                                   | `bloom`                         | end of pipeline             | `images` \| `ocr`/`markdown` \| `tagged` \| `bloom`. Determines the **stop** stage.                                                                                                                                                                                                                              |
-| `-c, --collection`                               | (most-recent)                   | Stage 0 + 2                 | Where the book is created **and** the source of L1/L2/L3 language hints (read from the `.bloomCollection` XML). Accepts a full path, a bare name (expands under `~/Documents/Bloom/` or OneDrive Documents), or `recent`. Mutually exclusive with `--output`.                                                    |
-| `-o, --output`                                   | —                               | Stage 0                     | Custom output directory (no language hints).                                                                                                                                                                                                                                                                     |
-| `--mistral-api-key`                              | `$MISTRAL_API_KEY`              | Stage 1                     | Needed for `--ocr mistral`.                                                                                                                                                                                                                                                                                      |
-| `--openrouter-key`                               | `$OPENROUTER_KEY`               | Stage 1, 2                  | Needed for GPT/OpenRouter OCR, the LLM enrichment, and vision-formatting.                                                                                                                                                                                                                                        |
-| `--ocr <method>`                                 | `gpt`                           | Stage 1                     | `gpt` (OpenRouter vision, page-by-page), `mistral` (Mistral OCR API), `unpdf` (local pdfjs text extraction, no API), or any OpenRouter model name/alias.                                                                                                                                                         |
-| `--parser <engine>`                              | `native`                        | Stage 1                     | Only meaningful for the (unused) OpenRouter file-parser path: `native`/`mistral-ocr`/`pdf-text`. The live GPT path renders pages to images and ignores this.                                                                                                                                                     |
-| `--imager <method>`                              | `poppler`                       | Stage 1 / `images`          | Image extraction method. Only `poppler` is implemented (the old `pdfjs` imager was removed; any other value falls back to poppler).                                                                                                                                                                              |
-| `--cover <mode>`                                 | `auto`                          | Stage 1                     | `auto` (render front/back cover to an image only if a full-bleed image is detected), `render` (always render first+last page), `none` (leave covers to Bloom xMatter).                                                                                                                                           |
-| `--vision-formatting` / `--no-vision-formatting` | **on**                          | Stage 1                     | **On by default** (disable with `--no-vision-formatting`): a vision model detects per-page text alignment; a deterministic sampler detects solid page background color. Needs `--openrouter-key` and a PDF input — if either is missing it's skipped with a warning (not an error). Results cached in `.ocr.md`. |
-| `--vision-model <model>`                         | `google/gemini-3.1-pro-preview` | Stage 1                     | Model for the vision-formatting pass, **independent of `--model`**.                                                                                                                                                                                                                                              |
-| `--model <model>`                                | `google/gemini-3.1-pro-preview` | Stage 2                     | OpenRouter model for the LLM **enrichment** stage.                                                                                                                                                                                                                                                               |
-| `--prompt <path>`                                | (built-in)                      | Stage 1 (GPT OCR) + Stage 2 | Override prompt file. Used as the per-page OCR prompt on the GPT path and/or the enrichment prompt.                                                                                                                                                                                                              |
-| `--complex-becomes-image <level>`                | `off`                           | Stage 1 (+ Stage 4 render)  | Flatten pages to full-page images instead of reconstructing text. `off` never; `0`–`5` flatten canvas pages by complexity (lower = more readily; see §5.7); `always` imports **every** page as an image and does only minimal OCR/LLM for metadata (see §5.7).                                                   |
-| `--emit-source-hashes`                           | off                             | Stage 4                     | **Master-creation mode** (see §9.7). Keeps the `data-import-source-hash` on every page and **skips** master substitution. Use it once to build a master book; off (the default) for normal imports.                                                                                                              |
-| `--verbose`                                      | off                             | all                         | Verbose logging via the log callback.                                                                                                                                                                                                                                                                            |
+| Option                                           | Default                         | Stage(s) affected           | Effect                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------ | ------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<input>` (positional)                           | —                               | all                         | Path ending in `.pdf`, `.ocr.md`, `.raw-llm.md`, `.llm.md`, or `.bloom.md`. Determines the **start** stage.                                                                                                                                                                                                                                                                                                 |
+| `-t, --target`                                   | `bloom`                         | end of pipeline             | `images` \| `ocr`/`markdown` \| `tagged` \| `bloom`. Determines the **stop** stage.                                                                                                                                                                                                                                                                                                                         |
+| `-c, --collection`                               | (most-recent)                   | Stage 0 + 2                 | Where the book is created **and** the source of L1/L2/L3 language hints (read from the `.bloomCollection` XML). Accepts a full path, a bare name (expands under `~/Documents/Bloom/` or OneDrive Documents), or `recent`. Mutually exclusive with `--output`.                                                                                                                                               |
+| `-o, --output`                                   | —                               | Stage 0                     | Custom output directory (no language hints).                                                                                                                                                                                                                                                                                                                                                                |
+| `--mistral-api-key`                              | `$MISTRAL_API_KEY`              | Stage 1                     | Needed for `--ocr mistral`.                                                                                                                                                                                                                                                                                                                                                                                 |
+| `--openrouter-key`                               | `$OPENROUTER_KEY`               | Stage 1, 2                  | Needed for GPT/OpenRouter OCR, the LLM enrichment, and vision-formatting.                                                                                                                                                                                                                                                                                                                                   |
+| `--ocr <method>`                                 | `gpt`                           | Stage 1                     | `gpt` (OpenRouter vision, page-by-page), `mistral` (Mistral OCR API), `unpdf` (local pdfjs text extraction, no API), or any OpenRouter model name/alias.                                                                                                                                                                                                                                                    |
+| `--parser <engine>`                              | `native`                        | Stage 1                     | Only meaningful for the (unused) OpenRouter file-parser path: `native`/`mistral-ocr`/`pdf-text`. The live GPT path renders pages to images and ignores this.                                                                                                                                                                                                                                                |
+| `--imager <method>`                              | `poppler`                       | Stage 1 / `images`          | Image extraction method. Only `poppler` is implemented (the old `pdfjs` imager was removed; any other value falls back to poppler).                                                                                                                                                                                                                                                                         |
+| `--cover <mode>`                                 | `auto`                          | Stage 1                     | `auto` (render front/back cover to an image only if a full-bleed image is detected), `render` (always render first+last page), `none` (leave covers to Bloom xMatter).                                                                                                                                                                                                                                      |
+| `--vision-formatting` / `--no-vision-formatting` | **on**                          | Stage 1                     | **On by default** (disable with `--no-vision-formatting`): a vision model detects per-page text alignment; a deterministic sampler detects solid page background color. Needs `--openrouter-key` and a PDF input — if either is missing it's skipped with a warning (not an error). Results cached in `.ocr.md`.                                                                                            |
+| `--vision-model <model>`                         | `google/gemini-3.1-pro-preview` | Stage 1                     | Model for the vision-formatting pass, **independent of `--model`**.                                                                                                                                                                                                                                                                                                                                         |
+| `--model <model>`                                | `google/gemini-3.1-pro-preview` | Stage 2                     | OpenRouter model for the LLM **enrichment** stage.                                                                                                                                                                                                                                                                                                                                                          |
+| `--prompt <path>`                                | (built-in)                      | Stage 1 (GPT OCR) + Stage 2 | Override prompt file. Used as the per-page OCR prompt on the GPT path and/or the enrichment prompt.                                                                                                                                                                                                                                                                                                         |
+| `--complex-becomes-image <which>`                | `busy`                          | Stage 1 (+ Stage 4 render)  | Which pages to snapshot as full-page images instead of reconstructing text (translatability↔fidelity). `covers` never flattens interior pages; `busy` (default) flattens canvas pages with ≥`BUSY_THRESHOLD` text blocks; `anyCanvas` flattens every canvas page; `all` imports **every** page as an image with only minimal OCR/LLM for metadata. Legacy `off`/`0`–`5`/`always` still accepted (see §5.7). |
+| `--emit-source-hashes`                           | off                             | Stage 4                     | **Master-creation mode** (see §9.7). Keeps the `data-import-source-hash` on every page and **skips** master substitution. Use it once to build a master book; off (the default) for normal imports.                                                                                                                                                                                                         |
+| `--verbose`                                      | off                             | all                         | Verbose logging via the log callback.                                                                                                                                                                                                                                                                                                                                                                       |
 
 **API-key gating** (`makeThePlan`): Mistral OCR needs the Mistral key; OpenRouter
 OCR / enrichment / vision need the OpenRouter key. The checks only fire for stages
@@ -260,12 +261,13 @@ decision and rendering happen here in Stage 1; the marker rides through the rest
 the pipeline and Stage 4 turns it into a full-page image page (§9.2/§9.3). The flag has
 two distinct modes:
 
-- **Scalar levels `0`–`5` (`off` = never).** Only **canvas** pages (§5.6) are
-  candidates. `complexThreshold` maps the level to a score threshold (`level + 1`),
-  the score is the canvas page's text-box count, and any page at/above the threshold is
-  rendered to `page-<N>.jpg` and tagged `flatten-as-image="…" flatten-score="…"
-flatten-level="…"`. Lower numbers flatten more readily (`0` = every canvas page).
-- **`always` — every page as an image.** A different mode: we render **every** page to
+- **Per-page choices `covers` / `busy` / `anyCanvas`.** Only **canvas** pages (§5.6) are
+  candidates. `complexThreshold` maps the value to a score threshold (`covers` → none,
+  `busy` → `BUSY_THRESHOLD`, `anyCanvas` → 1; legacy `0`–`5` → `level + 1`), the score is
+  the canvas page's text-box count, and any page at/above the threshold is rendered to
+  `page-<N>.jpg` and tagged `flatten-as-image="…" flatten-score="…" flatten-level="…"`.
+  Lower threshold flattens more readily (`anyCanvas` = every canvas page).
+- **`all` — every page as an image** (legacy `always`). A different mode: we render **every** page to
   `page-<N>.jpg` and tag every page comment `flatten-as-image`. To still recover the
   book's metadata + languages we OCR only a handful of pages — the **first 4 and last
   2** (`pagesForMetadata`, passed to `pdfToMarkdown` as `ocrOnlyPages`); every other
@@ -285,10 +287,39 @@ told to preserve them.
 > Stage 1 ordering in `process.ts`: OCR → `prepareCovers` → (optional)
 > `addVisionFormatting` → `detectNormalStyle` (prepends the book comment) →
 > `detectCanvasPages` (injects `canvas-text-boxes`) → flatten (`flattenComplexPages`,
-> or `flattenAllPages` when `always`) → write `.ocr.md`. In `always` mode only OCR,
+> or `flattenAllPages` when `all`) → write `.ocr.md`. In `all` mode only OCR,
 > `detectNormalStyle`, and `flattenAllPages` run.
 
 ---
+
+## 5A. EPUB front-end (`.epub` → `.llm.md`, no OCR/LLM)
+
+A reflowable EPUB already carries what a PDF makes us reconstruct: the story text as
+**digital text**, the illustrations as **separate image files**, and the
+bibliographic data as **structured OPF metadata**. So an `.epub` input skips Stages
+1–2 entirely — `epubToBloomMarkdown` (`epub/epubToBloomMarkdown.ts`) deterministically
+emits the tagged `.llm.md` (YAML front matter + `<!-- text lang field -->` blocks +
+image refs) and copies the illustrations into the book folder. No OCR, no LLM, no API
+key; `planConversion` maps `.epub` to the `EPUB` artifact whose floor stage is
+**plan**, so the run continues straight into Stage 3 → 4.
+
+- **Zip reading** is a small dependency-free reader (`epub/zipReader.ts`, store +
+  deflate via Node `zlib`). **Parsing** is regex over the OPF + XHTML (the markup is
+  regular); HTML numeric entities (`&#x0254;` etc.) are decoded so non-Latin
+  orthographies survive.
+- **Page roles** are detected from the spine filenames (`cover`/`title`/`copy`/`back`)
+  with a generic `<p>`/`div.p` fallback for non-LFA templates. Cover/back use the
+  reserved `cover.jpg`/`back-cover.jpg` names (§5.3) so Stage 4 makes full-bleed
+  covers; OPF metadata (title, author, illustrator, ISBN, CC license, publisher,
+  funding, topic) becomes `field=` blocks that flow to the dataDiv.
+- **Source alignment for the GUI:** every emitted page carries
+  `source-pdf-page="<spine index>"`, and `getEpubPageImage`/`getEpubPageCount` serve
+  each spine page's illustration so the GUI's paired preview compares EPUB↔Bloom the
+  same way it compares PDF↔Bloom (§13). `process`/`preview`/notify operate on the
+  produced book folder, so they work unchanged for EPUB-derived books.
+- **Tuning:** the role/text heuristics target the Library-For-All / Vanuatu template;
+  other templates convert best-effort (text captured where it's in `<p>`/`div.p`).
+  Language is taken verbatim from OPF `dc:language` (a mislabeled OPF carries through).
 
 ## 6. Stage 2 — LLM enrichment (`.ocr.md` → `.raw-llm.md` → `.llm.md`)
 
@@ -638,6 +669,7 @@ adds/refreshes the book live.
 
 | Variety                                                         | How we detect/handle it                                                                                                                                                    |
 | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **EPUB input**                                                  | EPUB front-end (§5A): digital text + separate images + OPF metadata → `.llm.md` directly, no OCR/LLM. Best-effort beyond the LFA template.                                 |
 | **Scanned vs text PDFs**                                        | `gpt`/`mistral` OCR read rendered text (works on scans); `unpdf` reads the text layer (text PDFs only, and may surface hidden text).                                       |
 | **Page size** (A4/A5/Letter/…)                                  | `detectNormalStyle` maps PDF points → Bloom size class; emitted on every page so Bloom uses the right paper.                                                               |
 | **Body font size/family**                                       | `detectNormalStyle` (char-weighted dominant) → `normal-style`/`Bubble-style` in `userModifiedStyles`. Family is best-effort; Bloom falls back if not installed.            |

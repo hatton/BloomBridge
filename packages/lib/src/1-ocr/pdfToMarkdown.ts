@@ -182,7 +182,7 @@ async function ocrPageImage(
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": "https://github.com/hatton/pdf-to-bloom",
-      "X-Title": "PDF to Bloom Converter",
+      "X-Title": "BloomBridge",
     },
     body: JSON.stringify(requestBody),
   });

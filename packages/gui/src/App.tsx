@@ -22,7 +22,7 @@ const FALLBACK_PARAMS: Params = {
   visionFormatting: true,
   visionModel: "google/gemini-3.1-pro-preview",
   coverMode: "auto",
-  complexBecomesImage: "off",
+  complexBecomesImage: "busy",
   target: "bloom",
 };
 
@@ -80,28 +80,28 @@ export function App() {
   const [modal, setModal] = useState<any>(null);
   const [pdfOpen, setPdfOpen] = useState<boolean>(() => {
     try {
-      return localStorage.getItem("pdf2bloom.pdfPane.open") === "1";
+      return localStorage.getItem("bloombridge.pdfPane.open") === "1";
     } catch {
       return false;
     }
   });
   const [pdfWidth, setPdfWidth] = useState<number>(() => {
     try {
-      return Number(localStorage.getItem("pdf2bloom.pdfPane.width")) || 380;
+      return Number(localStorage.getItem("bloombridge.pdfPane.width")) || 380;
     } catch {
       return 380;
     }
   });
   useEffect(() => {
     try {
-      localStorage.setItem("pdf2bloom.pdfPane.open", pdfOpen ? "1" : "0");
+      localStorage.setItem("bloombridge.pdfPane.open", pdfOpen ? "1" : "0");
     } catch {
       /* ignore */
     }
   }, [pdfOpen]);
   useEffect(() => {
     try {
-      localStorage.setItem("pdf2bloom.pdfPane.width", String(pdfWidth));
+      localStorage.setItem("bloombridge.pdfPane.width", String(pdfWidth));
     } catch {
       /* ignore */
     }
@@ -173,7 +173,7 @@ export function App() {
     // Restore the last-opened folder across refreshes.
     let savedFolder: string | null = null;
     try {
-      savedFolder = localStorage.getItem("pdf2bloom.folder");
+      savedFolder = localStorage.getItem("bloombridge.folder");
     } catch {
       /* ignore */
     }
@@ -235,7 +235,7 @@ export function App() {
       setSources(r.sources);
       setLeftOpen(false);
       try {
-        localStorage.setItem("pdf2bloom.folder", r.folder);
+        localStorage.setItem("bloombridge.folder", r.folder);
       } catch {
         /* ignore */
       }
@@ -356,6 +356,9 @@ export function App() {
   // ---- curation ----
   const onMark = (_sid: string, rid: string, mark: Mark) => {
     api.rate(rid, markToRating(mark)).catch(() => {});
+  };
+  const onPin = (_sid: string, rid: string, pinned: boolean) => {
+    api.pin(rid, pinned).catch(() => {});
   };
   const onNotes = (sid: string, rid: string, patch: Partial<Run>) => {
     // optimistic local update for responsive typing
@@ -511,8 +514,6 @@ export function App() {
         dark={t.dark}
         onToggleTheme={() => setTweak("dark", !t.dark)}
         bloom={bloom}
-        pdfOpen={pdfOpen}
-        onTogglePdf={() => setPdfOpen((v) => !v)}
         onSettings={openSettings}
       />
 
@@ -560,6 +561,7 @@ export function App() {
               });
             }}
             onMark={onMark}
+            onPin={onPin}
             onCancelRun={onCancelRun}
             onPreview={onPreview}
             statusFilter={statusFilter}
@@ -583,9 +585,6 @@ export function App() {
               count={checkedPdfs.size}
               parallelism={maxParallel}
               defaultParams={defaults}
-              collection={launchCollection}
-              onCollection={setLaunchCollection}
-              collections={collections}
               onClose={() => setPanelOpen(false)}
               onClear={() => setCheckedPdfs(new Set())}
               onRun={batchRun}
@@ -606,9 +605,6 @@ export function App() {
               source={focusedSource}
               defaultParams={defaults}
               parallelism={maxParallel}
-              collection={launchCollection}
-              onCollection={setLaunchCollection}
-              collections={collections}
               onClose={() => setPanelOpen(false)}
               onRunNow={(params) => quickStart(focusedSource, params)}
               onPreview={onPreview}
@@ -621,6 +617,7 @@ export function App() {
               source={focusedSource}
               onClose={() => setPanelOpen(false)}
               onMark={onMark}
+              onPin={onPin}
               onNotes={onNotes}
               onCancel={onCancelRun}
               onPreview={onPreview}
@@ -655,15 +652,22 @@ export function App() {
             onClose={() => setPdfOpen(false)}
           />
         ) : (
-          <RightRail
-            icon={
-              checkedPdfs.size <= 1 && focus && focus.type === "run"
-                ? "/preview-collapsed.svg"
-                : "/pdf.svg"
-            }
-            label="PDF preview"
-            onExpand={() => setPdfOpen(true)}
-          />
+          (() => {
+            const isEpub = /\.epub$/i.test(focusedSource?.file || focusedSource?.path || "");
+            return (
+              <RightRail
+                icon={
+                  checkedPdfs.size <= 1 && focus && focus.type === "run"
+                    ? "/preview-collapsed.svg"
+                    : isEpub
+                      ? "/epub.svg"
+                      : "/pdf.svg"
+                }
+                label={isEpub ? "EPUB preview" : "PDF preview"}
+                onExpand={() => setPdfOpen(true)}
+              />
+            );
+          })()
         )}
       </div>
 
@@ -766,15 +770,11 @@ function TopBar({
   dark,
   onToggleTheme,
   bloom,
-  pdfOpen,
-  onTogglePdf,
   onSettings,
 }: {
   dark: boolean;
   onToggleTheme: () => void;
   bloom: { running: boolean; collectionName?: string };
-  pdfOpen: boolean;
-  onTogglePdf: () => void;
   onSettings: () => void;
 }) {
   return (
@@ -793,10 +793,7 @@ function TopBar({
       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
         <img src="/app.svg" alt="" width={26} height={26} style={{ borderRadius: 7 }} />
         <div style={{ lineHeight: 1.1 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: "-.2px" }}>PDF → Bloom</div>
-          <div style={{ fontSize: 9.5, color: "var(--text-3)", fontWeight: 500 }}>
-            Conversion Manager
-          </div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: "-.2px" }}>BloomBridge</div>
         </div>
       </div>
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
@@ -839,12 +836,6 @@ function TopBar({
           </span>
         </span>
         <div style={{ width: 1, height: 20, background: "var(--border)" }} />
-        <IconBtn
-          name="file"
-          active={pdfOpen}
-          onClick={onTogglePdf}
-          title={pdfOpen ? "Hide PDF preview" : "Show PDF preview"}
-        />
         <IconBtn name={dark ? "sun" : "moon"} onClick={onToggleTheme} title="Toggle theme" />
         <IconBtn name="settings" onClick={onSettings} title="Settings" />
       </div>
@@ -1047,7 +1038,6 @@ function RightRail({
         onClick={onExpand}
         title={`Show ${label}`}
         style={{
-          flex: 1,
           width: "100%",
           border: "none",
           background: "transparent",
@@ -1058,7 +1048,7 @@ function RightRail({
           letterSpacing: ".5px",
           writingMode: "vertical-rl",
           textTransform: "uppercase",
-          padding: "8px 0",
+          padding: 0,
         }}
       >
         {label}
@@ -1102,7 +1092,7 @@ function EmptyWorkspace({
         <img src="/app.svg" alt="" width={44} height={44} style={{ borderRadius: 11 }} />
       </div>
       <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 6px" }}>
-        Convert PDFs into Bloom books
+        Convert PDFs and EPUBs into Bloom books
       </h2>
       <p
         style={{

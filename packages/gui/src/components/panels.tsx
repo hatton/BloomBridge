@@ -13,6 +13,7 @@ import {
   StatusPill,
   StageBadges,
   MarkControl,
+  PinButton,
   ProgressBar,
   runProgress,
   fmt,
@@ -38,12 +39,9 @@ export function SourcePanel({
   onRescan?: () => void;
   onCollapse?: (() => void) | null;
 }) {
-  const [input, setInput] = React.useState(folder || "");
-  React.useEffect(() => {
-    setInput(folder || "");
-  }, [folder]);
-  const submit = () => {
-    if (input.trim()) onPick(input.trim());
+  const browse = async () => {
+    const { path } = await api.pickFolder(folder || undefined);
+    if (path) onPick(path);
   };
   return (
     <aside
@@ -88,35 +86,29 @@ export function SourcePanel({
         )}
       </div>
 
-      {/* path entry */}
+      {/* folder chooser */}
       <div style={{ padding: "12px 12px 10px", borderBottom: "1px solid var(--border)" }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          <input
-            aria-label="Folder path"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submit();
-            }}
-            placeholder="Paste a folder path…"
+        <Btn variant="primary" size="sm" icon="folder-open" onClick={browse} full>
+          Choose folder…
+        </Btn>
+        {folder && (
+          <div
             className="mono"
+            title={folder}
             style={{
-              flex: 1,
-              minWidth: 0,
-              height: 30,
-              padding: "0 8px",
-              fontSize: 11,
-              color: "var(--text)",
-              background: "var(--surface-2)",
-              border: "1px solid var(--border-strong)",
-              borderRadius: "var(--radius-sm)",
-              outline: "none",
+              marginTop: 8,
+              fontSize: 10.5,
+              color: "var(--text-2)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              direction: "rtl",
+              textAlign: "left",
             }}
-          />
-          <Btn variant="primary" size="sm" icon="folder-open" onClick={submit}>
-            Open
-          </Btn>
-        </div>
+          >
+            {folder}
+          </div>
+        )}
         {folder && (
           <div
             style={{
@@ -239,6 +231,7 @@ export function DetailPanel({
   source,
   onClose,
   onMark,
+  onPin,
   onPreview,
   onConfigRerun,
   onResume,
@@ -251,6 +244,7 @@ export function DetailPanel({
   source?: Source;
   onClose: () => void;
   onMark: (sid: string, rid: string, v: Mark) => void;
+  onPin: (sid: string, rid: string, v: boolean) => void;
   onPreview: (r: Run) => void;
   onConfigRerun: (s: Source, r: Run) => void;
   onResume: (s: Source, r: Run) => void;
@@ -320,6 +314,7 @@ export function DetailPanel({
               {run.status === "done" && (
                 <MarkControl mark={run.mark} onChange={(v) => onMark(source.id, run.id, v)} />
               )}
+              <PinButton pinned={!!run.pinned} onChange={(v) => onPin(source.id, run.id, v)} />
             </div>
           </div>
         </div>
@@ -1487,7 +1482,7 @@ export function SectionLabel({ children }: { children?: React.ReactNode }) {
 export function cmdString(source: Source, run: Run) {
   const p = run.params || ({} as Params);
   return (
-    "pdf2bloom " +
+    "bloombridge " +
     source.file +
     " \\\n  --ocr " +
     p.ocrMethod +
@@ -1498,7 +1493,7 @@ export function cmdString(source: Source, run: Run) {
       : " \\\n  --no-vision-formatting") +
     " \\\n  --cover " +
     p.coverMode +
-    (p.complexBecomesImage !== "off"
+    (p.complexBecomesImage !== "busy"
       ? " \\\n  --complex-becomes-image " + p.complexBecomesImage
       : "") +
     " \\\n  --target " +
@@ -1690,6 +1685,60 @@ function Changed({ on, children }: { on: boolean; children: React.ReactNode }) {
   );
 }
 
+// A row of stage pills heading a group of settings. Each pill names a pipeline
+// stage the settings below affect; a multi-stage setting shows several pills.
+function StagePills({ stages }: { stages: Stage[] }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 9 }}>
+      {stages.map((s) => (
+        <span
+          key={s}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: 18,
+            padding: "0 8px",
+            borderRadius: 4,
+            fontFamily: "var(--font-mono)",
+            fontSize: 9.5,
+            fontWeight: 700,
+            letterSpacing: ".4px",
+            background: "var(--st-done-bg)",
+            color: "var(--st-done-fg)",
+          }}
+        >
+          {BLOOM.STAGE_LABELS[s]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// One stage-keyed group of settings: a pill row, then its controls.
+function StageGroup({
+  stages,
+  first,
+  children,
+}: {
+  stages: Stage[];
+  first?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        paddingTop: first ? 0 : 14,
+        marginTop: first ? 0 : 14,
+        borderTop: first ? "none" : "1px solid var(--border)",
+      }}
+    >
+      <StagePills stages={stages} />
+      {children}
+    </div>
+  );
+}
+
 export function ParamControls({
   params: p,
   onChange: set,
@@ -1701,119 +1750,174 @@ export function ParamControls({
 }) {
   const d = defaults || (BLOOM.DEFAULT_PARAMS as Params);
   const chg = (k: keyof Params) => p[k] !== d[k];
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
   return (
     <React.Fragment>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 4 }}>
-        <Changed on={chg("ocrMethod")}>
-          <Field label="OCR method">
-            <Select
-              full
-              value={p.ocrMethod}
-              onChange={(v) => set("ocrMethod", v)}
-              options={Object.entries(BLOOM.ocrMethods).map(([value, label]) => ({ value, label }))}
-            />
-          </Field>
-        </Changed>
-        <Changed on={chg("model")}>
-          <Field label="LLM model">
-            <Select
-              full
-              value={p.model}
-              onChange={(v) => set("model", v)}
-              options={Object.entries(BLOOM.MODELS).map(([value, m]) => ({
-                value,
-                label: m.label,
-              }))}
-            />
-          </Field>
-        </Changed>
-        <Changed on={chg("coverMode")}>
-          <Field label="Cover handling">
-            <Select
-              full
-              value={p.coverMode}
-              onChange={(v) => set("coverMode", v)}
-              options={Object.entries(BLOOM.coverModes).map(([value, label]) => ({ value, label }))}
-            />
-          </Field>
-        </Changed>
-        <Changed on={chg("target")}>
-          <Field label="Target output">
-            <Select
-              full
-              value={p.target}
-              onChange={(v) => set("target", v)}
-              options={BLOOM.targetOrder.map((v) => ({ value: v, label: BLOOM.targets[v] }))}
-            />
-          </Field>
-        </Changed>
-      </div>
-      <Changed on={chg("visionFormatting")}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "12px 0 10px",
-            marginTop: 8,
-            borderTop: "1px solid var(--border)",
-          }}
+      {/* ---- Primary control: translatability vs. fidelity (no stage pill) ---- */}
+      <Changed on={chg("complexBecomesImage")}>
+        <Field
+          label={
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              Translatability vs. Fidelity{" "}
+              <InfoDot tip="'Only image covers' rebuilds every interior page as editable text; 'pages too busy to convert well' (default) also snapshots genuinely busy layouts; 'any page with text over a picture' snapshots every canvas page; 'All pages' snapshots everything for maximum fidelity (nothing editable; only a few pages are OCR'd for metadata/languages)." />
+            </span>
+          }
         >
-          <div>
-            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Vision formatting</div>
-            <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
-              Preserve layout &amp; styling with model vision
-            </div>
+          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 7, lineHeight: 1.45 }}>
+            Without a human touching things up, this converter can&apos;t always reproduce a complex
+            page exactly using editable text boxes. For which pages should it just snapshot the
+            original PDF page instead?
           </div>
-          <Toggle value={p.visionFormatting} onChange={(v) => set("visionFormatting", v)} />
-        </div>
+          <Select
+            full
+            value={p.complexBecomesImage}
+            onChange={(v) => set("complexBecomesImage", v)}
+            options={BLOOM.complexOrder.map((v) => ({ value: v, label: BLOOM.complexLevels[v] }))}
+          />
+        </Field>
       </Changed>
-      <div
+
+      {/* ---- Everything else, collapsed under "Advanced" ---- */}
+      <button
+        type="button"
+        onClick={() => setAdvancedOpen((v) => !v)}
         style={{
-          paddingBottom: 4,
-          opacity: p.visionFormatting ? 1 : 0.45,
-          pointerEvents: p.visionFormatting ? "auto" : "none",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginTop: 18,
+          padding: "6px 0",
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          color: "var(--text-2)",
+          fontSize: 12,
+          fontWeight: 600,
         }}
       >
-        <Changed on={chg("visionModel")}>
-          <Field
-            label={
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                Vision-formatting model <InfoDot tip="detects per-page text alignment" />
-              </span>
-            }
-          >
-            <Select
-              full
-              value={p.visionModel}
-              onChange={(v) => set("visionModel", v)}
-              options={Object.entries(BLOOM.MODELS).map(([value, m]) => ({
-                value,
-                label: m.label,
-              }))}
-            />
-          </Field>
-        </Changed>
-      </div>
-      <div style={{ padding: "12px 0 4px", borderTop: "1px solid var(--border)" }}>
-        <Changed on={chg("complexBecomesImage")}>
-          <Field
-            label={
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                When to just treat the page as an image{" "}
-                <InfoDot tip="When a page is too complex to rebuild as editable HTML, import it as a single full-page image. Lower numbers flatten more readily; 0 flattens every canvas page; off never does. 'Always' imports every page as an image (only a few pages are OCR'd for metadata/languages; no per-page layout analysis)." />
-              </span>
-            }
-          >
-            <Select
-              full
-              value={p.complexBecomesImage}
-              onChange={(v) => set("complexBecomesImage", v)}
-              options={BLOOM.complexOrder.map((v) => ({ value: v, label: BLOOM.complexLevels[v] }))}
-            />
-          </Field>
-        </Changed>
-      </div>
+        <span
+          style={{
+            transform: advancedOpen ? "rotate(90deg)" : "none",
+            transition: "transform .12s",
+            display: "inline-flex",
+          }}
+        >
+          <Icon name="chevron" size={11} />
+        </span>
+        Advanced
+      </button>
+      {advancedOpen && (
+        <React.Fragment>
+          {/* ---- OCR stage ---- */}
+          <StageGroup stages={["ocr"]} first>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Changed on={chg("ocrMethod")}>
+                <Field label="OCR method">
+                  <Select
+                    full
+                    value={p.ocrMethod}
+                    onChange={(v) => set("ocrMethod", v)}
+                    options={Object.entries(BLOOM.ocrMethods).map(([value, label]) => ({
+                      value,
+                      label,
+                    }))}
+                  />
+                </Field>
+              </Changed>
+              <Changed on={chg("coverMode")}>
+                <Field label="Cover handling">
+                  <Select
+                    full
+                    value={p.coverMode}
+                    onChange={(v) => set("coverMode", v)}
+                    options={Object.entries(BLOOM.coverModes).map(([value, label]) => ({
+                      value,
+                      label,
+                    }))}
+                  />
+                </Field>
+              </Changed>
+            </div>
+            <Changed on={chg("visionFormatting")}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "12px 0 10px",
+                  marginTop: 4,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600 }}>Vision formatting</div>
+                  <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+                    Preserve layout &amp; styling with model vision
+                  </div>
+                </div>
+                <Toggle value={p.visionFormatting} onChange={(v) => set("visionFormatting", v)} />
+              </div>
+            </Changed>
+            <div
+              style={{
+                paddingBottom: 4,
+                opacity: p.visionFormatting ? 1 : 0.45,
+                pointerEvents: p.visionFormatting ? "auto" : "none",
+              }}
+            >
+              <Changed on={chg("visionModel")}>
+                <Field
+                  label={
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      Vision-formatting model <InfoDot tip="detects per-page text alignment" />
+                    </span>
+                  }
+                >
+                  <Select
+                    full
+                    value={p.visionModel}
+                    onChange={(v) => set("visionModel", v)}
+                    options={Object.entries(BLOOM.MODELS).map(([value, m]) => ({
+                      value,
+                      label: m.label,
+                    }))}
+                  />
+                </Field>
+              </Changed>
+            </div>
+          </StageGroup>
+
+          {/* ---- Think (LLM) stage ---- */}
+          <StageGroup stages={["llm"]}>
+            <Changed on={chg("model")}>
+              <Field label="LLM model">
+                <Select
+                  full
+                  value={p.model}
+                  onChange={(v) => set("model", v)}
+                  options={Object.entries(BLOOM.MODELS).map(([value, m]) => ({
+                    value,
+                    label: m.label,
+                  }))}
+                />
+              </Field>
+            </Changed>
+          </StageGroup>
+
+          {/* ---- Affects the whole pipeline: where to stop ---- */}
+          <StageGroup stages={["ocr", "llm", "plan", "html"]}>
+            <Changed on={chg("target")}>
+              <Field label="Target output">
+                <Select
+                  full
+                  value={p.target}
+                  onChange={(v) => set("target", v)}
+                  options={BLOOM.targetOrder.map((v) => ({ value: v, label: BLOOM.targets[v] }))}
+                />
+              </Field>
+            </Changed>
+          </StageGroup>
+        </React.Fragment>
+      )}
     </React.Fragment>
   );
 }
@@ -1845,9 +1949,6 @@ export function PdfDetail({
   source,
   defaultParams,
   parallelism,
-  collection,
-  onCollection,
-  collections,
   onClose,
   onRunNow,
   onPreview,
@@ -1855,9 +1956,6 @@ export function PdfDetail({
   source: Source;
   defaultParams?: Params;
   parallelism: number;
-  collection: string;
-  onCollection: (v: string) => void;
-  collections: { path: string; name: string }[];
   onClose: () => void;
   onRunNow: (params: Params) => void;
   onPreview?: (r: Run) => void;
@@ -1870,6 +1968,7 @@ export function PdfDetail({
     ...(source.runs[0]?.params || defaultParams || BLOOM.DEFAULT_PARAMS),
   }));
   const set = (k: keyof Params, v: any) => setParams((o) => ({ ...o, [k]: v }));
+  const isEpub = /\.epub$/i.test(source.file || source.path || "");
   return (
     <aside style={panelShell}>
       <div style={{ padding: "11px 14px 12px", borderBottom: "1px solid var(--border)" }}>
@@ -1877,21 +1976,10 @@ export function PdfDetail({
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
+            justifyContent: "flex-end",
             marginBottom: 11,
           }}
         >
-          <span
-            style={{
-              fontSize: 10.5,
-              fontWeight: 700,
-              letterSpacing: ".7px",
-              textTransform: "uppercase",
-              color: "var(--text-3)",
-            }}
-          >
-            PDF
-          </span>
           <IconBtn
             name="panel-right"
             iconSize={15}
@@ -1903,13 +1991,28 @@ export function PdfDetail({
         <div style={{ display: "flex", gap: 12 }}>
           <Thumb hue={source.hue} w={48} h={64} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", lineHeight: 1.2 }}>
-              {source.name}
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <img
+                src={isEpub ? "/epub.svg" : "/pdf.svg"}
+                alt=""
+                aria-hidden="true"
+                title={isEpub ? "EPUB" : "PDF"}
+                style={{ width: 18, height: 18, flexShrink: 0 }}
+              />
+              <div
+                className="mono"
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "var(--text)",
+                  lineHeight: 1.2,
+                  wordBreak: "break-word",
+                }}
+              >
+                {source.file}
+              </div>
             </div>
-            <div className="mono" style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>
-              {source.file}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--text-2)", marginTop: 4 }}>
+            <div style={{ fontSize: 11, color: "var(--text-2)", marginTop: 6 }}>
               {source.pages ? `${source.pages} pages · ` : ""}
               {source.size}
             </div>
@@ -1956,11 +2059,9 @@ export function PdfDetail({
           )}
         </div>
 
-        {/* target collection + raw settings */}
+        {/* Collection picker hidden: targeting other collections isn't supported
+            yet (output always goes to the running Bloom's collection). */}
         <SectionLabel>Conversion settings</SectionLabel>
-        <div style={{ marginBottom: 12 }}>
-          <CollectionPicker value={collection} onChange={onCollection} collections={collections} />
-        </div>
         <ParamControls params={params} onChange={set} defaults={defaultParams} />
       </div>
     </aside>
@@ -1972,9 +2073,6 @@ export function BatchPane({
   count,
   parallelism,
   defaultParams,
-  collection,
-  onCollection,
-  collections,
   onClose,
   onClear,
   onRun,
@@ -1982,9 +2080,6 @@ export function BatchPane({
   count: number;
   parallelism: number;
   defaultParams?: Params;
-  collection: string;
-  onCollection: (v: string) => void;
-  collections: { path: string; name: string }[];
   onClose: () => void;
   onClear: () => void;
   onRun: (params: Params) => void;
@@ -2101,10 +2196,8 @@ export function BatchPane({
           {parallelism} run in parallel — the rest queue automatically.
         </div>
 
+        {/* Collection picker hidden: targeting other collections isn't supported yet. */}
         <SectionLabel>Conversion settings for all</SectionLabel>
-        <div style={{ marginBottom: 12 }}>
-          <CollectionPicker value={collection} onChange={onCollection} collections={collections} />
-        </div>
         <ParamControls params={params} onChange={set} defaults={defaultParams} />
 
         <button
@@ -2290,6 +2383,8 @@ const PDF_BLUE = "#5b9bff";
 type PagePairsInfo = {
   ready: boolean;
   reason?: string;
+  /** Whether the left column shows PDF page renders or EPUB illustrations. */
+  sourceKind?: "pdf" | "epub";
   pdfPages: number;
   bloomPages: number;
   // Explicit column alignment from the server: one entry per row. A null on either
@@ -2378,21 +2473,38 @@ export function PdfViewerPane({
   mode?: "run" | "pdf";
 }) {
   const pairs = usePagePairs(mode === "run" ? runId : undefined);
+  // EPUB sources have no fixed-page PDF to embed; the compare view shows the spine
+  // illustrations instead, and the raw-preview iframe is replaced by a note.
+  const isEpub =
+    /\.epub$/i.test(source?.file || source?.path || "") || pairs.info?.sourceKind === "epub";
+  const srcLabel = isEpub ? "EPUB" : "PDF";
   const [diff, setDiff] = React.useState<DiffMode>({ mode: "off", opacity: 0.5 });
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
     const startW = width;
+    // mousemove fires far more often than once per frame; coalesce to one
+    // onResize (one parent re-render) per animation frame so a fast drag doesn't
+    // queue a backlog of re-renders behind the cursor.
+    let raf = 0;
+    let pending = startW;
+    const flush = () => {
+      raf = 0;
+      onResize(pending);
+    };
     const onMove = (ev: MouseEvent) => {
       // handle is on the left edge: dragging left widens the pane. Cap only at the
       // viewport edge (less a sliver) so it can be dragged almost all the way left.
       const max = Math.max(260, window.innerWidth - 80);
-      onResize(Math.max(260, Math.min(max, startW + (startX - ev.clientX))));
+      pending = Math.max(260, Math.min(max, startW + (startX - ev.clientX)));
+      if (!raf) raf = requestAnimationFrame(flush);
     };
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       document.body.style.userSelect = "";
+      if (raf) cancelAnimationFrame(raf);
+      onResize(pending); // commit the final position
     };
     document.body.style.userSelect = "none";
     window.addEventListener("mousemove", onMove);
@@ -2455,9 +2567,9 @@ export function PdfViewerPane({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          {/* preview.svg (PDF→Bloom) in compare mode, pdf.svg in pure-PDF mode. */}
+          {/* preview.svg (source→Bloom) in compare mode; pdf/epub icon in raw mode. */}
           <img
-            src={mode === "run" ? "/preview.svg" : "/pdf.svg"}
+            src={mode === "run" ? "/preview.svg" : isEpub ? "/epub.svg" : "/pdf.svg"}
             alt=""
             aria-hidden="true"
             style={{ height: mode === "run" ? 24 : 20, width: "auto", flexShrink: 0 }}
@@ -2472,7 +2584,7 @@ export function PdfViewerPane({
                 color: mode === "run" ? "#bdc1c6" : "var(--text-3)",
               }}
             >
-              {mode === "run" ? "Compare PDF to Bloom Version" : "PDF preview"}
+              {mode === "run" ? `Compare ${srcLabel} to Bloom Version` : `${srcLabel} preview`}
             </span>
             {/* In compare mode the page rows are labelled themselves, so the book
               title under the heading would just be redundant. */}
@@ -2493,26 +2605,24 @@ export function PdfViewerPane({
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          {mode === "run" && pairs.info?.ready && (
+          {/* Until the book is ready the call-to-action lives front-and-center in
+              the body; once it exists the header keeps a quiet re-process button. */}
+          {mode === "run" && pairs.info?.ready && pairs.info.bookReady && (
             <Btn
-              variant={pairs.info.bookReady ? "ghost" : "primary"}
+              variant="ghost"
               size="sm"
               icon={pairs.processing ? undefined : "refresh"}
               onClick={pairs.processInBloom}
               disabled={pairs.processing}
             >
-              {pairs.processing
-                ? "Processing in Bloom…"
-                : pairs.info.bookReady
-                  ? "Re-process in Bloom"
-                  : "Process in Bloom"}
+              {pairs.processing ? "Processing in Bloom…" : "Re-process in Bloom"}
             </Btn>
           )}
           <IconBtn
             name="x"
             iconSize={15}
             size={22}
-            title="Hide PDF preview"
+            title={`Hide ${srcLabel} preview`}
             onClick={onClose}
             color={mode === "run" ? "#bdc1c6" : undefined}
           />
@@ -2523,14 +2633,23 @@ export function PdfViewerPane({
       ) : mode === "run" && runId ? (
         <PairedPagesView
           runId={runId}
-          paneWidth={width}
           info={pairs.info}
           loading={pairs.loading}
           processing={pairs.processing}
           procError={pairs.procError}
           reloadKey={pairs.reloadKey}
+          onProcess={pairs.processInBloom}
           diff={diff}
           onDiff={setDiff}
+        />
+      ) : source?.path && isEpub ? (
+        // A reflowable EPUB has no native browser renderer, so the server stitches its
+        // spine pages into one scrollable HTML doc (images/CSS inlined) we embed here.
+        <iframe
+          key={source.path}
+          title="EPUB preview"
+          src={`/api/source-epub?path=${encodeURIComponent(source.path)}`}
+          style={{ flex: 1, width: "100%", border: "none", background: "var(--surface-2)" }}
         />
       ) : source?.path ? (
         <iframe
@@ -2592,22 +2711,22 @@ function useInView(ref: React.RefObject<HTMLElement>): boolean {
 // a placeholder (Bloom adds xMatter pages, so counts often differ).
 function PairedPagesView({
   runId,
-  paneWidth,
   info,
   loading,
   processing,
   procError,
   reloadKey,
+  onProcess,
   diff,
   onDiff,
 }: {
   runId: string;
-  paneWidth: number;
   info: PagePairsInfo | null;
   loading: boolean;
   processing: boolean;
   procError: string | null;
   reloadKey: number;
+  onProcess: () => void;
   diff: DiffMode;
   onDiff: (d: DiffMode) => void;
 }) {
@@ -2653,6 +2772,44 @@ function PairedPagesView({
   if (loading) return center("Loading pages…");
   if (!info || !info.ready) return center(info?.reason || "No pages to show.");
 
+  // Until Bloom has styled the book there's nothing meaningful to compare, so we
+  // withhold both columns and put the call-to-action front-and-center instead.
+  if (!info.bookReady)
+    return (
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 14,
+          padding: 24,
+          background: COMPARE_BACKDROP,
+        }}
+      >
+        {procError && (
+          <div
+            style={{
+              padding: "7px 10px",
+              borderRadius: 6,
+              background: "var(--danger-bg, #fde8e8)",
+              border: "1px solid var(--danger, #e06464)",
+              color: "var(--danger, #b53d3d)",
+              fontSize: 11,
+              lineHeight: 1.4,
+              textAlign: "center",
+            }}
+          >
+            {procError}
+          </div>
+        )}
+        <Btn variant="primary" size="lg" icon="refresh" onClick={onProcess}>
+          Process in Bloom
+        </Btn>
+      </div>
+    );
+
   const { w: natW, h: natH } = pagePxSize(info.pageSize);
   const aspect = natW / natH;
   const rows = info.rows;
@@ -2666,7 +2823,7 @@ function PairedPagesView({
   const columnHeader = (
     <div style={{ display: "flex", gap: 8 }}>
       {[
-        { label: "PDF", count: info.pdfPages },
+        { label: info.sourceKind === "epub" ? "EPUB" : "PDF", count: info.pdfPages },
         { label: "Bloom", count: info.bloomPages },
       ].map((c) => (
         <div
@@ -2791,86 +2948,158 @@ function PairedPagesView({
           {procError}
         </div>
       )}
-      {/* Until Bloom has styled the book there's nothing meaningful to compare, so
-          we withhold both columns entirely and just prompt to process. */}
-      {!info.bookReady ? (
-        !procError && (
-          <div
-            style={{
-              margin: "10px 0 0",
-              padding: "14px 14px",
-              borderRadius: 6,
-              background: "rgba(255,255,255,.05)",
-              border: "1px solid rgba(255,255,255,.12)",
-              color: "#bdc1c6",
-              fontSize: 12,
-              lineHeight: 1.5,
-              textAlign: "center",
-            }}
-          >
-            Click <strong>Process in Bloom</strong> above to build the styled version, then compare
-            it against the PDF here.
-          </div>
-        )
-      ) : (
-        <>
-          {/* Sticky header: diff controls above, then the column banner (side-by-
-              side) or overlay caption. Padding covers scrolling pages behind it. */}
-          <div
-            style={{
-              position: "sticky",
-              top: 0,
-              zIndex: 3,
-              background: BACKDROP,
-              padding: "4px 0 10px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-            }}
-          >
-            {diffControls}
-            {diff.mode === "off" ? columnHeader : overlayLabel}
-          </div>
-          {rows.map((row, i) => (
-            <PairedRow
-              key={i}
-              runId={runId}
-              pdfPage={row.pdfPage}
-              bloomPage={row.bloomPage}
-              aspect={aspect}
-              natW={natW}
-              natH={natH}
-              paneWidth={paneWidth}
-              reloadKey={reloadKey}
-              diff={diff}
-            />
-          ))}
-        </>
-      )}
+      {/* Sticky header: diff controls above, then the column banner (side-by-
+          side) or overlay caption. Padding covers scrolling pages behind it. */}
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 3,
+          background: BACKDROP,
+          padding: "4px 0 10px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        {diffControls}
+        {diff.mode === "off" ? columnHeader : overlayLabel}
+      </div>
+      {rows.map((row, i) => (
+        <PairedRow
+          key={i}
+          runId={runId}
+          pdfPage={row.pdfPage}
+          bloomPage={row.bloomPage}
+          sourceKind={info.sourceKind === "epub" ? "epub" : "pdf"}
+          aspect={aspect}
+          natW={natW}
+          natH={natH}
+          reloadKey={reloadKey}
+          diff={diff}
+        />
+      ))}
     </div>
   );
 }
 
-function PairedRow({
+// One source EPUB spine page in the compare grid's left column. A reflowable EPUB
+// page has no flat raster like a PDF, so we render its real HTML (illustration +
+// prose, with the EPUB's own CSS) in an iframe and scale it to the column width —
+// the same measure-then-scale trick the Bloom page iframe uses. Measuring the
+// loaded doc's scroll size yields the page's natural dimensions (even a fixed-
+// layout page wider than the iframe), so the scale lands right after one load.
+const EpubPageCell = React.memo(function EpubPageCell({
+  runId,
+  page,
+  reloadKey,
+}: {
+  runId: string;
+  page: number;
+  reloadKey: number;
+}) {
+  const colRef = React.useRef<HTMLDivElement>(null);
+  const [colW, setColW] = React.useState(0);
+  const [m, setM] = React.useState<{ w: number; h: number } | null>(null);
+
+  // A ResizeObserver tracks the column width directly, so a pane resize re-measures
+  // this cell on its own (batched per frame by the browser) without the parent
+  // having to re-render every row on each drag tick.
+  React.useEffect(() => {
+    const el = colRef.current;
+    if (!el) return;
+    const measure = () => setColW(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Re-measure when the page changes or Bloom re-processes (same URL, new content).
+  React.useEffect(() => setM(null), [reloadKey, page]);
+
+  const onLoad = (e: React.SyntheticEvent<HTMLIFrameElement>) => {
+    try {
+      const doc = e.currentTarget.contentDocument;
+      if (!doc) return;
+      const de = doc.documentElement;
+      const b = doc.body;
+      const w = Math.max(de?.scrollWidth || 0, b?.scrollWidth || 0);
+      const h = Math.max(de?.scrollHeight || 0, b?.scrollHeight || 0);
+      if (w > 0 && h > 0) setM({ w, h });
+    } catch {
+      /* same-origin; ignore the rare unreadable doc and keep the guess */
+    }
+  };
+
+  // Render at the page's natural width, scaled down to the column. A guess before
+  // the first measure keeps the initial paint close to the right size.
+  const GUESS_W = 600;
+  const GUESS_H = Math.round(GUESS_W * 1.4);
+  const natW = m ? m.w : GUESS_W;
+  const natH = m ? m.h : GUESS_H;
+  const scale = colW > 0 ? colW / natW : 1;
+
+  return (
+    <div ref={colRef} style={{ width: "100%" }}>
+      <div
+        style={{
+          width: "100%",
+          aspectRatio: m ? String(m.w / m.h) : undefined,
+          height: m ? undefined : Math.round(GUESS_H * scale) || undefined,
+          overflow: "hidden",
+          borderRadius: 4,
+          border: "1px solid var(--border)",
+          background: "#fff",
+          position: "relative",
+        }}
+      >
+        {colW > 0 && (
+          <iframe
+            key={reloadKey}
+            title={`EPUB page ${page}`}
+            src={api.epubPageUrl(runId, page)}
+            scrolling="no"
+            onLoad={onLoad}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: natW,
+              height: natH,
+              border: "none",
+              transform: `scale(${scale})`,
+              transformOrigin: "top left",
+              pointerEvents: "none",
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+});
+
+const PairedRow = React.memo(function PairedRow({
   runId,
   pdfPage,
   bloomPage,
+  sourceKind,
   aspect,
   natW,
   natH,
-  paneWidth,
   reloadKey,
   diff,
 }: {
   runId: string;
-  // Source-PDF page rendered on the left, and the Bloom page's document index
+  // Source page rendered on the left, and the Bloom page's document index
   // rendered on the right. Either may be null (no counterpart → empty cell).
+  // For an EPUB source, `pdfPage` is the 1-based spine index.
   pdfPage: number | null;
   bloomPage: number | null;
+  sourceKind: "pdf" | "epub";
   aspect: number;
   natW: number;
   natH: number;
-  paneWidth: number;
   reloadKey: number;
   diff: DiffMode;
 }) {
@@ -2899,8 +3128,10 @@ function PairedRow({
     ro.observe(el);
     return () => ro.disconnect();
     // diff.mode is a dep because the measured element (half-width column vs.
-    // full-width overlay box) changes when toggling, so colW must re-measure.
-  }, [paneWidth, diff.mode]);
+    // full-width overlay box) changes when toggling, so colW must re-observe. A
+    // pane resize is handled by the observer itself (no paneWidth dep needed),
+    // so dragging the resizer doesn't re-run this effect on every row.
+  }, [diff.mode]);
 
   // Re-measure on reload (Bloom re-process swaps styled HTML in at the same URL).
   React.useEffect(() => setMeasured(null), [reloadKey]);
@@ -3068,7 +3299,13 @@ function PairedRow({
       ) : (
         <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
           <div ref={colRef} style={colStyle}>
-            {pdfImg}
+            {/* EPUB: the faithful spine page (illustration + prose, in the EPUB's own
+                layout). PDF: a flat page render. */}
+            {sourceKind === "epub" && pdfPage !== null ? (
+              <EpubPageCell runId={runId} page={pdfPage} reloadKey={reloadKey} />
+            ) : (
+              pdfImg
+            )}
           </div>
           <div style={colStyle}>
             {bloomPage !== null && <div style={boxStyle}>{bloomIframe}</div>}
@@ -3077,4 +3314,4 @@ function PairedRow({
       )}
     </div>
   );
-}
+});

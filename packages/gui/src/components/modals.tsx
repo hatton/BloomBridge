@@ -474,7 +474,7 @@ function previewCmd(source: Source, p: Params, start: Stage) {
       ? source.file
       : base + (start === "llm" ? ".ocr.md" : start === "plan" ? ".llm.md" : ".bloom.md");
   return (
-    "pdf2bloom " +
+    "bloombridge " +
     input +
     " \\\n  --ocr " +
     p.ocrMethod +
@@ -485,7 +485,7 @@ function previewCmd(source: Source, p: Params, start: Stage) {
       : " \\\n  --no-vision-formatting") +
     " \\\n  --cover " +
     p.coverMode +
-    (p.complexBecomesImage !== "off"
+    (p.complexBecomesImage !== "busy"
       ? " \\\n  --complex-becomes-image " + p.complexBecomesImage
       : "") +
     " \\\n  --target " +
@@ -752,7 +752,7 @@ export function SettingsModal({
               <input
                 value={s.workspace}
                 onChange={(e) => upd("workspace", e.target.value)}
-                placeholder="…/.pdf2bloom/workspace"
+                placeholder="…/.bloombridge/workspace"
                 className="mono"
                 style={{
                   width: "100%",

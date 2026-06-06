@@ -5,7 +5,7 @@ import chalk from "chalk";
 import {
   validateAndResolveCollectionPath,
   readBloomCollectionSettingsIfFound,
-} from "@pdf-to-bloom/lib";
+} from "@bloombridge/lib";
 
 // The collection helpers now live in the lib (so the GUI server can use them too);
 // re-export here so existing CLI imports keep working unchanged.
@@ -21,7 +21,7 @@ export function getApiKeys(options: any) {
 
 export async function createTempDir(): Promise<string> {
   // Creates a unique temporary directory
-  return fs.mkdtemp(path.join(os.tmpdir(), "pdf-to-bloom-"));
+  return fs.mkdtemp(path.join(os.tmpdir(), "bloombridge-"));
 }
 
 export async function cleanUpTempDir(dirPath: string) {

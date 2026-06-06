@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vite-plus/test";
-import { llmMarkdown } from "@pdf-to-bloom/lib";
+import { llmMarkdown } from "@bloombridge/lib";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";

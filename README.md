@@ -1,4 +1,4 @@
-# pdf-to-bloom
+# BloomBridge
 
 A monorepo containing tools for converting PDF documents to Bloom-compatible HTML format through intelligent markdown processing.
 
@@ -6,11 +6,11 @@ A monorepo containing tools for converting PDF documents to Bloom-compatible HTM
 
 This monorepo contains two packages:
 
-### [@pdf-to-bloom/lib](./packages/lib)
+### [@bloombridge/lib](./packages/lib)
 
-The core Node.js library that provides the PDF to Bloom conversion functionality.
+The core Node.js library that provides the BloomBridge document-to-Bloom conversion functionality.
 
-### [@pdf-to-bloom/cli](./packages/cli)
+### [@bloombridge/cli](./packages/cli)
 
 A command-line interface for converting PDFs to Bloom format.
 

@@ -2,7 +2,7 @@ import { defineConfig } from "vite-plus";
 import react from "@vitejs/plugin-react";
 import { conversionApiPlugin } from "./server/apiPlugin";
 
-// Local web app for the PDF → Bloom Conversion Manager.
+// Local web app for the BloomBridge Conversion Manager.
 // The backend API + live SSE are served by Vite itself via conversionApiPlugin
 // (no Express, no separate server); the run engine drives the lib in-process.
 export default defineConfig({

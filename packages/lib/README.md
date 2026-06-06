@@ -1,11 +1,11 @@
-# @pdf-to-bloom/core
+# @bloombridge/core
 
 The core Node.js library for converting PDF documents to Bloom-compatible HTML format.
 
 ## Installation
 
 ```bash
-pnpm add @pdf-to-bloom/core
+pnpm add @bloombridge/core
 ```
 
 ## Usage
@@ -16,7 +16,7 @@ import {
   makeMarkdownFromPDF,
   tagMarkdown,
   mdToBloomHtml,
-} from "@pdf-to-bloom/core";
+} from "@bloombridge/core";
 
 // Convert PDF directly to Bloom HTML
 const bloomHtmlPath = await pdfToBloomFolder("./document.pdf", "./output", "your-mistral-api-key");

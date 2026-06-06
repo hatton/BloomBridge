@@ -14,6 +14,7 @@ import {
   STATUS_META,
   effStatus,
   ElapsedTimer,
+  PinButton,
 } from "./primitives";
 import type { Mark, Params, Run, Source } from "../types";
 
@@ -34,6 +35,7 @@ interface CenterTableProps {
   onCheckMany: (ids: string[], v: boolean) => void;
   onCheckManyPdfs: (ids: string[], v: boolean) => void;
   onMark: (sid: string, rid: string, v: Mark) => void;
+  onPin: (sid: string, rid: string, v: boolean) => void;
   onCancelRun: (sid: string, rid: string) => void;
   onPreview: (r: Run) => void;
   statusFilter: string;
@@ -64,6 +66,7 @@ export function CenterTable(props: CenterTableProps) {
     onCheckMany,
     onCheckManyPdfs,
     onMark,
+    onPin,
     onCancelRun,
     onPreview,
     statusFilter,
@@ -224,6 +227,7 @@ export function CenterTable(props: CenterTableProps) {
               selectedRunId={selectedRunId}
               onSelectRun={onSelectRun}
               onMark={onMark}
+              onPin={onPin}
               onCancelRun={onCancelRun}
               onPreview={onPreview}
               onConfigRun={onConfigRun}
@@ -518,6 +522,7 @@ function SourceRow({
   selectedRunId,
   onSelectRun,
   onMark,
+  onPin,
   onCancelRun,
   onPreview,
   onConfigRun,
@@ -535,6 +540,7 @@ function SourceRow({
   selectedRunId: string | null;
   onSelectRun: (sid: string, rid: string) => void;
   onMark: (sid: string, rid: string, v: Mark) => void;
+  onPin: (sid: string, rid: string, v: boolean) => void;
   onCancelRun: (sid: string, rid: string) => void;
   onPreview: (r: Run) => void;
   onConfigRun: (s: Source, r: Run) => void;
@@ -602,9 +608,10 @@ function SourceRow({
             <Icon name="chevron" size={13} />
           </button>
           <img
-            src="/pdf.svg"
+            src={/\.epub$/i.test(source.file || "") ? "/epub.svg" : "/pdf.svg"}
             alt=""
             aria-hidden="true"
+            title={/\.epub$/i.test(source.file || "") ? "EPUB" : "PDF"}
             style={{ width: 18, height: 18, flexShrink: 0 }}
           />
           <div style={{ minWidth: 0 }}>
@@ -644,6 +651,7 @@ function SourceRow({
             onCheck={(v) => onCheck(r.id, v)}
             selected={selectedRunId === r.id}
             onSelect={() => onSelectRun(source.id, r.id)}
+            onPin={(v) => onPin(source.id, r.id, v)}
             defaults={defaults}
           />
         ))}
@@ -689,8 +697,17 @@ function runSummary(run: Run, defaults?: Params): string {
   if (differs("visionFormatting"))
     parts.push(p.visionFormatting === false ? "no-vision" : "vision");
   if (differs("coverMode")) parts.push("cover: " + (BLOOM.coverModes[p.coverMode] || p.coverMode));
-  if (differs("complexBecomesImage") && p.complexBecomesImage !== "off")
-    parts.push(p.complexBecomesImage === "always" ? "all-images" : "flat≥" + p.complexBecomesImage);
+  if (differs("complexBecomesImage"))
+    parts.push(
+      (
+        {
+          covers: "covers-only",
+          busy: "flatten-busy",
+          anyCanvas: "flatten-canvas",
+          all: "all-images",
+        } as Record<string, string>
+      )[p.complexBecomesImage] || p.complexBecomesImage,
+    );
   if (differs("target")) parts.push("→ " + (BLOOM.targets[p.target] || p.target));
   return parts.join(" · ") || "Using defaults";
 }
@@ -702,6 +719,7 @@ function RunRow({
   onCheck,
   selected,
   onSelect,
+  onPin,
   defaults,
 }: {
   run: Run;
@@ -709,6 +727,7 @@ function RunRow({
   onCheck: (v: boolean) => void;
   selected: boolean;
   onSelect: () => void;
+  onPin: (v: boolean) => void;
   defaults?: Params;
 }) {
   const running = run.status === "running";
@@ -774,6 +793,9 @@ function RunRow({
             }}
           >
             {runSummary(run, defaults)}
+          </span>
+          <span style={{ marginLeft: "auto", flexShrink: 0 }}>
+            <PinButton pinned={!!run.pinned} onChange={onPin} size={13} />
           </span>
         </div>
         <div title={failed && run.error ? run.error.message : undefined}>

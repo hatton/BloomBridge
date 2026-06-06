@@ -10,7 +10,7 @@ const program = new Command();
 
 // --- Commander.js Setup ---
 program
-  .name("pdf-to-bloom")
+  .name("bloombridge")
   .description("Convert PDF documents to Bloom-compatible HTML format")
   .version("1.0.0");
 
@@ -76,9 +76,9 @@ program
     "Emit a data-import-source-hash on every page (the hash of its source PDF page render) and skip master-page substitution. Use this once to build a 'master' book: run it on the publisher's sample, hand-perfect the complex pages in Bloom, then rename the folder to end in 'master'. Normal imports then substitute those pages automatically.",
   )
   .option(
-    "--complex-becomes-image <level>",
-    "When a page is too complex to reconstruct as editable text, import it as a single full-page image instead. Scalar sensitivity: 'off' (never, default), '0' (every canvas page), '1' (timid — bail easily) … '5' (only the most complex). Lower = flattens more readily. 'always' imports EVERY page as a full-page image, OCR-ing only a few pages for metadata/languages and skipping all per-page layout analysis. Flattened pages carry a data-conversion-note. Requires PDF input.",
-    "off",
+    "--complex-becomes-image <which>",
+    "For which pages should the converter snapshot the original PDF page instead of rebuilding it as editable text (the translatability-vs-fidelity tradeoff)? 'covers' rebuilds every interior page as editable text; 'busy' (default) additionally snapshots pages too busy to convert well; 'anyCanvas' snapshots any page with text over a picture; 'all' snapshots EVERY page (OCR-ing only a few pages for metadata/languages, skipping all per-page layout analysis). Legacy values (off, 0-5, always) are still accepted. Flattened pages carry a data-conversion-note. Requires PDF input.",
+    "busy",
   )
   .option("--verbose", "Enable verbose logging to see detailed process steps")
   .option(
@@ -106,7 +106,7 @@ program
         visionFormatting: options.visionFormatting,
         visionModelName: options.visionModel,
         emitSourceHashes: options.emitSourceHashes || false,
-        complexBecomesImage: options.complexBecomesImage || "off",
+        complexBecomesImage: options.complexBecomesImage || "busy",
         jsonEvents: options.jsonEvents || false,
       };
 
@@ -114,7 +114,7 @@ program
     } else {
       // This should never happen now since input is required, but kept for robustness
       console.error(chalk.red("❌ Error: Input path is required for file conversion operations."));
-      console.log(chalk.blue("💡 Tip: Use 'pdf-to-bloom --help' for usage instructions."));
+      console.log(chalk.blue("💡 Tip: Use 'bloombridge --help' for usage instructions."));
       process.exit(1);
     }
   });
@@ -124,9 +124,9 @@ program
 // Version command (kept as is)
 program
   .command("version")
-  .description("Show version information for the pdf-to-bloom CLI")
+  .description("Show version information for the BloomBridge CLI")
   .action(() => {
-    console.log(chalk.blue("pdf-to-bloom CLI v1.0.0"));
+    console.log(chalk.blue("BloomBridge CLI v1.0.0"));
     console.log(chalk.gray("A tool for converting PDF documents to Bloom format"));
   });
 

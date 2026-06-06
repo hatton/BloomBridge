@@ -29,7 +29,7 @@ export interface Params {
   visionFormatting: boolean; // --vision-formatting / --no-vision-formatting
   visionModel: string; // --vision-model
   coverMode: string; // --cover (auto | render | none)
-  complexBecomesImage: string; // --complex-becomes-image (off | 0..5 | always)
+  complexBecomesImage: string; // --complex-becomes-image (covers | busy | anyCanvas | all)
   target: string; // --target (images | ocr | tagged | bloom)
 }
 
@@ -58,6 +58,8 @@ export interface Run {
   id: string;
   status: RunStatus;
   mark: Mark;
+  /** Pinned runs survive when a new conversion of the same PDF disposes prior runs. */
+  pinned?: boolean;
   stages: Record<Stage, boolean>;
   model: string;
   ocrMethod?: string;

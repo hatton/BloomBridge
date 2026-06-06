@@ -161,7 +161,7 @@ This book may include minority language text with unusual characters. Therefore,
         Authorization: `Bearer ${openRouterApiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://github.com/hatton/pdf-to-bloom",
-        "X-Title": "PDF to Bloom Converter",
+        "X-Title": "BloomBridge",
       },
       body: JSON.stringify(requestBody),
     });

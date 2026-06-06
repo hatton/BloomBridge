@@ -1,7 +1,7 @@
 {
-  "name": "@pdf-to-bloom/lib",
+  "name": "@bloombridge/lib",
   "version": "1.0.0",
-  "description": "Core Node.js library for PDF to Bloom conversion",
+  "description": "BloomBridge core library — convert documents to Bloom format",
   "files": [
     "dist"
   ],

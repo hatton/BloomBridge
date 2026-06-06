@@ -1,4 +1,4 @@
-# pdf-to-bloom command line tool
+# BloomBridge command line tool
 
 Command-line interface for converting PDF and markdown documents to Bloom books.
 
@@ -17,18 +17,18 @@ The recommended way to use the tool is with the `--collection` option, though if
 ```bash
 
 # Default behavior - automatically uses most recently opened Bloom collection
-pdf-to-bloom Ebida.pdf
+bloombridge Ebida.pdf
 
 # When --collection is used, the languages specified in the .bloomCollection will be fed to the llm as a hint of what languages to expect
 # use the most recently opened Bloom collection (release, alpha, beta, or betainternal)
 
-pdf-to-bloom Ebida.pdf --collection recent
+bloombridge Ebida.pdf --collection recent
 
 # Simple collection name (recommended) - expands to ~/Documents/Bloom/<collection-name>
-pdf-to-bloom Ebida.pdf --collection "Edolo Books"
+bloombridge Ebida.pdf --collection "Edolo Books"
 
 # Full path to collection folder
-pdf-to-bloom Ebida.pdf --collection "C:\Users\MudMan\Documents\Bloom\Edolo Books"
+bloombridge Ebida.pdf --collection "C:\Users\MudMan\Documents\Bloom\Edolo Books"
 
 ```
 
@@ -37,7 +37,7 @@ Then run or restart Bloom to see the book.
 Alternatively, you can use the `--output` option to specify a custom output directory:
 
 ```bash
-pdf-to-bloom Ebida.pdf --output "path/to/create/the/output/folder"
+bloombridge Ebida.pdf --output "path/to/create/the/output/folder"
 ```
 
 ## About Language Detection and Bloom Collections
@@ -70,7 +70,7 @@ C:\Users\MudMan\Documents\Bloom\Edolo Books\
 and we run
 
 ```bash
-pdf-to-bloom Ebida.pdf --collection "C:\Users\MudMan\Documents\Bloom\Edolo Books"
+bloombridge Ebida.pdf --collection "C:\Users\MudMan\Documents\Bloom\Edolo Books"
 ```
 
 The tool will find `EdoloBooks.bloomCollection` and use its language settings (L1, L2, L3) to help the LLM process the content more accurately.
@@ -109,11 +109,11 @@ To specify the end stage, add the `--target` option using one of these values:
 
 For example, to convert PDF to markdown only:
 
-`pdf-to-bloom mybook.pdf --target=markdown`
+`bloombridge mybook.pdf --target=markdown`
 
 To extract only images from a PDF:
 
-`pdf-to-bloom mybook.pdf --target=images`
+`bloombridge mybook.pdf --target=images`
 
 ## Vision formatting (on by default)
 
@@ -127,8 +127,8 @@ missing it is skipped with a warning (the conversion still completes). Disable i
 `--no-vision-formatting`:
 
 ```bash
-pdf-to-bloom mybook.pdf --collection recent          # vision-formatting runs
-pdf-to-bloom mybook.pdf --collection recent --no-vision-formatting   # skip it
+bloombridge mybook.pdf --collection recent          # vision-formatting runs
+bloombridge mybook.pdf --collection recent --no-vision-formatting   # skip it
 ```
 
 Results are cached in the `.ocr.md`, so re-running later stages does not re-pay for the
@@ -138,7 +138,7 @@ By default the vision pass uses a capable Google Gemini model. Override it indep
 of the `--model` (LLM enrichment) option with `--vision-model`:
 
 ```bash
-pdf-to-bloom mybook.pdf --vision-formatting --vision-model "openai/gpt-5.4"
+bloombridge mybook.pdf --vision-formatting --vision-model "openai/gpt-5.4"
 ```
 
 ## Image metadata (illustrator, copyright, license)
@@ -174,7 +174,7 @@ from full-resolution PDFs still matches the same page in a re-compressed copy.
    the output HTML with a `data-import-source-hash` (and skips substitution).
 
    ```bash
-   pdf-to-bloom sample.pdf --collection "My Collection" --emit-source-hashes
+   bloombridge sample.pdf --collection "My Collection" --emit-source-hashes
    ```
 
 2. Open the book in Bloom, perfect the complex pages, delete the rest, and **rename the
@@ -200,32 +200,35 @@ render such a page to a **single full-page image** (the same way it handles full
 covers), so it looks exactly like the original. The trade-off: that page's text is then
 a picture — not editable, translatable, or searchable in Bloom.
 
-Because "too complex" is a matter of degree, the option is a scalar dial, not a switch:
+This is the translatability-vs-fidelity tradeoff. The option picks which pages to
+snapshot, framed as four additive choices (each snapshots strictly more than the one
+above):
 
 ```bash
-pdf-to-bloom mybook.pdf --collection recent --complex-becomes-image 4
+bloombridge mybook.pdf --collection recent --complex-becomes-image anyCanvas
 ```
 
-| value           | behavior                                    |
-| --------------- | ------------------------------------------- |
-| `off` (default) | never flatten — always reconstruct as text  |
-| `0`             | flatten every canvas page                   |
-| `1`             | timid — flatten at the slightest complexity |
-| `2`–`4`         | progressively braver                        |
-| `5`             | only flatten the most complex pages         |
-| `always`        | import **every** page as a full-page image  |
+| value            | behavior                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| `covers`         | only image covers — rebuild every interior page as editable text                     |
+| `busy` (default) | also snapshot canvas pages too busy to convert well (≥ `BUSY_THRESHOLD` text blocks) |
+| `anyCanvas`      | also snapshot any page with text over a picture (every canvas page)                  |
+| `all`            | snapshot **every** page (maximum fidelity; nothing editable/translatable)            |
 
-Lower = flattens more readily. Each flattened page carries a `data-conversion-note`
-recording why and how to change it. Requires a PDF input (the page is rendered from the
-PDF), so it runs on the `--ocr gpt`/`gemini` path.
+Legacy values are still accepted: `off` → `covers`, `0` → `anyCanvas`, `1`–`5` map to
+the old numeric thresholds, `always` → `all`. The common canvas page (a picture with one
+block of text on it) stays editable at `covers`/`busy` and only snapshots at `anyCanvas`.
+Each snapshotted page carries a `data-conversion-note` recording why and how to change
+it. Requires a PDF input (the page is rendered from the PDF), so it runs on the
+`--ocr gpt`/`gemini` path.
 
-### `always` — the whole book as page images
+### `all` — the whole book as page images
 
 ```bash
-pdf-to-bloom mybook.pdf --collection recent --complex-becomes-image always
+bloombridge mybook.pdf --collection recent --complex-becomes-image all
 ```
 
-`always` is a different mode from the numeric levels. Instead of judging each page, it
+`all` is a different mode from the per-page choices. Instead of judging each page, it
 imports **every** PDF page as a full-page image, producing a Bloom book that looks
 exactly like the source with no per-page reconstruction. To still fill in the book's
 metadata (title, author, license) and detect its languages for Bloom, it OCRs just a

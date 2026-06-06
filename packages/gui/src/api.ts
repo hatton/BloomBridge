@@ -66,6 +66,8 @@ export const api = {
       "POST",
     ),
   recentFolders: () => getJson<{ folders: string[] }>("/api/recent-folders"),
+  pickFolder: (initial?: string) =>
+    sendJson<{ path: string | null }>("/api/pick-folder", "POST", { initial }),
   folder: (path: string) =>
     getJson<{ folder: string; sources: Source[] }>("/api/folder?path=" + encodeURIComponent(path)),
   folderSettings: (path: string) =>
@@ -86,6 +88,8 @@ export const api = {
   remove: (runId: string) => sendJson<{ ok: boolean }>(`/api/runs/${runId}`, "DELETE"),
   rate: (runId: string, rating: "none" | "keeper" | "disapproved") =>
     sendJson<{ ok: boolean }>(`/api/runs/${runId}/rating`, "POST", { rating }),
+  pin: (runId: string, pinned: boolean) =>
+    sendJson<{ ok: boolean }>(`/api/runs/${runId}/pin`, "POST", { pinned }),
   notes: (runId: string, notes: string) =>
     sendJson<{ ok: boolean }>(`/api/runs/${runId}/notes`, "POST", { notes }),
   runLog: (runId: string) => getJson<{ lines: string[] }>(`/api/runs/${runId}/log`),
@@ -119,6 +123,8 @@ export const api = {
     getJson<{
       ready: boolean;
       reason?: string;
+      /** Which kind of source the left column shows (PDF render vs EPUB illustration). */
+      sourceKind?: "pdf" | "epub";
       pdfPages: number;
       bloomPages: number;
       // Explicit per-row alignment: each row renders one source-PDF page and/or one
@@ -130,6 +136,9 @@ export const api = {
     }>(`/api/runs/${runId}/page-pairs`),
   pdfPageUrl: (runId: string, page: number, dpi = 150) =>
     `/api/runs/${runId}/pdf-page?page=${page}&dpi=${dpi}`,
+  // One source EPUB spine page rendered faithfully (illustration + prose) as a
+  // self-contained HTML doc, for the paired preview's left column.
+  epubPageUrl: (runId: string, page: number) => `/api/runs/${runId}/epub-page?page=${page}`,
   bookPageUrl: (runId: string, page: number, v = 0) =>
     `/api/runs/${runId}/book/__page-${page}.html${v ? `?v=${v}` : ""}`,
   // Ask Bloom to fully process this run's book (writes CSS + browser fix-ups),

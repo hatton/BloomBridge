@@ -1,6 +1,6 @@
 # Development Instructions for LLMs
 
-This is a Node.js monorepo for PDF to Bloom conversion tools with the following technical stack and conventions:
+This is the BloomBridge monorepo for converting documents to Bloom format, with the following technical stack and conventions:
 
 ## Project Structure
 

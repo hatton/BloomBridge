@@ -80,11 +80,20 @@ export default defineConfig({
   build: {
     lib: {
       entry: "src/index.ts",
-      name: "PdfToBloom",
+      name: "BloomBridge",
       formats: ["es", "cjs"],
       fileName: (format) => `index.${format === "es" ? "mjs" : "cjs"}`,
     },
     rollupOptions: {
+      // `unpdf` locates its bundled pdfjs via `import.meta.resolve(...)`. In the CJS
+      // output the bundler rewrites `import.meta` to `{}` — the same benign pattern our
+      // own moduleDir.ts deliberately relies on (try `import.meta.url`, fall back to
+      // `__dirname`). Suppress only that one code so it doesn't bury real warnings;
+      // everything else still goes through the default handler.
+      onwarn(warning, defaultHandler) {
+        if (warning.code === "EMPTY_IMPORT_META") return;
+        defaultHandler(warning);
+      },
       external: [
         "fs",
         "fs/promises",
@@ -100,6 +109,8 @@ export default defineConfig({
         "https",
         "buffer",
         "events",
+        "zlib",
+        "node:zlib",
         "async_hooks",
         "node:async_hooks",
         "sharp", // Add Sharp as external to avoid bundling issues

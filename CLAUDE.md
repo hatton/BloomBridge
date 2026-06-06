@@ -13,8 +13,8 @@ pnpm workspaces monorepo converting PDF documents to Bloom-compatible HTML throu
 
 **Two packages:**
 
-- `packages/lib` (`@pdf-to-bloom/lib`) — core TypeScript library, dual ESM/CJS build
-- `packages/cli` (`@pdf-to-bloom/cli`) — Commander.js CLI that imports the lib
+- `packages/lib` (`@bloombridge/lib`) — core TypeScript library, dual ESM/CJS build
+- `packages/cli` (`@bloombridge/cli`) — Commander.js CLI that imports the lib
 
 ## Toolchain
 
@@ -70,7 +70,7 @@ Many tests require missing test fixtures (PDFs) or live API keys (`MISTRAL_API_K
 To run a single test file manually:
 
 ```bash
-vp run -F @pdf-to-bloom/lib test packages/lib/src/2-llm/llmMarkdown.manual.test.ts
+vp run -F @bloombridge/lib test packages/lib/src/2-llm/llmMarkdown.manual.test.ts
 ```
 
 ## Format, Lint, Type-check

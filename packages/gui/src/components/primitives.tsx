@@ -262,6 +262,51 @@ export function MarkControl({
   );
 }
 
+// ---------- Pin / unpin toggle ----------
+export function PinButton({
+  pinned,
+  onChange,
+  size = 14,
+}: {
+  pinned: boolean;
+  onChange: (v: boolean) => void;
+  size?: number;
+}) {
+  return (
+    <button
+      title={pinned ? "Pinned — click to unpin" : "Pin this run (keep it when re-converting)"}
+      aria-pressed={pinned}
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange(!pinned);
+      }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 22,
+        height: 22,
+        borderRadius: 5,
+        border: "1px solid transparent",
+        background: "transparent",
+        color: pinned ? "var(--accent)" : "var(--text-3)",
+        opacity: pinned ? 1 : 0.6,
+        transition: "all .12s",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.opacity = "1";
+        if (!pinned) e.currentTarget.style.background = "var(--surface-2)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.opacity = pinned ? "1" : "0.6";
+        e.currentTarget.style.background = "transparent";
+      }}
+    >
+      <Icon name={pinned ? "pin-filled" : "pin"} size={size} strokeWidth={1.6} />
+    </button>
+  );
+}
+
 // Book thumbnails removed by request — render nothing wherever Thumb was used.
 export function Thumb(_props?: { hue?: number; w?: number; h?: number }) {
   return null;

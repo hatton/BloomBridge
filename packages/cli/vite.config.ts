@@ -12,7 +12,7 @@ export default defineConfig({
     emptyOutDir: true,
     lib: {
       entry: resolve(__dirname, "src/index.ts"),
-      name: "pdf-to-bloom-cli",
+      name: "bloombridge-cli",
       formats: ["es"],
       fileName: () => "index.js",
     },
@@ -37,7 +37,7 @@ export default defineConfig({
         // Dependencies that should remain external
         "chalk",
         "commander",
-        "@pdf-to-bloom/lib",
+        "@bloombridge/lib",
       ],
       output: {
         banner: "#!/usr/bin/env node",

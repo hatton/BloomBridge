@@ -14,7 +14,7 @@ test("app loads, scans a folder, lists PDFs, and runs an images-only conversion"
   await page.goto("/");
 
   // 1) The app shell renders.
-  await expect(page.getByText("PDF → Bloom").first()).toBeVisible();
+  await expect(page.getByText("BloomBridge").first()).toBeVisible();
   await expect(page.getByText("Conversion Manager").first()).toBeVisible();
 
   // If no OpenRouter key is configured, the Settings dialog auto-opens and blocks

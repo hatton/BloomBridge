@@ -1,3 +1,4 @@
+import { describe, it, expect } from "vite-plus/test";
 import { BloomMarkdown } from "../bloom-markdown/parseMarkdown";
 import { addBloomPlanToMarkdown } from "./addBloomPlan";
 import { normalizeMarkdown } from "../test-utils";

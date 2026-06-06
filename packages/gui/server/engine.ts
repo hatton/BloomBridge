@@ -15,7 +15,7 @@ import {
   getRunningBloomCollection,
   type ConversionEvent,
   type RunArgs,
-} from "@pdf-to-bloom/lib";
+} from "@bloombridge/lib";
 import { getSettings } from "./settings";
 
 export type RunStatus = "queued" | "running" | "failed" | "done" | "cancelled";
@@ -35,6 +35,9 @@ export interface RunRecord {
   bookName: string;
   status: RunStatus;
   rating: Rating;
+  /** Pinned runs survive when a new conversion of the same PDF disposes prior runs.
+   *  Approving a run (rating "keeper") auto-pins it. */
+  pinned?: boolean;
   params: Record<string, any>;
   collection?: string;
   target: string;
@@ -206,6 +209,21 @@ export async function enqueueRuns(
   const { workspace } = await getSettings();
   const created: RunRecord[] = [];
   for (const src of sources) {
+    // Starting a new conversion clears the slate: dispose prior unpinned runs for
+    // this PDF (but never an in-flight run — only ones that have settled).
+    for (const old of [...runs.values()]) {
+      if (
+        old.sourceId === src.id &&
+        !old.pinned &&
+        old.status !== "running" &&
+        old.status !== "queued"
+      ) {
+        cancelFlags.add(old.id);
+        runs.delete(old.id);
+        await fs.rm(old.runDir, { recursive: true, force: true }).catch(() => {});
+        broadcast("run-deleted", { runId: old.id, sourceId: old.sourceId });
+      }
+    }
     const runId = "r" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
     const runDir = path.join(workspace, src.id + "-" + slug(src.name), runId);
     const rec: RunRecord = {
@@ -446,6 +464,17 @@ export async function setRating(runId: string, rating: Rating) {
     }
   }
   rec.rating = rating;
+  // Approving a run pins it so a later conversion of the same PDF won't dispose it.
+  if (rating === "keeper") rec.pinned = true;
+  await writeRunJson(rec);
+  pushRun(rec);
+}
+
+export async function setPinned(runId: string, pinned: boolean) {
+  await ensureLoaded();
+  const rec = runs.get(runId);
+  if (!rec) return;
+  rec.pinned = pinned;
   await writeRunJson(rec);
   pushRun(rec);
 }
@@ -490,6 +519,7 @@ export interface GuiRun {
   id: string;
   status: string; // notrun|queued|running|failed|done
   mark: string; // good|bad|neutral
+  pinned: boolean;
   stages: Record<string, boolean>;
   model: string;
   ocrMethod?: string;
@@ -566,6 +596,7 @@ function toGuiRun(rec: RunRecord): GuiRun {
     id: rec.id,
     status: guiStatus,
     mark,
+    pinned: !!rec.pinned,
     stages: done,
     model: rec.params.model || "",
     ocrMethod: rec.params.ocrMethod,
@@ -659,6 +690,52 @@ export async function osOpen(target: string, mode: "file" | "folder" | "vscode")
     cmd = `xdg-open ${q(target)}`;
   }
   spawn(cmd, { detached: true, stdio: "ignore", shell: true }).unref();
+}
+
+/**
+ * Show a native OS folder-picker and resolve to the chosen absolute path, or null
+ * if the user cancelled. Runs synchronously from the user's point of view: the
+ * dialog is modal in its own process and we await its stdout.
+ */
+export async function pickFolder(initial?: string): Promise<string | null> {
+  const { spawn } = await import("node:child_process");
+  let cmd: string;
+  let args: string[];
+  if (process.platform === "win32") {
+    // -STA is required for FolderBrowserDialog; pwsh defaults to MTA.
+    const start = initial ? `$d.SelectedPath = '${initial.replace(/'/g, "")}';` : "";
+    const ps =
+      `Add-Type -AssemblyName System.Windows.Forms;` +
+      `$d = New-Object System.Windows.Forms.FolderBrowserDialog;` +
+      `$d.Description = 'Select source folder';` +
+      `$d.ShowNewFolderButton = $false;` +
+      start +
+      `if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($d.SelectedPath) }`;
+    cmd = "powershell";
+    args = ["-NoProfile", "-STA", "-Command", ps];
+  } else if (process.platform === "darwin") {
+    const loc = initial ? ` default location (POSIX file "${initial.replace(/"/g, "")}")` : "";
+    cmd = "osascript";
+    args = ["-e", `POSIX path of (choose folder with prompt "Select source folder"${loc})`];
+  } else {
+    cmd = "zenity";
+    args = ["--file-selection", "--directory", "--title=Select source folder"];
+    if (initial) args.push(`--filename=${initial.replace(/\/?$/, "/")}`);
+  }
+  return new Promise((resolve) => {
+    let out = "";
+    try {
+      const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "ignore"] });
+      child.stdout.on("data", (b) => (out += b.toString()));
+      child.on("error", () => resolve(null));
+      child.on("close", () => {
+        const picked = out.trim();
+        resolve(picked || null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 export async function readArtifactFile(runId: string, file: string): Promise<string | null> {

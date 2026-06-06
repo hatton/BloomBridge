@@ -1,15 +1,15 @@
 ---
 name: bloom-automation
-description: Use when you need to SEE the result of a pdf-to-bloom conversion in the real Bloom app — start Bloom from the Remote-Reload worktree, attach to its embedded WebView2 over CDP, select a converted book in the Collection-tab preview, screenshot individual pages, trigger a live reload of a re-converted book, and compare Bloom's rendering to the source PDF page images. This closes the loop: convert → view → compare → adjust the pdf-to-bloom code → re-convert.
+description: Use when you need to SEE the result of a BloomBridge conversion in the real Bloom app — start Bloom from the Remote-Reload worktree, attach to its embedded WebView2 over CDP, select a converted book in the Collection-tab preview, screenshot individual pages, trigger a live reload of a re-converted book, and compare Bloom's rendering to the source PDF page images. This closes the loop: convert → view → compare → adjust the BloomBridge code → re-convert.
 argument-hint: "what to view, e.g. 'screenshot the thief cover and compare to source', 'reload after re-running the conversion'"
 user-invocable: true
 ---
 
-# View pdf-to-bloom Results in the Real Bloom App
+# View BloomBridge Results in the Real Bloom App
 
 ## Outcome
 
-Run a `@pdf-to-bloom` conversion, see the resulting book in a running Bloom, grab a
+Run a `BloomBridge` conversion, see the resulting book in a running Bloom, grab a
 screenshot of any page, and compare it to the source image extracted/rendered from
 the PDF. Then change the conversion code, re-run, trigger a live reload, and look
 again — without restarting Bloom.
@@ -27,7 +27,7 @@ This is for **inspecting conversion output**, not for developing Bloom itself.
    the Collection-tab preview pane (see `captureBookPages.mjs` below).
 3. **Compare** the screenshot to the source page image in the book folder
    (`cover.jpg`, `back-cover.jpg`, `image-N-1.png`) or to a fresh full-page render.
-4. **Adjust** the pdf-to-bloom code, rebuild (`pnpm build`), re-run the conversion,
+4. **Adjust** the BloomBridge code, rebuild (`pnpm build`), re-run the conversion,
    and reload (`--reload`, or just let the pipeline's notify do it).
 
 ## Key facts (confirmed in this environment)
