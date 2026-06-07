@@ -95,6 +95,47 @@ const isDecorativeImage = (src: string): boolean => /(^|\/)(i-\d|logo|sc\.)/i.te
 const pickMainImage = (imgs: string[]): string | undefined =>
   imgs.find((i) => !isDecorativeImage(i));
 
+/**
+ * Intrinsic pixel size of a JPEG or PNG from its header (no decode, no dependency).
+ * Returns null for unrecognised data. Used to read illustration aspect ratios so we can
+ * pick the book's page orientation.
+ */
+function intrinsicSize(buf: Buffer): { w: number; h: number } | null {
+  if (buf.length > 24 && buf[0] === 0x89 && buf[1] === 0x50)
+    // PNG: IHDR width/height
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  if (buf.length > 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+    // JPEG: scan segments for a Start-Of-Frame marker, which carries height/width.
+    let o = 2;
+    while (o < buf.length - 8) {
+      if (buf[o] !== 0xff) {
+        o++;
+        continue;
+      }
+      const m = buf[o + 1];
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc)
+        return { h: buf.readUInt16BE(o + 5), w: buf.readUInt16BE(o + 7) };
+      o += 2 + buf.readUInt16BE(o + 2);
+    }
+  }
+  return null;
+}
+
+/**
+ * Decide a Bloom page-size token from the illustrations' dominant aspect. Reflowable
+ * picture books carry no page geometry, but their illustrations do: a landscape book
+ * has landscape illustrations. Median aspect > 1.15 → landscape, < 0.87 → portrait,
+ * otherwise default portrait. Returns null when there aren't enough images to judge.
+ */
+function orientationFromAspects(aspects: number[]): "A5Landscape" | "A5Portrait" | null {
+  if (aspects.length < 2) return null;
+  const sorted = [...aspects].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  if (median > 1.15) return "A5Landscape";
+  if (median < 0.87) return "A5Portrait";
+  return null; // ambiguous → leave the pipeline default (A5Portrait)
+}
+
 /** Text of `<p|div class="…matching…">` blocks (front/back-matter prose), in order. */
 const classedParagraphs = (xhtml: string, classRe: RegExp): string[] => {
   const re = new RegExp(
@@ -404,6 +445,9 @@ export async function epubToBloomMarkdown(
   // Emit images + tagged markdown.
   fs.mkdirSync(bookFolder, { recursive: true });
   const copied = new Set<string>();
+  // Illustration aspect ratios (w/h), gathered as we copy real illustrations, so we can
+  // pick the page orientation from the book's own artwork (see orientationFromAspects).
+  const aspects: number[] = [];
   const useImage = (docDir: string, src: string, destName?: string): string | null => {
     const zpath = resolveZipPath(docDir, src);
     const bytes = zip.get(zpath);
@@ -414,19 +458,21 @@ export async function epubToBloomMarkdown(
     const dest = destName || path.basename(zpath);
     fs.writeFileSync(path.join(bookFolder, dest), bytes);
     copied.add(dest);
+    const size = intrinsicSize(bytes);
+    if (size && size.w > 0 && size.h > 0) aspects.push(size.w / size.h);
     return dest;
   };
 
   const L1 = language;
-  const out: string[] = [];
-  out.push(
+  const header = [
     "---",
     `l1: "${L1}"`,
     "languages:",
     `  ${L1}: ${JSON.stringify(langName(L1))}`,
     "---",
     "",
-  );
+  ];
+  const out: string[] = [];
 
   let emitted = 0;
   let sourcePage = 0; // 1-based spine index of the page being processed
@@ -503,11 +549,23 @@ export async function epubToBloomMarkdown(
     emitPage(contentAttrs, lines);
   }
 
+  // A landscape book (landscape illustrations) is told to Bloom — and shown in the GUI
+  // preview — as landscape, via a `<!-- book page-size=… -->` hint that parseMarkdown reads
+  // into the book's pageSize (the same channel the PDF stage uses). Portrait is the default,
+  // so we only emit the hint for landscape.
+  const pageSize = orientationFromAspects(aspects);
+  const bookHint = pageSize === "A5Landscape" ? [`<!-- book page-size="${pageSize}" -->`, ""] : [];
+
   logger.info(
-    `EPUB extracted: ${emitted} page(s), language "${L1}", ${copied.size} image(s) — no OCR/LLM needed.`,
+    `EPUB extracted: ${emitted} page(s), language "${L1}", ${copied.size} image(s)` +
+      `${pageSize ? `, ${pageSize}` : ""} — no OCR/LLM needed.`,
   );
 
-  return { markdown: out.join("\n"), language: L1, pageCount: emitted };
+  return {
+    markdown: [...header, ...bookHint, ...out].join("\n"),
+    language: L1,
+    pageCount: emitted,
+  };
 }
 
 /** Number of EPUB source (spine) pages — the source-page count for the paired preview. */

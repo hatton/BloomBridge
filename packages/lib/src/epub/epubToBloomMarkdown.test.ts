@@ -201,6 +201,79 @@ describe("epubToBloomMarkdown", () => {
     expect(readEpubEntry(epubPath, "OEBPS/nope.css")).toBeNull();
   });
 
+  // A minimal but real JPEG header (SOF0) declaring w×h, so intrinsicSize can read it.
+  function jpeg(w: number, h: number): Buffer {
+    return Buffer.from([
+      0xff,
+      0xd8,
+      0xff,
+      0xc0,
+      0x00,
+      0x11,
+      0x08,
+      (h >> 8) & 0xff,
+      h & 0xff,
+      (w >> 8) & 0xff,
+      w & 0xff,
+      0x03,
+      0x01,
+      0x22,
+      0x00,
+      0x02,
+      0x11,
+      0x01,
+      0x03,
+      0x11,
+      0x01,
+      0xff,
+      0xd9,
+    ]);
+  }
+
+  // Build a 2-content-page EPUB whose illustrations have the given pixel size.
+  function epubWithImageSize(w: number, h: number): Uint8Array {
+    const opf = `<?xml version="1.0"?>
+<package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:language>en</dc:language></metadata>
+<manifest>
+<item id="p1" href="Text/p1.xhtml" media-type="application/xhtml+xml"/>
+<item id="p2" href="Text/p2.xhtml" media-type="application/xhtml+xml"/>
+<item id="i1" href="Images/p1.jpg" media-type="image/jpeg"/>
+<item id="i2" href="Images/p2.jpg" media-type="image/jpeg"/>
+</manifest>
+<spine><itemref idref="p1"/><itemref idref="p2"/></spine></package>`;
+    const pg = (n: number) =>
+      `<html><body><section><div class="container"><img src="../Images/p${n}.jpg"/></div><div class="p">Page ${n}.</div></section></body></html>`;
+    return zip([
+      file("mimetype", "application/epub+zip"),
+      file(
+        "META-INF/container.xml",
+        `<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
+      ),
+      file("OEBPS/content.opf", opf),
+      file("OEBPS/Text/p1.xhtml", pg(1)),
+      file("OEBPS/Text/p2.xhtml", pg(2)),
+      { name: "OEBPS/Images/p1.jpg", data: jpeg(w, h) },
+      { name: "OEBPS/Images/p2.jpg", data: jpeg(w, h) },
+    ]);
+  }
+
+  async function convert(bytes: Uint8Array): Promise<string> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "epub-orient-"));
+    const epubPath = path.join(dir, "in.epub");
+    fs.writeFileSync(epubPath, bytes);
+    return (await epubToBloomMarkdown(epubPath, path.join(dir, "book"))).markdown;
+  }
+
+  it("emits a landscape page-size hint when illustrations are landscape", async () => {
+    const md = await convert(epubWithImageSize(1024, 600));
+    expect(md).toContain('<!-- book page-size="A5Landscape" -->');
+  });
+
+  it("emits no page-size hint for portrait illustrations (portrait is the default)", async () => {
+    const md = await convert(epubWithImageSize(600, 900));
+    expect(md).not.toContain("page-size=");
+  });
+
   it("uses the OPF language for l1", async () => {
     const { bookDir, epubPath } = run("bi");
     const { markdown, language } = await epubToBloomMarkdown(epubPath, bookDir);
