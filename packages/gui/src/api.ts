@@ -1,5 +1,12 @@
 /* Typed client for the Conversion Manager API (served by the Vite plugin). */
-import type { Run, Source, Params } from "./types";
+import type { Run, Source, Params, MetadataItem, ChecklistMark } from "./types";
+
+/** URL-safe base64 of a (possibly non-ASCII) string — used to key a file path into a path segment. */
+const b64url = (s: string): string =>
+  btoa(String.fromCharCode(...new TextEncoder().encode(s)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 
 async function parseOrThrow<T>(res: Response): Promise<T> {
   const text = await res.text();
@@ -92,6 +99,13 @@ export const api = {
     sendJson<{ ok: boolean }>(`/api/runs/${runId}/pin`, "POST", { pinned }),
   notes: (runId: string, notes: string) =>
     sendJson<{ ok: boolean }>(`/api/runs/${runId}/notes`, "POST", { notes }),
+  // Extracted-metadata checklist: items (with values) + the user's review marks.
+  runMetadata: (runId: string) =>
+    getJson<{ items: MetadataItem[]; marks: Record<string, ChecklistMark> }>(
+      `/api/runs/${runId}/metadata`,
+    ),
+  setChecklistMark: (runId: string, key: string, mark: ChecklistMark | null) =>
+    sendJson<{ ok: boolean }>(`/api/runs/${runId}/checklist`, "POST", { key, mark }),
   runLog: (runId: string) => getJson<{ lines: string[] }>(`/api/runs/${runId}/log`),
   artifacts: (runId: string) =>
     getJson<{
@@ -127,6 +141,8 @@ export const api = {
       sourceKind?: "pdf" | "epub";
       pdfPages: number;
       bloomPages: number;
+      /** Formatted total size of the Bloom book folder (e.g. "2.3 MB"). */
+      bloomSize?: string;
       // Explicit per-row alignment: each row renders one source-PDF page and/or one
       // Bloom page (the page's 1-based document index for bookPageUrl). A null on
       // either side means that side has no counterpart (blank/dropped or xMatter).
@@ -136,9 +152,13 @@ export const api = {
     }>(`/api/runs/${runId}/page-pairs`),
   pdfPageUrl: (runId: string, page: number, dpi = 150) =>
     `/api/runs/${runId}/pdf-page?page=${page}&dpi=${dpi}`,
-  // One source EPUB spine page rendered faithfully (illustration + prose) as a
-  // self-contained HTML doc, for the paired preview's left column.
-  epubPageUrl: (runId: string, page: number) => `/api/runs/${runId}/epub-page?page=${page}`,
+  // One source EPUB spine page, served by the resource proxy (its own images/CSS/fonts
+  // resolve under this prefix) for the paired preview's left column. /spine/<index>
+  // redirects to that spine document; the GUI loads it in an iframe and scales it to fit.
+  epubSpineUrl: (runId: string, page: number) => `/api/epub/run/${runId}/spine/${page}`,
+  // Same, for an as-yet-unconverted source EPUB (no run): keyed by the file path.
+  epubSpineUrlByPath: (epubPath: string, page: number) =>
+    `/api/epub/src/${b64url(epubPath)}/spine/${page}`,
   bookPageUrl: (runId: string, page: number, v = 0) =>
     `/api/runs/${runId}/book/__page-${page}.html${v ? `?v=${v}` : ""}`,
   // Ask Bloom to fully process this run's book (writes CSS + browser fix-ups),

@@ -19,12 +19,13 @@ const MODELS: Record<string, ModelInfo> = {
   "gemini-2-flash": { label: "Gemini 2.0 Flash", inCost: 0.1, outCost: 0.4 },
 };
 
-const STAGES: Stage[] = ["ocr", "llm", "plan", "html"];
+const STAGES: Stage[] = ["ocr", "llm", "plan", "html", "bloom"];
 const STAGE_LABELS: Record<Stage, string> = {
   ocr: "OCR",
   llm: "Think",
   plan: "Plan",
   html: "HTML",
+  bloom: "Bloom",
 };
 
 // helper to build a run
@@ -35,7 +36,7 @@ function run(o: Partial<Run>): Run {
       id: "r" + _rid++,
       status: "done",
       mark: "neutral",
-      stages: { ocr: true, llm: true, plan: true, html: true },
+      stages: { ocr: true, llm: true, plan: true, html: true, bloom: true },
       model: "claude-sonnet-4",
       ocrMethod: "gpt",
       tokensIn: 0,
@@ -172,7 +173,7 @@ const sources: Source[] = [
         cost: 0.102,
         time: 71,
         ts: "2026-06-04 09:31",
-        stages: { ocr: true, llm: true, plan: false, html: false },
+        stages: { ocr: true, llm: true, plan: false, html: false, bloom: false },
         progress: { stage: "llm", page: 3, pages: 8 },
         preset: "balanced",
         params: { ...DEFAULT_PARAMS },
@@ -219,7 +220,7 @@ const sources: Source[] = [
         cost: 0.034,
         time: 22,
         ts: "2026-06-04 09:33",
-        stages: { ocr: true, llm: false, plan: false, html: false },
+        stages: { ocr: true, llm: false, plan: false, html: false, bloom: false },
         progress: { stage: "ocr", page: 11, pages: 16 },
         preset: "high-fidelity",
         params: { ...DEFAULT_PARAMS, complexBecomesImage: "covers", coverMode: "render" },
@@ -258,7 +259,7 @@ const sources: Source[] = [
         cost: 0.072,
         time: 64,
         ts: "2026-06-04 08:50",
-        stages: { ocr: true, llm: true, plan: false, html: false },
+        stages: { ocr: true, llm: true, plan: false, html: false, bloom: false },
         error: {
           stage: "plan",
           code: "PLAN_SCHEMA_INVALID",
@@ -291,7 +292,7 @@ const sources: Source[] = [
         cost: 0,
         time: 0,
         ts: "2026-06-04 09:34",
-        stages: { ocr: false, llm: false, plan: false, html: false },
+        stages: { ocr: false, llm: false, plan: false, html: false, bloom: false },
         preset: "high-fidelity",
         params: { ...DEFAULT_PARAMS, complexBecomesImage: "covers" },
       }),
@@ -343,7 +344,7 @@ const sources: Source[] = [
         id: "r10",
         status: "queued",
         mark: "neutral",
-        stages: { ocr: false, llm: false, plan: false, html: false },
+        stages: { ocr: false, llm: false, plan: false, html: false, bloom: false },
         ts: "2026-06-04 09:34",
         preset: "balanced",
         params: { ...DEFAULT_PARAMS },
@@ -463,10 +464,31 @@ const artifactTree: ArtifactNode[] = [
   },
 ];
 
+// The fixed set of extracted-metadata items a user reviews, in display order.
+// The keys MUST match the server's CHECKLIST_ITEMS (engine.ts); this list is the
+// denominator for the "all thumbs-up" review status and supplies labels in the UI.
+const CHECKLIST_ITEMS: { key: string; label: string }[] = [
+  { key: "title", label: "Title" },
+  { key: "author", label: "Author" },
+  { key: "illustrator", label: "Illustrator" },
+  { key: "copyright", label: "Copyright" },
+  { key: "license", label: "License" },
+  { key: "licenseNotes", label: "License Notes" },
+  { key: "funding", label: "Funding / Acknowledgments" },
+  { key: "isbn", label: "ISBN" },
+  { key: "publisher", label: "Publisher" },
+  { key: "languages", label: "Languages" },
+  { key: "pageSize", label: "Paper Size & Orientation" },
+  { key: "textPlacement", label: "Text Placement" },
+  { key: "textSize", label: "Text Size" },
+  { key: "font", label: "Font" },
+];
+
 export const BLOOM = {
   MODELS,
   STAGES,
   STAGE_LABELS,
+  CHECKLIST_ITEMS,
   DEFAULT_PARAMS,
   sources,
   presets,

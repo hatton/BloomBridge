@@ -13,6 +13,11 @@ import {
   detectArtifacts,
   startableStages,
   getRunningBloomCollection,
+  notifyBloomOfBook,
+  bringBloomToFront,
+  selectBookInBloom,
+  processBookInBloom,
+  Parser,
   type ConversionEvent,
   type RunArgs,
 } from "@bloombridge/lib";
@@ -20,6 +25,8 @@ import { getSettings } from "./settings";
 
 export type RunStatus = "queued" | "running" | "failed" | "done" | "cancelled";
 export type Rating = "none" | "keeper" | "disapproved";
+/** A user's review verdict on one extracted-metadata item ("up"/"down"; absent = unreviewed). */
+export type ChecklistMark = "up" | "down";
 
 export interface StageMetric {
   durationMs?: number;
@@ -50,6 +57,10 @@ export interface RunRecord {
   stages: Record<string, StageMetric>;
   progress?: { stage: string; page: number; pageCount: number };
   notes: string;
+  /** User review of the extracted metadata: item key → thumbs up/down. Absent keys
+   *  are unreviewed. The set of items is fixed (CHECKLIST_ITEMS), so this only
+   *  stores the marks given. */
+  checklist?: Record<string, ChecklistMark>;
   runDir: string;
   bookFolderPath?: string;
   /** When set, the conversion reads from this artifact instead of `sourcePath`
@@ -79,6 +90,17 @@ const queue: string[] = [];
 let running = 0;
 let loaded = false;
 
+// OCR→HTML run in parallel across books, but Bloom can only process one book at a
+// time. This promise-chain mutex serializes the final Bloom stage across all runs:
+// each call waits for the prior holder to release before running.
+let bloomLock: Promise<void> = Promise.resolve();
+function withBloomLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prior = bloomLock;
+  let release!: () => void;
+  bloomLock = new Promise<void>((r) => (release = r));
+  return prior.then(fn).finally(() => release());
+}
+
 // Live human-readable log lines per run (capped). Kept out of run.json to avoid
 // bloating it; persisted to <runDir>/run.log when a run finishes.
 const runLogs = new Map<string, string[]>();
@@ -89,6 +111,7 @@ const LOG_STAGE_LABEL: Record<string, string> = {
   llm: "Think (LLM)",
   plan: "Plan",
   html: "HTML",
+  bloom: "Bloom",
 };
 
 function eventToLogLine(e: ConversionEvent): string | null {
@@ -262,6 +285,77 @@ async function copyDir(src: string, dest: string) {
   }
 }
 
+/** Error carrying an HTTP status so the /process endpoint can map failures back to
+ *  the same response codes it used when the logic was inline. */
+class BloomProcessError extends Error {
+  httpStatus: number;
+  constructor(message: string, httpStatus = 500) {
+    super(message);
+    this.httpStatus = httpStatus;
+  }
+}
+
+/**
+ * The "Process in Bloom" step, shared by the automatic final pipeline stage and the
+ * manual /process endpoint. Stages a copy of the run's book in the running Bloom's
+ * open collection, asks Bloom to apply its CSS + browser-only fix-ups, then copies the
+ * styled result back over the run's workspace folder. Throws BloomProcessError on any
+ * failure (Bloom not running, no book, processing error, copy error).
+ */
+export async function processBookInBloomForRun(
+  rec: RunRecord,
+  opts: { onLog?: (line: string) => void } = {},
+): Promise<{ processed?: number }> {
+  const log = opts.onLog ?? (() => {});
+  if (!rec.bookFolderPath)
+    throw new BloomProcessError("This run hasn't produced a Bloom book yet.", 400);
+  try {
+    await fs.access(path.join(rec.bookFolderPath, "meta.json"));
+  } catch {
+    throw new BloomProcessError("This run has no Bloom book to process.", 400);
+  }
+
+  const bloom = await getRunningBloomCollection();
+  if (!bloom)
+    throw new BloomProcessError(
+      "Bloom isn't running. Open Bloom with a collection, switch to the Collection tab, then try again.",
+      400,
+    );
+
+  const dest = path.join(bloom.collectionFolder, "preview - " + rec.bookName);
+  log("Bloom: staging book in collection " + bloom.collectionName);
+  try {
+    await copyDir(rec.bookFolderPath, dest);
+  } catch (e: any) {
+    throw new BloomProcessError("copy failed: " + (e?.message || e), 500);
+  }
+
+  const notify = await notifyBloomOfBook(dest);
+  if (!notify.bookId)
+    throw new BloomProcessError("Could not read the book id from meta.json.", 400);
+
+  // process-book requires the Collection tab to be active; bring Bloom forward and
+  // select the book to nudge it there.
+  await bringBloomToFront(bloom.port);
+  await selectBookInBloom(notify.bookId, bloom.port);
+
+  log("Bloom: processing book…");
+  const result = await processBookInBloom(notify.bookId, bloom.port);
+  if (!result.ok)
+    throw new BloomProcessError(result.error || "Bloom couldn't process the book.", 502);
+
+  // Copy the processed book (now with CSS + fix-ups) back over the run's workspace
+  // folder. The run's intermediate .md artifacts are left untouched.
+  try {
+    await copyDir(dest, rec.bookFolderPath);
+  } catch (e: any) {
+    throw new BloomProcessError("copy-back failed: " + (e?.message || e), 500);
+  }
+
+  log("Bloom: done");
+  return { processed: result.processed };
+}
+
 /**
  * Re-run a failed run starting from its last successful stage: find the furthest
  * intermediate artifact the failed run produced, copy that run's book folder
@@ -402,6 +496,41 @@ async function executeRun(rec: RunRecord) {
     rec.status = result.status === "completed" ? "done" : result.status;
     if (result.error) rec.error = result.error;
     if (result.status === "failed") rec.failedStage = lastStage;
+
+    // Final pipeline stage: hand the finished book to the running Bloom to apply its
+    // CSS + browser-only fix-ups. Only when the run reached the Bloom HTML target and
+    // produced a book. Serialized via withBloomLock — Bloom handles one book at a time,
+    // so a run that finished HTML while another book is being processed shows "Bloom"
+    // (running) and waits its turn here.
+    if (rec.status === "done" && rec.target === "bloom" && rec.bookFolderPath) {
+      const stamp = () => new Date().toTimeString().slice(0, 8);
+      // Keep the run "running" (in the Bloom stage) until Bloom actually finishes —
+      // otherwise the row reads "done" while the book is still being styled, and the
+      // compare pane has nothing to show yet.
+      rec.status = "running";
+      rec.progress = { stage: "bloom", page: 0, pageCount: 0 };
+      appendLog(rec.id, `[${stamp()}] ▶ Bloom — started`);
+      pushRun(rec);
+      try {
+        // Measure only the time actually processing in Bloom, not the time spent
+        // waiting for the lock (queued behind another book).
+        const durationMs = await withBloomLock(async () => {
+          const startedMs = Date.now();
+          await processBookInBloomForRun(rec, {
+            onLog: (l) => appendLog(rec.id, `[${stamp()}]    ${l}`),
+          });
+          return Date.now() - startedMs;
+        });
+        rec.stages.bloom = { durationMs };
+        rec.status = "done";
+        appendLog(rec.id, `[${stamp()}] ✓ Bloom — done (${Math.round(durationMs / 1000)}s)`);
+      } catch (err) {
+        rec.status = "failed";
+        rec.error = err instanceof Error ? err.message : String(err);
+        rec.failedStage = "bloom";
+        appendLog(rec.id, `[${stamp()}] ✗ ERROR: ${rec.error}`);
+      }
+    }
   } catch (err) {
     rec.status = "failed";
     rec.error = err instanceof Error ? err.message : String(err);
@@ -488,6 +617,18 @@ export async function setNotes(runId: string, notes: string) {
   pushRun(rec);
 }
 
+/** Set (or clear, when mark is null) one metadata-review mark for a run. */
+export async function setChecklistMark(runId: string, key: string, mark: ChecklistMark | null) {
+  await ensureLoaded();
+  const rec = runs.get(runId);
+  if (!rec || !key) return;
+  const checklist = (rec.checklist ||= {});
+  if (mark === "up" || mark === "down") checklist[key] = mark;
+  else delete checklist[key];
+  await writeRunJson(rec);
+  pushRun(rec);
+}
+
 /** Remove failed runs and disapproved runs (and their folders). Returns the count. */
 export async function cleanupRuns(): Promise<number> {
   await ensureLoaded();
@@ -532,6 +673,8 @@ export interface GuiRun {
   startedAt?: number;
   finishedAt?: number;
   notes: string;
+  /** Per-item metadata-review marks (item key → "up"/"down"). */
+  checklist: Record<string, ChecklistMark>;
   tags: string[];
   params: Record<string, any>;
   breakdown: {
@@ -551,8 +694,16 @@ export interface GuiRun {
 function toGuiRun(rec: RunRecord): GuiRun {
   const mark = rec.rating === "keeper" ? "good" : rec.rating === "disapproved" ? "bad" : "neutral";
   // stages done: derived from artifacts if the book folder exists, else from recorded metrics
-  const done: Record<string, boolean> = { ocr: false, llm: false, plan: false, html: false };
+  const done: Record<string, boolean> = {
+    ocr: false,
+    llm: false,
+    plan: false,
+    html: false,
+    bloom: false,
+  };
   for (const s of STAGES) if (rec.stages[s]?.durationMs != null) done[s] = true;
+  // "bloom" is the engine-level final stage (not a lib artifact), tracked separately.
+  if (rec.stages.bloom?.durationMs != null) done.bloom = true;
   let tokensIn = 0,
     tokensOut = 0,
     time = 0,
@@ -564,6 +715,7 @@ function toGuiRun(rec: RunRecord): GuiRun {
     { key: "llm", label: "Think (LLM)" },
     { key: "plan", label: "Plan" },
     { key: "html", label: "HTML" },
+    { key: "bloom", label: "Bloom" },
   ];
   const breakdown: {
     stage: string;
@@ -577,6 +729,8 @@ function toGuiRun(rec: RunRecord): GuiRun {
     const m = rec.stages[key];
     // Hide the Vision row when vision-formatting didn't run (no data).
     if (key === "vision" && (!m || (!m.tokensIn && !m.tokensOut && !m.costUsd))) continue;
+    // Hide the Bloom row until the Bloom stage has actually run (no duration yet).
+    if (key === "bloom" && m?.durationMs == null) continue;
     const mm = m || {};
     tokensIn += mm.tokensIn || 0;
     tokensOut += mm.tokensOut || 0;
@@ -608,6 +762,7 @@ function toGuiRun(rec: RunRecord): GuiRun {
     startedAt: rec.startedAt ? Date.parse(rec.startedAt) : undefined,
     finishedAt: rec.finishedAt ? Date.parse(rec.finishedAt) : undefined,
     notes: rec.notes,
+    checklist: rec.checklist || {},
     tags: [],
     params: rec.params,
     breakdown,
@@ -669,6 +824,194 @@ export async function getRunArtifacts(runId: string) {
   push(a.bloomMd, "text", "plan");
   push(a.htm, "code", "html");
   return { tree: files, startable: startableStages(a), bookFolder: rec.bookFolderPath };
+}
+
+// ---- extracted-metadata checklist ----
+// The fixed set of metadata items a user reviews, in display order. Keep the keys
+// in sync with the GUI's BLOOM.CHECKLIST_ITEMS (the review-status denominator).
+const CHECKLIST_ITEMS: { key: string; label: string }[] = [
+  { key: "title", label: "Title" },
+  { key: "author", label: "Author" },
+  { key: "illustrator", label: "Illustrator" },
+  { key: "copyright", label: "Copyright" },
+  { key: "license", label: "License" },
+  { key: "licenseNotes", label: "License Notes" },
+  { key: "funding", label: "Funding / Acknowledgments" },
+  { key: "isbn", label: "ISBN" },
+  { key: "publisher", label: "Publisher" },
+  { key: "languages", label: "Languages" },
+  { key: "pageSize", label: "Paper Size & Orientation" },
+  { key: "textPlacement", label: "Text Placement" },
+  { key: "textSize", label: "Text Size" },
+  { key: "font", label: "Font" },
+];
+
+/** Collect field-tagged text blocks → { field: { lang: text } } (first non-empty per lang). */
+function collectChecklistFields(book: { pages: any[] }): Record<string, Record<string, string>> {
+  const fields: Record<string, Record<string, string>> = {};
+  for (const page of book.pages || []) {
+    for (const el of page.elements || []) {
+      if (el.type !== "text" || !el.field || el.field === "pageNumber") continue;
+      const bucket = (fields[el.field] ??= {});
+      for (const [lang, value] of Object.entries(el.content || {})) {
+        const v = typeof value === "string" ? value.trim() : "";
+        if (v && !bucket[lang]) bucket[lang] = v;
+      }
+    }
+  }
+  return fields;
+}
+function preferL1(content: Record<string, string> | undefined, l1: string): string {
+  if (!content) return "";
+  return content[l1] ?? Object.values(content)[0] ?? "";
+}
+function fmtPageSize(ps?: string): string {
+  if (!ps) return "";
+  const m = ps.match(
+    /^(A3|A4|A5|A6|Letter|Legal|Device16x9|HalfLetter|QuarterLetter)(Portrait|Landscape)$/,
+  );
+  return m ? `${m[1]} ${m[2]}` : ps;
+}
+function summarizePlacement(book: { pages: any[] }): string {
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const combos = new Map<string, number>();
+  for (const p of book.pages || []) {
+    if (!p.verticalAlign && !p.horizontalAlign) continue;
+    const key = `${cap(p.verticalAlign ?? "—")} / ${cap(p.horizontalAlign ?? "—")}`;
+    combos.set(key, (combos.get(key) || 0) + 1);
+  }
+  if (combos.size === 0) return "";
+  if (combos.size === 1) return [...combos.keys()][0];
+  const [top] = [...combos.entries()].sort((a, b) => b[1] - a[1]);
+  return `Varies (mostly ${top[0]})`;
+}
+
+/**
+ * Read layout facts from the HTML Bloom actually produced (the run's .htm): the
+ * page-size/orientation class and the body-text "normal" style (font size + family)
+ * from the `userModifiedStyles` block. These aren't reliably in the source metadata,
+ * so we read them back out of the generated book.
+ */
+async function readBloomHtmlLayout(
+  bookFolderPath: string,
+): Promise<{ pageSize?: string; fontSizePt?: string; fontFamily?: string }> {
+  let htmName: string | undefined;
+  try {
+    htmName = (await fs.readdir(bookFolderPath)).find((f) => /\.html?$/i.test(f));
+  } catch {
+    /* unreadable */
+  }
+  if (!htmName) return {};
+  let html = "";
+  try {
+    html = await fs.readFile(path.join(bookFolderPath, htmName), "utf-8");
+  } catch {
+    return {};
+  }
+  const out: { pageSize?: string; fontSizePt?: string; fontFamily?: string } = {};
+  const size = html.match(
+    /class="[^"]*\b(A3|A4|A5|A6|Letter|Legal|Device16x9|HalfLetter|QuarterLetter)(Portrait|Landscape)\b/,
+  );
+  if (size) out.pageSize = `${size[1]} ${size[2]}`;
+  // The "normal" style: `.normal-style { font-size: 12pt }` and a per-language
+  // `.normal-style[lang="xx"] { … font-family: Andika … }`.
+  const fontSize = html.match(/\.normal-style[^{}]*\{[^}]*font-size:\s*([\d.]+)pt/i);
+  if (fontSize) out.fontSizePt = fontSize[1];
+  const fontFamily = html.match(/\.normal-style[^{}]*\{[^}]*font-family:\s*([^;!}]+)/i);
+  if (fontFamily) out.fontFamily = fontFamily[1].trim();
+  return out;
+}
+
+/**
+ * The extracted-metadata checklist for a run: every canonical item with the value
+ * we extracted (empty string when not detected) plus the user's current marks.
+ * Reads from the furthest Bloom-markdown artifact (parsed for front-matter + field
+ * blocks) and meta.json as a fallback. Paper size, text size and font come from the
+ * HTML Bloom produced (readBloomHtmlLayout). Items stay listed even when empty so a
+ * missing field is itself reviewable.
+ */
+export async function getRunMetadata(runId: string): Promise<{
+  items: { key: string; label: string; value: string }[];
+  marks: Record<string, ChecklistMark>;
+}> {
+  await ensureLoaded();
+  const rec = runs.get(runId);
+  const marks = rec?.checklist || {};
+  const empty = () => ({
+    items: CHECKLIST_ITEMS.map((it) => ({ ...it, value: "" })),
+    marks,
+  });
+  if (!rec || !rec.bookFolderPath) return empty();
+
+  const baseName = path.parse(rec.sourcePath).name;
+  let values: Record<string, string> = {};
+  try {
+    const a = await detectArtifacts(rec.bookFolderPath, baseName);
+    const mdPath = a.bloomMd || a.llmMd || a.rawLlmMd || a.ocrMd;
+    // Layout (paper size / text size / font) read back from the produced HTML.
+    const layout = await readBloomHtmlLayout(rec.bookFolderPath);
+    const layoutTextSize = layout.fontSizePt ? `${layout.fontSizePt} pt` : "";
+    let meta: any = {};
+    try {
+      meta = JSON.parse(await fs.readFile(path.join(rec.bookFolderPath, "meta.json"), "utf-8"));
+    } catch {
+      /* no meta.json */
+    }
+    if (mdPath) {
+      const content = await fs.readFile(mdPath, "utf-8");
+      const book = new Parser().parseMarkdown(content);
+      const fm: any = book.frontMatterMetadata || {};
+      const l1 = fm.l1 || "en";
+      const f = collectChecklistFields(book);
+      const pick = (...keys: string[]) => {
+        for (const k of keys) {
+          const v = preferL1(f[k], l1);
+          if (v) return v;
+        }
+        return "";
+      };
+      values = {
+        title: pick("bookTitle", "title") || (meta.title ?? ""),
+        author: pick("author") || (meta.author ?? ""),
+        illustrator: pick("illustrator"),
+        copyright: pick("copyright") || (meta.copyright ?? ""),
+        license: meta.license || pick("license", "licenseUrl"),
+        licenseNotes: pick("licenseNotes") || (meta.licenseNotes ?? ""),
+        funding: pick("funding", "funding-info", "acknowledgements-original-version"),
+        isbn: pick("isbn") || (meta.isbn ?? ""),
+        publisher: pick("publisher", "originalPublisher") || (meta.publisher ?? ""),
+        languages: Object.entries((fm.languages || {}) as Record<string, string>)
+          .map(([code, name]) => `${name} (${code})`)
+          .join(", "),
+        // Paper size / text size / font come from what Bloom produced; fall back to
+        // the source-detected front-matter values when the HTML lacks them.
+        pageSize: layout.pageSize || fmtPageSize(fm.pageSize),
+        textPlacement: summarizePlacement(book),
+        textSize: layoutTextSize || (fm.normalFontSizePt ? `${fm.normalFontSizePt} pt` : ""),
+        font: layout.fontFamily || fm.normalFontFamily || "",
+      };
+    } else {
+      // No markdown yet, but a book folder exists — use meta.json + produced HTML.
+      values = {
+        title: meta.title ?? "",
+        author: meta.author ?? "",
+        copyright: meta.copyright ?? "",
+        license: meta.license ?? "",
+        licenseNotes: meta.licenseNotes ?? "",
+        isbn: meta.isbn ?? "",
+        publisher: meta.publisher ?? "",
+        pageSize: layout.pageSize || "",
+        textSize: layoutTextSize,
+        font: layout.fontFamily || "",
+      };
+    }
+  } catch {
+    return empty();
+  }
+  return {
+    items: CHECKLIST_ITEMS.map((it) => ({ ...it, value: values[it.key] ?? "" })),
+    marks,
+  };
 }
 
 /**

@@ -9,18 +9,21 @@ import {
   Select,
   Toggle,
   InfoDot,
-  Thumb,
-  StatusPill,
   StageBadges,
-  MarkControl,
-  PinButton,
   ProgressBar,
   runProgress,
   fmt,
   STATUS_META,
-  effStatus,
 } from "./primitives";
-import type { ArtifactNode, Mark, Params, Run, Source, Stage } from "../types";
+import type {
+  ArtifactNode,
+  ChecklistMark,
+  MetadataItem,
+  Params,
+  Run,
+  Source,
+  Stage,
+} from "../types";
 import { api, subscribeRunLog } from "../api";
 
 // ============ LEFT: SOURCE PANEL ============
@@ -225,253 +228,8 @@ const panelShell: React.CSSProperties = {
   height: "100%",
 };
 
-// ============ RIGHT: DETAIL PANEL ============
-export function DetailPanel({
-  run,
-  source,
-  onClose,
-  onMark,
-  onPin,
-  onPreview,
-  onConfigRerun,
-  onResume,
-  onCompare,
-  onDelete,
-  onNotes,
-  onCancel,
-}: {
-  run?: Run | null;
-  source?: Source;
-  onClose: () => void;
-  onMark: (sid: string, rid: string, v: Mark) => void;
-  onPin: (sid: string, rid: string, v: boolean) => void;
-  onPreview: (r: Run) => void;
-  onConfigRerun: (s: Source, r: Run) => void;
-  onResume: (s: Source, r: Run) => void;
-  onCompare: (s: Source) => void;
-  onDelete: (sid: string, rid: string) => void;
-  onNotes: (sid: string, rid: string, patch: Partial<Run>) => void;
-  onCancel: (sid: string, rid: string) => void;
-}) {
-  // Keep the active tab when switching between runs (don't reset to "artifacts").
-  const [tab, setTab] = React.useState("artifacts");
-
-  if (!run || !source) {
-    return (
-      <aside style={panelShell}>
-        <PanelEmpty />
-      </aside>
-    );
-  }
-  return (
-    <aside style={panelShell}>
-      {/* header */}
-      <div style={{ padding: "11px 14px 10px", borderBottom: "1px solid var(--border)" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 9,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 10.5,
-              fontWeight: 700,
-              letterSpacing: ".7px",
-              textTransform: "uppercase",
-              color: "var(--text-3)",
-            }}
-          >
-            Run detail
-          </span>
-          <IconBtn
-            name="panel-right"
-            iconSize={15}
-            size={22}
-            title="Collapse panel"
-            onClick={onClose}
-          />
-        </div>
-        <div style={{ display: "flex", gap: 11 }}>
-          <Thumb hue={source.hue} w={42} h={56} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", lineHeight: 1.25 }}>
-              {source.name}
-            </div>
-            <div
-              className="mono"
-              style={{ fontSize: 10.5, color: "var(--text-3)", margin: "2px 0 7px" }}
-            >
-              {run.id}
-              {source.pages ? ` · ${source.pages}p` : ""}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {/* The disapproval is already conveyed by MarkControl below, so skip the
-                  redundant "Disapproved" pill. */}
-              {effStatus(run) !== "disapproved" && <StatusPill status={effStatus(run)} />}
-              {run.status === "done" && (
-                <MarkControl mark={run.mark} onChange={(v) => onMark(source.id, run.id, v)} />
-              )}
-              <PinButton pinned={!!run.pinned} onChange={(v) => onPin(source.id, run.id, v)} />
-            </div>
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 6, marginTop: 11 }}>
-          {run.status === "running" || run.status === "queued" ? (
-            <Btn
-              key="cancel"
-              variant="danger"
-              size="sm"
-              icon="stop"
-              onClick={() => onCancel(source.id, run.id)}
-              style={{ flex: 1 }}
-            >
-              Cancel run
-            </Btn>
-          ) : run.status === "done" ? (
-            <Btn
-              key="preview"
-              variant="primary"
-              size="sm"
-              icon="eye"
-              onClick={() => onPreview(run)}
-              style={{ flex: 1 }}
-            >
-              Preview in Bloom
-            </Btn>
-          ) : run.status === "failed" ? (
-            <Btn
-              key="rerun"
-              variant="primary"
-              size="sm"
-              icon="refresh"
-              onClick={() => onConfigRerun(source, run)}
-              style={{ flex: 1 }}
-            >
-              Re-run
-            </Btn>
-          ) : (
-            <Btn
-              key="run"
-              variant="primary"
-              size="sm"
-              icon="play"
-              onClick={() => onConfigRerun(source, run)}
-              style={{ flex: 1 }}
-            >
-              Run
-            </Btn>
-          )}
-          {run.status === "done" && (
-            <IconBtn
-              name="refresh"
-              title="Re-run with new settings"
-              onClick={() => onConfigRerun(source, run)}
-            />
-          )}
-          <CopyRunButton source={source} run={run} />
-          <IconBtn
-            name="trash"
-            title="Delete run"
-            danger
-            onClick={() => onDelete(source.id, run.id)}
-          />
-        </div>
-
-        {run.status === "failed" && (
-          <Btn
-            variant="ghost"
-            size="sm"
-            icon="layers"
-            onClick={() => onResume(source, run)}
-            style={{ width: "100%", marginTop: 6 }}
-            title={
-              run.resumeStage
-                ? `Reuse cached output through ${BLOOM.STAGE_LABELS[run.resumeStage] || run.resumeStage} and continue`
-                : "Start over from the PDF (no earlier stage completed)"
-            }
-          >
-            Run from last successful stage
-          </Btn>
-        )}
-      </div>
-
-      {/* error banner */}
-      {run.status === "failed" && run.error && <ErrorBanner error={run.error} />}
-
-      {/* tabs */}
-      <div
-        style={{
-          display: "flex",
-          gap: 2,
-          padding: "8px 10px 0",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        {(
-          [
-            ["log", "Log"],
-            ["artifacts", "Artifacts"],
-            ["details", "Settings"],
-            ["metrics", "Metrics"],
-            ["notes", "Notes"],
-          ] as [string, string][]
-        ).map(([v, l]) => {
-          // Highlight the Notes tab (and show a text icon) whenever it holds content.
-          const hasNotes = v === "notes" && !!run.notes && run.notes.trim().length > 0;
-          return (
-            <button
-              key={v}
-              onClick={() => setTab(v)}
-              style={{
-                position: "relative",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                padding: "7px 11px 9px",
-                border: "none",
-                background: "transparent",
-                fontSize: 12,
-                fontWeight: 600,
-                color: tab === v ? "var(--text)" : hasNotes ? "var(--accent)" : "var(--text-3)",
-                cursor: "pointer",
-              }}
-            >
-              {hasNotes && <Icon name="note" size={12} />}
-              {l}
-              {tab === v && (
-                <span
-                  style={{
-                    position: "absolute",
-                    left: 8,
-                    right: 8,
-                    bottom: -1,
-                    height: 2,
-                    borderRadius: 2,
-                    background: "var(--accent)",
-                  }}
-                />
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
-        {tab === "log" && <LogTab run={run} />}
-        {tab === "details" && <DetailsTab run={run} source={source} />}
-        {tab === "metrics" && <MetricsTab run={run} />}
-        {tab === "artifacts" && <ArtifactsTab run={run} />}
-        {tab === "notes" && <NotesTab run={run} source={source} onNotes={onNotes} />}
-      </div>
-    </aside>
-  );
-}
-
 // ---------- Log tab (live conversion log) ----------
-function LogTab({ run }: { run: Run }) {
+export function LogTab({ run }: { run: Run }) {
   const [lines, setLines] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(true);
   const boxRef = React.useRef<HTMLDivElement>(null);
@@ -554,31 +312,7 @@ function LogTab({ run }: { run: Run }) {
   );
 }
 
-function PanelEmpty() {
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 28,
-        textAlign: "center",
-        color: "var(--text-3)",
-      }}
-    >
-      <Icon name="layers" size={30} strokeWidth={1.2} />
-      <p style={{ fontSize: 12.5, margin: "12px 0 0", lineHeight: 1.5 }}>
-        Select a run to see its
-        <br />
-        parameters, metrics, and artifacts.
-      </p>
-    </div>
-  );
-}
-
-function ErrorBanner({ error }: { error: NonNullable<Run["error"]> }) {
+export function ErrorBanner({ error }: { error: NonNullable<Run["error"]> }) {
   return (
     <div
       style={{
@@ -633,7 +367,7 @@ function DetailRow({ label, children }: { label: React.ReactNode; children?: Rea
   );
 }
 
-function DetailsTab({ run, source }: { run: Run; source: Source }) {
+export function DetailsTab({ run, source }: { run: Run; source: Source }) {
   const p = run.params || ({} as Params);
   return (
     <div style={{ padding: "12px 14px 18px" }}>
@@ -724,7 +458,7 @@ function DetailsTab({ run, source }: { run: Run; source: Source }) {
 }
 
 // ---------- Notes tab ----------
-function NotesTab({
+export function NotesTab({
   run,
   source,
   onNotes,
@@ -761,7 +495,7 @@ function NotesTab({
 }
 
 // ---------- Metrics tab ----------
-function MetricsTab({ run }: { run: Run }) {
+export function MetricsTab({ run }: { run: Run }) {
   const rows = run.breakdown && run.breakdown.length ? run.breakdown : [];
   const tot = rows.reduce(
     (a, r) => ({
@@ -972,7 +706,7 @@ const ARTIFACT_STAGES: [string, string][] = [
   ["plan", "Plan"],
   ["html", "HTML"],
 ];
-function ArtifactsTab({ run }: { run: Run }) {
+export function ArtifactsTab({ run }: { run: Run }) {
   const [files, setFiles] = React.useState<ArtFile[]>([]);
   const [sel, setSel] = React.useState<ArtFile | null>(null);
   const [content, setContent] = React.useState<string | null>(null);
@@ -1595,7 +1329,7 @@ function copyToClipboard(text: string, done?: () => void) {
   finish();
 }
 
-function CopyRunButton({ source, run }: { source: Source; run: Run }) {
+export function CopyRunButton({ source, run }: { source: Source; run: Run }) {
   const [done, setDone] = React.useState(false);
   return (
     <IconBtn
@@ -1944,130 +1678,6 @@ export function CollectionPicker({
   );
 }
 
-// ============ PDF (book) detail pane ============
-export function PdfDetail({
-  source,
-  defaultParams,
-  parallelism,
-  onClose,
-  onRunNow,
-  onPreview,
-}: {
-  source: Source;
-  defaultParams?: Params;
-  parallelism: number;
-  onClose: () => void;
-  onRunNow: (params: Params) => void;
-  onPreview?: (r: Run) => void;
-  onSelectRun?: (sid: string, rid: string) => void;
-  onMark?: (sid: string, rid: string, v: Mark) => void;
-}) {
-  // Most recent run that produced a Bloom book (runs are newest-first).
-  const previewable = source.runs.find((r) => r.status === "done");
-  const [params, setParams] = React.useState<Params>(() => ({
-    ...(source.runs[0]?.params || defaultParams || BLOOM.DEFAULT_PARAMS),
-  }));
-  const set = (k: keyof Params, v: any) => setParams((o) => ({ ...o, [k]: v }));
-  const isEpub = /\.epub$/i.test(source.file || source.path || "");
-  return (
-    <aside style={panelShell}>
-      <div style={{ padding: "11px 14px 12px", borderBottom: "1px solid var(--border)" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            marginBottom: 11,
-          }}
-        >
-          <IconBtn
-            name="panel-right"
-            iconSize={15}
-            size={22}
-            title="Collapse panel"
-            onClick={onClose}
-          />
-        </div>
-        <div style={{ display: "flex", gap: 12 }}>
-          <Thumb hue={source.hue} w={48} h={64} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <img
-                src={isEpub ? "/epub.svg" : "/pdf.svg"}
-                alt=""
-                aria-hidden="true"
-                title={isEpub ? "EPUB" : "PDF"}
-                style={{ width: 18, height: 18, flexShrink: 0 }}
-              />
-              <div
-                className="mono"
-                style={{
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: "var(--text)",
-                  lineHeight: 1.2,
-                  wordBreak: "break-word",
-                }}
-              >
-                {source.file}
-              </div>
-            </div>
-            <div style={{ fontSize: 11, color: "var(--text-2)", marginTop: 6 }}>
-              {source.pages ? `${source.pages} pages · ` : ""}
-              {source.size}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 18px" }}>
-        {/* Primary action: once a run has produced a Bloom book, Preview is the
-            highlighted default; otherwise Run conversion is. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 16 }}>
-          {previewable ? (
-            <>
-              <Btn
-                variant="primary"
-                size="lg"
-                icon="eye"
-                full
-                onClick={() => onPreview?.(previewable)}
-                title="Open the most recent completed run in Bloom"
-              >
-                Preview in Bloom
-              </Btn>
-              <Btn variant="default" size="md" icon="play" full onClick={() => onRunNow(params)}>
-                Run conversion
-              </Btn>
-            </>
-          ) : (
-            <>
-              <Btn variant="primary" size="lg" icon="play" full onClick={() => onRunNow(params)}>
-                Run conversion
-              </Btn>
-              <Btn
-                variant="default"
-                size="md"
-                icon="eye"
-                full
-                disabled
-                title="No completed run to preview yet"
-              >
-                Preview in Bloom
-              </Btn>
-            </>
-          )}
-        </div>
-
-        {/* Collection picker hidden: targeting other collections isn't supported
-            yet (output always goes to the running Bloom's collection). */}
-        <SectionLabel>Conversion settings</SectionLabel>
-        <ParamControls params={params} onChange={set} defaults={defaultParams} />
-      </div>
-    </aside>
-  );
-}
-
 // ============ Batch pane (multiple PDFs selected) ============
 export function BatchPane({
   count,
@@ -2387,6 +1997,8 @@ type PagePairsInfo = {
   sourceKind?: "pdf" | "epub";
   pdfPages: number;
   bloomPages: number;
+  /** Formatted total size of the Bloom book folder (e.g. "2.3 MB"). */
+  bloomSize?: string;
   // Explicit column alignment from the server: one entry per row. A null on either
   // side means that side has no counterpart (a blank/dropped source page, or a
   // Bloom-added xMatter page), so that cell renders as empty space.
@@ -2398,7 +2010,7 @@ type PagePairsInfo = {
 // Page-pairs data + the Bloom (re-)processing action. Lifted out of
 // PairedPagesView so the action button can live in the pane header (next to the
 // close button) while the page grid renders in the body below.
-function usePagePairs(runId?: string) {
+function usePagePairs(runId?: string, runStatus?: string) {
   const [info, setInfo] = React.useState<PagePairsInfo | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [processing, setProcessing] = React.useState(false);
@@ -2407,15 +2019,24 @@ function usePagePairs(runId?: string) {
   // now-styled HTML (same URL, new content).
   const [reloadKey, setReloadKey] = React.useState(0);
 
+  // Re-fetch on runId change (reset the view) and whenever the run's status changes
+  // (e.g. the final Bloom stage finishes → the styled book is now ready to show). We
+  // only blank the view when the run itself changes, so a status-driven re-fetch
+  // doesn't flicker.
+  const lastRunId = React.useRef<string | undefined>(undefined);
   React.useEffect(() => {
     if (!runId) {
       setLoading(false);
       setInfo(null);
+      lastRunId.current = undefined;
       return;
     }
     let alive = true;
-    setLoading(true);
-    setInfo(null);
+    if (lastRunId.current !== runId) {
+      lastRunId.current = runId;
+      setLoading(true);
+      setInfo(null);
+    }
     api
       .pagePairs(runId)
       .then((r) => {
@@ -2430,7 +2051,7 @@ function usePagePairs(runId?: string) {
     return () => {
       alive = false;
     };
-  }, [runId]);
+  }, [runId, runStatus]);
 
   const processInBloom = React.useCallback(() => {
     if (!runId) return;
@@ -2450,35 +2071,63 @@ function usePagePairs(runId?: string) {
   return { info, loading, processing, procError, reloadKey, processInBloom };
 }
 
-// Overlay/diff modes for the compare view. "off" = side-by-side (the default);
-// "onion" = the PDF faded over the Bloom page (opacity slider); "diff" =
-// mix-blend difference, so matching pixels go dark and any shift/resize glows.
-type DiffMode = { mode: "off" | "onion" | "diff"; opacity: number };
+// View modes for the compare pane. "side" = source and Bloom side-by-side (the
+// default); "super" = the source faded over the Bloom page (opacity slider),
+// toggled by the Superimpose checkbox. `metadata` drops the extracted-metadata
+// review panel over the Bloom side (independent of side/super).
+type ViewMode = { mode: "side" | "super"; opacity: number; metadata: boolean };
 
 export function PdfViewerPane({
   source,
   multiSelected,
   width,
   onResize,
-  onClose,
   runId,
   mode = "pdf",
+  runStatus,
+  runStage,
+  runFailedStage,
+  showActions,
+  hasRun,
+  onRunNow,
+  onOpenSettings,
+  onOpenDetails,
+  bloomRunning = false,
+  bloomCollectionName,
 }: {
   source?: Source | null;
   multiSelected: boolean;
   width: number;
   onResize: (w: number) => void;
-  onClose: () => void;
   runId?: string;
   mode?: "run" | "pdf";
+  // Live status + current stage of the previewed run, so the compare pane can re-fetch
+  // when the run finishes and show a "processing" state during the final Bloom stage.
+  runStatus?: string;
+  runStage?: string;
+  // The stage a failed run died on, so the Bloom-side placeholder can name it.
+  runFailedStage?: Stage;
+  // Whether a single source is in focus, so the Run-conversion / settings / details
+  // controls in the header apply. `hasRun` gates the details button (needs a run).
+  showActions?: boolean;
+  hasRun?: boolean;
+  onRunNow?: () => void;
+  onOpenSettings?: () => void;
+  onOpenDetails?: () => void;
+  // Live Bloom connection, surfaced beside the "Convert to Bloom" action in the body.
+  bloomRunning?: boolean;
+  bloomCollectionName?: string;
 }) {
-  const pairs = usePagePairs(mode === "run" ? runId : undefined);
+  const pairs = usePagePairs(mode === "run" ? runId : undefined, runStatus);
+  // The run is in its final Bloom stage — Bloom is styling the book. Surface the same
+  // "Processing in Bloom…" spinner the manual re-process uses, until the run completes
+  // and the re-fetch above swaps in the side-by-side comparison.
+  const autoProcessing = mode === "run" && runStatus === "running" && runStage === "bloom";
   // EPUB sources have no fixed-page PDF to embed; the compare view shows the spine
   // illustrations instead, and the raw-preview iframe is replaced by a note.
   const isEpub =
     /\.epub$/i.test(source?.file || source?.path || "") || pairs.info?.sourceKind === "epub";
-  const srcLabel = isEpub ? "EPUB" : "PDF";
-  const [diff, setDiff] = React.useState<DiffMode>({ mode: "off", opacity: 0.5 });
+  const [view, setView] = React.useState<ViewMode>({ mode: "side", opacity: 0.5, metadata: false });
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -2554,59 +2203,45 @@ export function PdfViewerPane({
           zIndex: 6,
         }}
       />
+      {/* Pane header: a controls row, plus (in compare mode) the column headings, so
+          the headings read as part of this same surface rather than floating over the
+          scrolling pages below. */}
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "11px 14px 10px",
-          // In compare mode the header is part of the dark paired-pages pane.
+          flexDirection: "column",
+          gap: 10,
+          // Horizontal padding matches the scrolling rows below so the column
+          // headings line up with the page columns.
+          padding: "11px 10px 10px",
           ...(mode === "run"
             ? { background: COMPARE_BACKDROP }
             : { borderBottom: "1px solid var(--border)" }),
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          {/* preview.svg (source→Bloom) in compare mode; pdf/epub icon in raw mode. */}
-          <img
-            src={mode === "run" ? "/preview.svg" : isEpub ? "/epub.svg" : "/pdf.svg"}
-            alt=""
-            aria-hidden="true"
-            style={{ height: mode === "run" ? 24 : 20, width: "auto", flexShrink: 0 }}
-          />
-          <div style={{ minWidth: 0 }}>
-            <span
-              style={{
-                fontSize: 10.5,
-                fontWeight: 700,
-                letterSpacing: ".7px",
-                textTransform: "uppercase",
-                color: mode === "run" ? "#bdc1c6" : "var(--text-3)",
-              }}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            rowGap: 6,
+          }}
+        >
+          {/* The run-conversion call-to-action lives in the body's Bloom slot; the
+              header keeps quiet re-run / re-process buttons once a run exists. */}
+          {showActions && hasRun && (
+            <Btn
+              variant="ghost"
+              size="sm"
+              icon="play"
+              onClick={onRunNow}
+              title="Re-run a conversion with the current settings"
             >
-              {mode === "run" ? `Compare ${srcLabel} to Bloom Version` : `${srcLabel} preview`}
-            </span>
-            {/* In compare mode the page rows are labelled themselves, so the book
-              title under the heading would just be redundant. */}
-            {mode !== "run" && source && !multiSelected && (
-              <div
-                style={{
-                  fontSize: 11.5,
-                  fontWeight: 600,
-                  color: "var(--text)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {source.name}
-              </div>
-            )}
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          {/* Until the book is ready the call-to-action lives front-and-center in
-              the body; once it exists the header keeps a quiet re-process button. */}
+              Re-Run Conversion
+            </Btn>
+          )}
           {mode === "run" && pairs.info?.ready && pairs.info.bookReady && (
             <Btn
               variant="ghost"
@@ -2615,18 +2250,38 @@ export function PdfViewerPane({
               onClick={pairs.processInBloom}
               disabled={pairs.processing}
             >
-              {pairs.processing ? "Processing in Bloom…" : "Re-process in Bloom"}
+              {pairs.processing ? "Processing…" : "Re-process"}
             </Btn>
           )}
-          <IconBtn
-            name="x"
-            iconSize={15}
-            size={22}
-            title={`Hide ${srcLabel} preview`}
-            onClick={onClose}
-            color={mode === "run" ? "#bdc1c6" : undefined}
-          />
+          {showActions && (
+            <IconBtn
+              name="sliders"
+              iconSize={15}
+              size={26}
+              title="Conversion settings"
+              onClick={onOpenSettings}
+              color={mode === "run" ? "#bdc1c6" : undefined}
+            />
+          )}
+          {hasRun && (
+            <IconBtn
+              name="external"
+              iconSize={15}
+              size={26}
+              title="Run details (log, artifacts, metrics, notes)"
+              onClick={onOpenDetails}
+              color={mode === "run" ? "#bdc1c6" : undefined}
+            />
+          )}
         </div>
+        {mode === "run" && pairs.info?.ready && (
+          <CompareHeadings
+            info={pairs.info}
+            sourceSize={source?.size}
+            view={view}
+            onView={setView}
+          />
+        )}
       </div>
       {multiSelected ? (
         empty("Multiple PDFs selected — select a single PDF to preview it.")
@@ -2635,28 +2290,29 @@ export function PdfViewerPane({
           runId={runId}
           info={pairs.info}
           loading={pairs.loading}
-          processing={pairs.processing}
+          processing={pairs.processing || autoProcessing}
           procError={pairs.procError}
           reloadKey={pairs.reloadKey}
           onProcess={pairs.processInBloom}
-          diff={diff}
-          onDiff={setDiff}
-        />
-      ) : source?.path && isEpub ? (
-        // A reflowable EPUB has no native browser renderer, so the server stitches its
-        // spine pages into one scrollable HTML doc (images/CSS inlined) we embed here.
-        <iframe
-          key={source.path}
-          title="EPUB preview"
-          src={`/api/source-epub?path=${encodeURIComponent(source.path)}`}
-          style={{ flex: 1, width: "100%", border: "none", background: "var(--surface-2)" }}
+          runStatus={runStatus}
+          runStage={runStage}
+          runFailedStage={runFailedStage}
+          onOpenDetails={onOpenDetails}
+          bloomRunning={bloomRunning}
+          bloomCollectionName={bloomCollectionName}
+          view={view}
+          onCloseMetadata={() => setView((v) => ({ ...v, metadata: false }))}
         />
       ) : source?.path ? (
-        <iframe
-          key={source.path}
-          title="PDF preview"
-          src={`/api/source-pdf?path=${encodeURIComponent(source.path)}`}
-          style={{ flex: 1, width: "100%", border: "none", background: "var(--surface-2)" }}
+        // A book with no run: mirror the paired view's two columns — the source
+        // (PDF/EPUB) on the left, a "no Bloom book yet" placeholder where the
+        // converted book will eventually appear.
+        <SourceOnlyPane
+          source={source}
+          isEpub={isEpub}
+          onRunNow={showActions ? onRunNow : undefined}
+          bloomRunning={bloomRunning}
+          bloomCollectionName={bloomCollectionName}
         />
       ) : (
         empty("Select a PDF to preview it here.")
@@ -2705,6 +2361,317 @@ function useInView(ref: React.RefObject<HTMLElement>): boolean {
   return inView;
 }
 
+// "13 pages, 1.2 MB" — the lighter sub-label beside a column heading. Either part
+// may be missing (unknown page count / size); we join only what we have.
+function sourceMeta(pages?: number, size?: string): string {
+  const parts: string[] = [];
+  if (pages && pages > 0) parts.push(`${pages} page${pages === 1 ? "" : "s"}`);
+  if (size) parts.push(size);
+  return parts.join(", ");
+}
+
+// A column heading for the compare pane: a bold label (EPUB/PDF, Bloom) with a
+// lighter sub-label after it (page count / size), plus optional right-aligned
+// controls (the superimpose toggle lives in the Bloom heading).
+function CompareColHeader({
+  label,
+  sub,
+  right,
+}: {
+  label: string;
+  sub?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "baseline", gap: 8 }}>
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: "#e8eaed", whiteSpace: "nowrap" }}>
+        {label}
+      </span>
+      {sub && (
+        <span
+          style={{
+            fontSize: 11,
+            color: "#9aa0a6",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {sub}
+        </span>
+      )}
+      {right && <div style={{ marginLeft: "auto", flexShrink: 0 }}>{right}</div>}
+    </div>
+  );
+}
+
+// The card shown in the Bloom column when there's no Bloom page to render yet
+// (converting / failed / not-yet-styled). Centered title + optional spinner,
+// sub-text and action button; `danger` paints it in the alert color.
+function NoticeCard({
+  title,
+  subtitle,
+  danger,
+  spinner,
+  statusLine,
+  action,
+}: {
+  title: string;
+  subtitle?: string;
+  danger?: boolean;
+  spinner?: boolean;
+  // Optional element shown just above the action button (the Bloom connection pill).
+  statusLine?: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        gap: 12,
+        padding: "28px 18px",
+        borderRadius: 6,
+        border: `1px solid ${danger ? "var(--st-fail-fg)" : "rgba(255,255,255,.14)"}`,
+        background: danger ? "rgba(229,90,90,.12)" : "rgba(255,255,255,.04)",
+        minHeight: 120,
+      }}
+    >
+      {spinner && <div className="spinner" style={{ width: 28, height: 28, borderWidth: 3 }} />}
+      <div
+        style={{ fontSize: 13, fontWeight: 700, color: danger ? "var(--st-fail-fg)" : "#e8eaed" }}
+      >
+        {title}
+      </div>
+      {subtitle && (
+        <div style={{ fontSize: 11.5, color: "#9aa0a6", lineHeight: 1.4 }}>{subtitle}</div>
+      )}
+      {statusLine}
+      {action}
+    </div>
+  );
+}
+
+// Live Bloom connection indicator. Lives just above the "Convert to Bloom" action so
+// the state of the thing you're about to use is right there: a quiet pill when
+// connected, a prominent alert pill when not (nothing converts/renders without a
+// running Bloom). Styled for the dark compare backdrop.
+function BloomConnPill({ running, collectionName }: { running: boolean; collectionName?: string }) {
+  return (
+    <span
+      title={
+        running
+          ? "Connected to a running Bloom with this collection open"
+          : "Not connected to a running Bloom"
+      }
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
+        height: 24,
+        padding: "0 10px",
+        borderRadius: 999,
+        border: `1px solid ${running ? "rgba(255,255,255,.18)" : "var(--st-fail-fg)"}`,
+        background: running ? "rgba(255,255,255,.06)" : "var(--st-fail-bg)",
+        fontSize: 11,
+        fontWeight: running ? 600 : 700,
+        color: running ? "#bdc1c6" : "var(--st-fail-fg)",
+        maxWidth: 240,
+        overflow: "hidden",
+      }}
+    >
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: 999,
+          flexShrink: 0,
+          background: running ? "var(--st-done-fg)" : "var(--st-fail-fg)",
+        }}
+      />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {running ? `Bloom connected: ${collectionName || "running"}` : "Bloom not connected"}
+      </span>
+    </span>
+  );
+}
+
+// Source-only compare view: shown when a book with no run is selected. The source
+// (PDF/EPUB) fills the left column and a "no Bloom book yet" placeholder sits where
+// the converted book will go, mirroring the paired run view's two-column layout.
+function SourceOnlyPane({
+  source,
+  isEpub,
+  onRunNow,
+  bloomRunning,
+  bloomCollectionName,
+}: {
+  source: Source;
+  isEpub: boolean;
+  onRunNow?: () => void;
+  bloomRunning: boolean;
+  bloomCollectionName?: string;
+}) {
+  const srcLabel = isEpub ? "EPUB" : "PDF";
+  // PDF: the whole document in the browser's PDF viewer. EPUB (no run yet): the cover
+  // spine page via the resource proxy — the standalone multi-page reader is retired.
+  const srcUrl = isEpub
+    ? api.epubSpineUrlByPath(source.path || "", 1)
+    : `/api/source-pdf?path=${encodeURIComponent(source.path || "")}`;
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        background: COMPARE_BACKDROP,
+      }}
+    >
+      <div style={{ display: "flex", gap: 8, padding: "12px 12px 10px" }}>
+        <CompareColHeader label={srcLabel} sub={sourceMeta(source.pages, source.size)} />
+        <CompareColHeader label="Bloom" />
+      </div>
+      <div style={{ flex: 1, display: "flex", gap: 8, padding: "0 12px 12px", minHeight: 0 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <iframe
+            key={source.path}
+            title={`${srcLabel} preview`}
+            src={srcUrl}
+            style={{
+              width: "100%",
+              height: "100%",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              background: "#fff",
+            }}
+          />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <NoticeCard
+            title="No Bloom book yet"
+            statusLine={
+              <BloomConnPill running={bloomRunning} collectionName={bloomCollectionName} />
+            }
+            action={
+              onRunNow && (
+                <Btn variant="primary" size="sm" icon="play" onClick={onRunNow}>
+                  Convert to Bloom
+                </Btn>
+              )
+            }
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The two bold column headings (EPUB/PDF · Bloom) with their lighter page/size
+// sub-labels, plus the Superimpose toggle parked on the right (Bloom) heading and
+// the blend slider beneath when active. Rendered in the pane header so it reads as
+// one surface with the Re-run / Re-process controls (not floating over the pages).
+function CompareHeadings({
+  info,
+  sourceSize,
+  view,
+  onView,
+}: {
+  info: PagePairsInfo;
+  sourceSize?: string;
+  view: ViewMode;
+  onView: (d: ViewMode) => void;
+}) {
+  const srcLabel = info.sourceKind === "epub" ? "EPUB" : "PDF";
+  const toggleStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    fontSize: 11.5,
+    fontWeight: 600,
+    color: "#bdc1c6",
+    cursor: "pointer",
+    userSelect: "none",
+    whiteSpace: "nowrap",
+  };
+  // "Review Checklist" (review the extracted metadata against the source) sits to the
+  // LEFT of "Superimpose". A plain toggle button, available whenever the source is
+  // ready — even before Bloom has styled the book — so it can be reviewed early.
+  const reviewBtn = (
+    <button
+      onClick={() => onView({ ...view, metadata: !view.metadata })}
+      title="Review the extracted metadata against the source document"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        height: 24,
+        padding: "0 11px",
+        borderRadius: 999,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        fontSize: 11.5,
+        fontWeight: 600,
+        border: `1px solid ${view.metadata ? "var(--accent)" : "rgba(255,255,255,.22)"}`,
+        background: view.metadata ? "var(--accent)" : "rgba(255,255,255,.06)",
+        color: view.metadata ? "#fff" : "#bdc1c6",
+      }}
+    >
+      <Icon name="check" size={13} />
+      Review Checklist
+    </button>
+  );
+  const superToggle = (
+    <label style={toggleStyle}>
+      <input
+        type="checkbox"
+        checked={view.mode === "super"}
+        onChange={(e) => onView({ ...view, mode: e.target.checked ? "super" : "side" })}
+      />
+      Superimpose
+    </label>
+  );
+  const controls = (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
+      {reviewBtn}
+      {info.bookReady && superToggle}
+    </div>
+  );
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+        <CompareColHeader label={srcLabel} sub={sourceMeta(info.pdfPages, sourceSize)} />
+        <CompareColHeader
+          label="Bloom"
+          sub={info.bloomPages > 0 ? sourceMeta(info.bloomPages, info.bloomSize) : undefined}
+          right={controls}
+        />
+      </div>
+      {info.bookReady && view.mode === "super" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0 2px" }}>
+          <span style={{ fontSize: 10, color: "#9aa0a6", whiteSpace: "nowrap" }}>Bloom</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.02}
+            value={view.opacity}
+            onChange={(e) => onView({ ...view, opacity: Number(e.target.value) })}
+            style={{ flex: 1 }}
+            aria-label={`${srcLabel} / Bloom blend`}
+          />
+          <span style={{ fontSize: 10, fontWeight: 700, color: PDF_BLUE, whiteSpace: "nowrap" }}>
+            {srcLabel}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ============ Paired per-page view (source PDF | resulting Bloom page) ============
 // Shown in the PDF-preview pane when a conversion RUN is selected. Naïve index
 // pairing: row i shows PDF page i and Bloom page i; whichever side runs out shows
@@ -2717,8 +2684,14 @@ function PairedPagesView({
   procError,
   reloadKey,
   onProcess,
-  diff,
-  onDiff,
+  runStatus,
+  runStage,
+  runFailedStage,
+  onOpenDetails,
+  bloomRunning,
+  bloomCollectionName,
+  view,
+  onCloseMetadata,
 }: {
   runId: string;
   info: PagePairsInfo | null;
@@ -2727,8 +2700,18 @@ function PairedPagesView({
   procError: string | null;
   reloadKey: number;
   onProcess: () => void;
-  diff: DiffMode;
-  onDiff: (d: DiffMode) => void;
+  // Run lifecycle, so the Bloom-side placeholder can explain why there's no Bloom
+  // page yet (converting / failed-on-step / not-yet-rendered) when bookReady is false.
+  runStatus?: string;
+  runStage?: string;
+  runFailedStage?: Stage;
+  onOpenDetails?: () => void;
+  // Live Bloom connection, shown above the "Convert to Bloom" placeholder action.
+  bloomRunning: boolean;
+  bloomCollectionName?: string;
+  view: ViewMode;
+  // Turn the metadata-review panel off (its "×" button) — owned by PdfViewerPane.
+  onCloseMetadata?: () => void;
 }) {
   const center = (msg: string) => (
     <div
@@ -2772,44 +2755,6 @@ function PairedPagesView({
   if (loading) return center("Loading pages…");
   if (!info || !info.ready) return center(info?.reason || "No pages to show.");
 
-  // Until Bloom has styled the book there's nothing meaningful to compare, so we
-  // withhold both columns and put the call-to-action front-and-center instead.
-  if (!info.bookReady)
-    return (
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 14,
-          padding: 24,
-          background: COMPARE_BACKDROP,
-        }}
-      >
-        {procError && (
-          <div
-            style={{
-              padding: "7px 10px",
-              borderRadius: 6,
-              background: "var(--danger-bg, #fde8e8)",
-              border: "1px solid var(--danger, #e06464)",
-              color: "var(--danger, #b53d3d)",
-              fontSize: 11,
-              lineHeight: 1.4,
-              textAlign: "center",
-            }}
-          >
-            {procError}
-          </div>
-        )}
-        <Btn variant="primary" size="lg" icon="refresh" onClick={onProcess}>
-          Process in Bloom
-        </Btn>
-      </div>
-    );
-
   const { w: natW, h: natH } = pagePxSize(info.pageSize);
   const aspect = natW / natH;
   const rows = info.rows;
@@ -2818,193 +2763,349 @@ function PairedPagesView({
   // a neutral surface, with clear separation between successive page rows.
   const BACKDROP = COMPARE_BACKDROP;
 
-  // "PDF | Bloom" column banner, shown in side-by-side mode. Lives inside the
-  // sticky header wrapper below, so the labels stay visible while paging down.
-  const columnHeader = (
-    <div style={{ display: "flex", gap: 8 }}>
-      {[
-        { label: info.sourceKind === "epub" ? "EPUB" : "PDF", count: info.pdfPages },
-        { label: "Bloom", count: info.bloomPages },
-      ].map((c) => (
-        <div
-          key={c.label}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            alignItems: "baseline",
-            justifyContent: "center",
-            gap: 6,
-            textAlign: "center",
-            fontSize: 12,
-            fontWeight: 800,
-            letterSpacing: ".8px",
-            textTransform: "uppercase",
-            color: c.label === "PDF" ? PDF_BLUE : "#f1f1f1",
-            padding: "6px 0",
-            borderRadius: 5,
-            background: "rgba(255,255,255,.05)",
-          }}
-        >
-          {c.label}
-          <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: ".3px", opacity: 0.7 }}>
-            {c.count} pages
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-
-  // Mode buttons + (for onion skin) the fade slider. Lets you flip the two pages
-  // from side-by-side into a single overlaid box to spot drift directly.
-  const diffBtn = (m: DiffMode["mode"], label: string, title: string) => (
-    <button
-      key={m}
-      onClick={() => onDiff({ ...diff, mode: m })}
-      title={title}
-      style={{
-        flex: 1,
-        padding: "5px 8px",
-        fontSize: 11,
-        fontWeight: 600,
-        cursor: "pointer",
-        border: "none",
-        borderRadius: 5,
-        background: diff.mode === m ? "var(--accent)" : "rgba(255,255,255,.06)",
-        color: diff.mode === m ? "#fff" : "#cdd1d6",
-      }}
-    >
-      {label}
-    </button>
-  );
-  const diffControls = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-      <div style={{ display: "flex", gap: 4 }}>
-        {diffBtn("off", "Side by side", "Show the PDF and Bloom pages in two columns")}
-        {diffBtn("onion", "Onion skin", "Fade the PDF over the Bloom page")}
-        {diffBtn("diff", "Difference", "Blend the two — matching pixels go dark, changes glow")}
-      </div>
-      {diff.mode === "onion" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 2px" }}>
-          <span style={{ fontSize: 10, color: "#9aa0a6", whiteSpace: "nowrap" }}>Bloom</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.02}
-            value={diff.opacity}
-            onChange={(e) => onDiff({ ...diff, opacity: Number(e.target.value) })}
-            style={{ flex: 1 }}
-            aria-label="PDF / Bloom blend"
-          />
-          <span style={{ fontSize: 10, fontWeight: 700, color: PDF_BLUE, whiteSpace: "nowrap" }}>
-            PDF
-          </span>
-        </div>
-      )}
-    </div>
-  );
-
-  // In overlay modes the two-column banner makes no sense — the pages are stacked
-  // into one box — so show a single explanatory caption instead.
-  const overlayLabel = (
-    <div
-      style={{
-        textAlign: "center",
-        padding: "6px 0",
-        fontSize: 11.5,
-        fontWeight: 700,
-        letterSpacing: ".4px",
-        color: "#f1f1f1",
-        borderRadius: 5,
-        background: "rgba(255,255,255,.05)",
-      }}
-    >
-      {diff.mode === "onion" ? (
-        <>
-          <span style={{ color: PDF_BLUE }}>PDF</span> faded over Bloom
-        </>
-      ) : (
-        "Difference — matching areas dark, changes glow"
-      )}
-    </div>
+  // When the book isn't styled yet there's nothing to render in the Bloom column.
+  // Instead of withholding both sides, we keep the source pages on the left and
+  // drop a single notice into the top of the Bloom column explaining why — and, when
+  // actionable, a button (convert in Bloom, or open the failed run's details).
+  const stageName = (s?: string) => (s && BLOOM.STAGE_LABELS[s as Stage]) || s || "";
+  const bloomNotice = info.bookReady ? null : runStatus === "failed" ? (
+    <NoticeCard
+      danger
+      title={
+        stageName(runFailedStage)
+          ? `Conversion failed on the ${stageName(runFailedStage)} step`
+          : "Conversion failed"
+      }
+      action={
+        onOpenDetails && (
+          <Btn variant="default" size="sm" icon="external" onClick={onOpenDetails}>
+            Open run details
+          </Btn>
+        )
+      }
+    />
+  ) : runStatus === "running" || runStatus === "queued" ? (
+    <NoticeCard
+      spinner
+      title={runStatus === "queued" ? "Queued for conversion…" : "Converting…"}
+      subtitle={stageName(runStage) ? `Current step: ${stageName(runStage)}` : undefined}
+    />
+  ) : info.bloomPages > 0 ? (
+    <NoticeCard
+      title="Not yet rendered by Bloom"
+      subtitle="Send this book to the running Bloom to apply its page styling."
+      statusLine={<BloomConnPill running={bloomRunning} collectionName={bloomCollectionName} />}
+      action={
+        <Btn variant="primary" size="sm" icon="refresh" onClick={onProcess}>
+          Convert to Bloom
+        </Btn>
+      }
+    />
+  ) : (
+    <NoticeCard
+      danger
+      title="No Bloom output was produced"
+      action={
+        onOpenDetails && (
+          <Btn variant="default" size="sm" icon="external" onClick={onOpenDetails}>
+            Open run details
+          </Btn>
+        )
+      }
+    />
   );
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", background: BACKDROP, padding: "8px 10px 24px" }}>
-      {procError && (
-        <div
-          style={{
-            margin: "0 0 10px",
-            padding: "7px 10px",
-            borderRadius: 6,
-            background: "var(--danger-bg, #fde8e8)",
-            border: "1px solid var(--danger, #e06464)",
-            color: "var(--danger, #b53d3d)",
-            fontSize: 11,
-            lineHeight: 1.4,
-          }}
-        >
-          {procError}
-        </div>
-      )}
-      {/* Sticky header: diff controls above, then the column banner (side-by-
-          side) or overlay caption. Padding covers scrolling pages behind it. */}
+    <div
+      style={{
+        position: "relative",
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <div
         style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 3,
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
           background: BACKDROP,
-          padding: "4px 0 10px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
+          padding: "8px 10px 24px",
         }}
       >
-        {diffControls}
-        {diff.mode === "off" ? columnHeader : overlayLabel}
+        {procError && (
+          <div
+            style={{
+              margin: "0 0 10px",
+              padding: "7px 10px",
+              borderRadius: 6,
+              background: "var(--danger-bg, #fde8e8)",
+              border: "1px solid var(--danger, #e06464)",
+              color: "var(--danger, #b53d3d)",
+              fontSize: 11,
+              lineHeight: 1.4,
+            }}
+          >
+            {procError}
+          </div>
+        )}
+        {/* Column headings live in the pane header (CompareHeadings) so they read as one
+            surface with the controls; here we render just the scrolling page rows. */}
+        {rows.map((row, i) => (
+          <PairedRow
+            key={i}
+            runId={runId}
+            pdfPage={row.pdfPage}
+            bloomPage={row.bloomPage}
+            sourceKind={info.sourceKind === "epub" ? "epub" : "pdf"}
+            aspect={aspect}
+            natW={natW}
+            natH={natH}
+            reloadKey={reloadKey}
+            view={view}
+            // The Bloom-side placeholder rides in the first row only, so it appears
+            // once at the top of the Bloom column while the source pages flow below.
+            bloomNotice={i === 0 ? bloomNotice : null}
+          />
+        ))}
       </div>
-      {rows.map((row, i) => (
-        <PairedRow
-          key={i}
-          runId={runId}
-          pdfPage={row.pdfPage}
-          bloomPage={row.bloomPage}
-          sourceKind={info.sourceKind === "epub" ? "epub" : "pdf"}
-          aspect={aspect}
-          natW={natW}
-          natH={natH}
-          reloadKey={reloadKey}
-          diff={diff}
-        />
-      ))}
+      {/* Extracted-metadata review panel, dropped over the Bloom (right) side. */}
+      {view.metadata && <MetadataOverlay runId={runId} onClose={onCloseMetadata} />}
     </div>
   );
 }
 
-// One source EPUB spine page in the compare grid's left column. A reflowable EPUB
-// page has no flat raster like a PDF, so we render its real HTML (illustration +
-// prose, with the EPUB's own CSS) in an iframe and scale it to the column width —
-// the same measure-then-scale trick the Bloom page iframe uses. Measuring the
-// loaded doc's scroll size yields the page's natural dimensions (even a fixed-
-// layout page wider than the iframe), so the scale lands right after one load.
+// One thumbs-up / thumbs-down button in the metadata review panel. Active marks are
+// filled (green / red); clicking the active mark clears it.
+function ThumbBtn({
+  dir,
+  active,
+  onClick,
+}: {
+  dir: "up" | "down";
+  active: boolean;
+  onClick: () => void;
+}) {
+  const good = dir === "up";
+  const accent = good ? "var(--good)" : "var(--bad)";
+  return (
+    <button
+      onClick={onClick}
+      title={good ? "Looks right" : "Has a problem"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 28,
+        height: 28,
+        borderRadius: 7,
+        cursor: "pointer",
+        border: `1px solid ${active ? accent : "rgba(255,255,255,.18)"}`,
+        background: active
+          ? `color-mix(in oklch, ${accent} 28%, transparent)`
+          : "rgba(255,255,255,.04)",
+        color: active ? accent : "#bdc1c6",
+      }}
+    >
+      <Icon name={good ? "thumbsUp" : "thumbsDown"} size={14} strokeWidth={2} />
+    </button>
+  );
+}
+
+// The extracted-metadata review panel, dropped over the Bloom (right) half of the
+// compare pane. Lists every checklist item with the value we extracted (or "(not
+// detected)") and a thumbs-up / thumbs-down control per item. Marks persist to the
+// run (the table's Status column reflects them via the SSE run-update).
+function MetadataOverlay({ runId, onClose }: { runId: string; onClose?: () => void }) {
+  const [items, setItems] = React.useState<MetadataItem[] | null>(null);
+  const [marks, setMarks] = React.useState<Record<string, ChecklistMark>>({});
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    api
+      .runMetadata(runId)
+      .then((r) => {
+        if (!alive) return;
+        setItems(r.items);
+        setMarks(r.marks || {});
+      })
+      .catch(() => {
+        if (alive) setItems([]);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [runId]);
+
+  // Toggle a mark: clicking the active one clears it. Optimistic; writes through to
+  // the server, which broadcasts the run-update that keeps the table in sync.
+  const setMark = (key: string, mark: ChecklistMark) => {
+    setMarks((prev) => {
+      const next = { ...prev };
+      const newMark = prev[key] === mark ? null : mark;
+      if (newMark) next[key] = newMark;
+      else delete next[key];
+      api.setChecklistMark(runId, key, newMark).catch(() => {});
+      return next;
+    });
+  };
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        right: 0,
+        left: "50%",
+        zIndex: 5,
+        display: "flex",
+        flexDirection: "column",
+        background: COMPARE_BACKDROP,
+        borderLeft: "1px solid rgba(255,255,255,.12)",
+        boxShadow: "-8px 0 24px rgba(0,0,0,.35)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 12px",
+          borderBottom: "1px solid rgba(255,255,255,.1)",
+        }}
+      >
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: ".5px",
+            textTransform: "uppercase",
+            color: "#e8eaed",
+          }}
+        >
+          Conversion Review Checklist
+        </span>
+        {onClose && (
+          <IconBtn
+            name="x"
+            size={24}
+            iconSize={14}
+            title="Close review checklist"
+            color="#bdc1c6"
+            onClick={onClose}
+          />
+        )}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "4px 12px 14px" }}>
+        {loading ? (
+          <div style={{ color: "#9aa0a6", fontSize: 12, padding: "16px 2px" }}>Loading…</div>
+        ) : !items || items.length === 0 ? (
+          <div style={{ color: "#9aa0a6", fontSize: 12, padding: "16px 2px", lineHeight: 1.5 }}>
+            No metadata available for this run yet.
+          </div>
+        ) : (
+          items.map((it) => (
+            <div
+              key={it.key}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                padding: "9px 0",
+                borderBottom: "1px solid rgba(255,255,255,.07)",
+              }}
+            >
+              {/* Thumbs first (left) column. */}
+              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                <ThumbBtn
+                  dir="up"
+                  active={marks[it.key] === "up"}
+                  onClick={() => setMark(it.key, "up")}
+                />
+                <ThumbBtn
+                  dir="down"
+                  active={marks[it.key] === "down"}
+                  onClick={() => setMark(it.key, "down")}
+                />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: ".4px",
+                    textTransform: "uppercase",
+                    color: "#9aa0a6",
+                    marginBottom: 3,
+                  }}
+                >
+                  {it.label}
+                </div>
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    color: it.value ? "#e8eaed" : "#7a7f86",
+                    fontStyle: it.value ? "normal" : "italic",
+                    wordBreak: "break-word",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {it.value || "(not detected)"}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Author-defense CSS injected into each previewed EPUB page — the single seam where a
+// reader's normalization lives. Today it just restores image aspect (books set
+// `img{width:..%;height:..%}` with no object-fit, which stretches a logo); swapping in
+// the full ReadiumCSS sheet later is a one-line change here.
+const EPUB_PREVIEW_CSS = "img{height:auto!important;object-fit:contain!important;}";
+
+// One source EPUB spine page in the compare grid's left column. A reflowable EPUB page
+// is just a web page, so we load its real document from the resource proxy (its own
+// fonts/images/CSS resolve under that prefix), let it lay out at a nominal page width,
+// then — once web-fonts have loaded — measure its true content height and scale the whole
+// page uniformly to fit the book-page box. Nothing is clipped; an image-only page fills
+// the box, a caption page shows all its text. (Port of test-outputs/epub-proof shootFit.)
 const EpubPageCell = React.memo(function EpubPageCell({
   runId,
   page,
   reloadKey,
+  natW,
+  natH,
+  aspect,
 }: {
   runId: string;
   page: number;
   reloadKey: number;
+  // The book's page geometry (same values the Bloom column uses), so every source
+  // page is shown in a uniform book-page box that lines up with its Bloom counterpart.
+  natW: number;
+  natH: number;
+  aspect: number;
 }) {
   const colRef = React.useRef<HTMLDivElement>(null);
   const [colW, setColW] = React.useState(0);
-  const [m, setM] = React.useState<{ w: number; h: number } | null>(null);
+  // True content height of the page laid out at the nominal width `natW`, measured from
+  // the (same-origin) iframe after its fonts load. Null until measured → assume it fits.
+  const [contentH, setContentH] = React.useState<number | null>(null);
 
-  // A ResizeObserver tracks the column width directly, so a pane resize re-measures
-  // this cell on its own (batched per frame by the browser) without the parent
-  // having to re-render every row on each drag tick.
+  // A ResizeObserver tracks the column width directly, so a pane resize re-sizes this
+  // cell on its own (batched per frame by the browser) without the parent having to
+  // re-render every row on each drag tick.
   React.useEffect(() => {
     const el = colRef.current;
     if (!el) return;
@@ -3015,38 +3116,71 @@ const EpubPageCell = React.memo(function EpubPageCell({
     return () => ro.disconnect();
   }, []);
 
-  // Re-measure when the page changes or Bloom re-processes (same URL, new content).
-  React.useEffect(() => setM(null), [reloadKey, page]);
+  // A fresh page (or a re-process that swaps the source) must re-measure.
+  React.useEffect(() => setContentH(null), [reloadKey, page]);
 
-  const onLoad = (e: React.SyntheticEvent<HTMLIFrameElement>) => {
-    try {
-      const doc = e.currentTarget.contentDocument;
-      if (!doc) return;
-      const de = doc.documentElement;
-      const b = doc.body;
-      const w = Math.max(de?.scrollWidth || 0, b?.scrollWidth || 0);
-      const h = Math.max(de?.scrollHeight || 0, b?.scrollHeight || 0);
-      if (w > 0 && h > 0) setM({ w, h });
-    } catch {
-      /* same-origin; ignore the rare unreadable doc and keep the guess */
-    }
-  };
+  // Inject the author-defense CSS, wait for web-fonts (a fallback font is shorter, so
+  // measuring too early under-counts text height and it later clips), then measure.
+  const onLoad = React.useCallback((e: React.SyntheticEvent<HTMLIFrameElement>) => {
+    const iframe = e.currentTarget;
+    void (async () => {
+      try {
+        const doc = iframe.contentDocument;
+        if (!doc?.body) return;
+        const style = doc.createElement("style");
+        style.textContent = EPUB_PREVIEW_CSS;
+        doc.head?.appendChild(style);
+        // Measure only once layout is settled: web-fonts loaded (a fallback font is
+        // shorter → under-measures → clips) AND images decoded (a not-yet-loaded image
+        // has zero height → under-measures). The iframe `load` event isn't enough on its
+        // own here because the document arrives via a redirect.
+        await doc.fonts?.ready;
+        await Promise.all(
+          Array.from(doc.images).map((im) =>
+            im.complete
+              ? null
+              : new Promise<void>((r) => {
+                  im.addEventListener("load", () => r(), { once: true });
+                  im.addEventListener("error", () => r(), { once: true });
+                }),
+          ),
+        );
+        // `fonts.ready` can resolve a tick before the font-swap reflow lands, so measure
+        // after the next frames and again shortly after, taking the MAX — under-measuring
+        // would clip the page, which is the one outcome we must avoid.
+        // Take the tallest of body/root box and scroll heights: a last paragraph can
+        // overflow the body box (body rect < real content), and the root element then
+        // reports the true extent.
+        const measure = () =>
+          Math.max(
+            doc.body.getBoundingClientRect().height,
+            doc.documentElement.getBoundingClientRect().height,
+            doc.body.scrollHeight,
+            doc.documentElement.scrollHeight,
+          );
+        await new Promise<void>((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => r())),
+        );
+        let h = measure();
+        await new Promise<void>((r) => setTimeout(r, 150));
+        h = Math.max(h, measure());
+        setContentH(h || null);
+      } catch {
+        /* cross-origin / detached — leave unscaled */
+      }
+    })();
+  }, []);
 
-  // Render at the page's natural width, scaled down to the column. A guess before
-  // the first measure keeps the initial paint close to the right size.
-  const GUESS_W = 600;
-  const GUESS_H = Math.round(GUESS_W * 1.4);
-  const natW = m ? m.w : GUESS_W;
-  const natH = m ? m.h : GUESS_H;
-  const scale = colW > 0 ? colW / natW : 1;
-
+  // Shrink the whole page to fit the box height when it overflows; scale that to the
+  // column. A scaled (narrower) page is centered horizontally in the box.
+  const fitScale = contentH && contentH > natH ? natH / contentH : 1;
+  const scale = (colW > 0 ? colW / natW : 1) * fitScale;
   return (
     <div ref={colRef} style={{ width: "100%" }}>
       <div
         style={{
           width: "100%",
-          aspectRatio: m ? String(m.w / m.h) : undefined,
-          height: m ? undefined : Math.round(GUESS_H * scale) || undefined,
+          aspectRatio: String(aspect),
           overflow: "hidden",
           borderRadius: 4,
           border: "1px solid var(--border)",
@@ -3058,15 +3192,15 @@ const EpubPageCell = React.memo(function EpubPageCell({
           <iframe
             key={reloadKey}
             title={`EPUB page ${page}`}
-            src={api.epubPageUrl(runId, page)}
-            scrolling="no"
+            src={api.epubSpineUrl(runId, page)}
             onLoad={onLoad}
+            scrolling="no"
             style={{
               position: "absolute",
               top: 0,
-              left: 0,
+              left: Math.max(0, (colW - colW * fitScale) / 2),
               width: natW,
-              height: natH,
+              height: Math.max(contentH ?? natH, natH),
               border: "none",
               transform: `scale(${scale})`,
               transformOrigin: "top left",
@@ -3088,7 +3222,8 @@ const PairedRow = React.memo(function PairedRow({
   natW,
   natH,
   reloadKey,
-  diff,
+  view,
+  bloomNotice,
 }: {
   runId: string;
   // Source page rendered on the left, and the Bloom page's document index
@@ -3101,7 +3236,10 @@ const PairedRow = React.memo(function PairedRow({
   natW: number;
   natH: number;
   reloadKey: number;
-  diff: DiffMode;
+  view: ViewMode;
+  // Placeholder shown in the Bloom column when there's no Bloom page (book not
+  // styled yet / run failed). Only the first row receives it; null otherwise.
+  bloomNotice?: React.ReactNode;
 }) {
   const rowRef = React.useRef<HTMLDivElement>(null);
   const colRef = React.useRef<HTMLDivElement>(null);
@@ -3127,11 +3265,11 @@ const PairedRow = React.memo(function PairedRow({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-    // diff.mode is a dep because the measured element (half-width column vs.
-    // full-width overlay box) changes when toggling, so colW must re-observe. A
-    // pane resize is handled by the observer itself (no paneWidth dep needed),
-    // so dragging the resizer doesn't re-run this effect on every row.
-  }, [diff.mode]);
+    // view.mode is a dep because the measured element (half-width column vs.
+    // full-width overlay/single box) changes when toggling, so colW must
+    // re-observe. A pane resize is handled by the observer itself (no paneWidth
+    // dep needed), so dragging the resizer doesn't re-run this effect per row.
+  }, [view.mode]);
 
   // Re-measure on reload (Bloom re-process swaps styled HTML in at the same URL).
   React.useEffect(() => setMeasured(null), [reloadKey]);
@@ -3139,10 +3277,10 @@ const PairedRow = React.memo(function PairedRow({
   const measureBloomPage = (e: React.SyntheticEvent<HTMLIFrameElement>) => {
     try {
       const doc = e.currentTarget.contentDocument;
-      const view = e.currentTarget.contentWindow;
-      if (!doc || !view) return;
+      const win = e.currentTarget.contentWindow;
+      if (!doc || !win) return;
       const pages = Array.from(doc.querySelectorAll<HTMLElement>("body > .bloom-page"));
-      const visible = pages.find((p) => view.getComputedStyle(p).display !== "none") ?? pages[0];
+      const visible = pages.find((p) => win.getComputedStyle(p).display !== "none") ?? pages[0];
       if (!visible) return;
       const r = visible.getBoundingClientRect();
       if (r.width > 0 && r.height > 0) {
@@ -3156,8 +3294,8 @@ const PairedRow = React.memo(function PairedRow({
   const colStyle: React.CSSProperties = { flex: 1, minWidth: 0 };
 
   // Overlay only when both sides exist; a row missing a counterpart has nothing
-  // to stack, so it falls back to the side-by-side (single-cell) layout.
-  const overlay = diff.mode !== "off" && pdfPage !== null && bloomPage !== null;
+  // to stack, so it falls back to showing whichever side it has.
+  const overlay = view.mode === "super" && pdfPage !== null && bloomPage !== null;
 
   // The white page box that clips the scaled Bloom iframe. Reused by both layouts.
   const boxStyle: React.CSSProperties = {
@@ -3205,7 +3343,7 @@ const PairedRow = React.memo(function PairedRow({
   const pdfSrc = pdfPage !== null ? api.pdfPageUrl(runId, pdfPage) : "";
   let pdfImg: React.ReactNode = null;
   if (pdfPage !== null && !overlay) {
-    // Side-by-side: a plain, faithful block image of the source page.
+    // Single / side-by-side: a plain, faithful block image of the source page.
     pdfImg = (
       <img
         src={pdfSrc}
@@ -3221,28 +3359,8 @@ const PairedRow = React.memo(function PairedRow({
         onError={onImgError}
       />
     );
-  } else if (pdfPage !== null && diff.mode === "diff") {
-    // Difference: blend straight over Bloom, untinted (a tint would make aligned
-    // content glow). Fills the same box so page edges register.
-    pdfImg = (
-      <img
-        src={pdfSrc}
-        alt={`PDF page ${pdfPage}`}
-        loading="lazy"
-        style={{
-          position: "absolute",
-          inset: 0,
-          width: "100%",
-          height: "100%",
-          objectFit: "fill",
-          mixBlendMode: "difference",
-          pointerEvents: "none",
-        }}
-        onError={onImgError}
-      />
-    );
   } else if (pdfPage !== null) {
-    // Onion skin: tint the PDF blue, then fade the whole layer over Bloom. The blue
+    // Superimposed: tint the PDF blue, then fade the whole layer over Bloom. The blue
     // "screen" overlay sits on the PDF only — `isolation: isolate` keeps the blend
     // from reaching the Bloom iframe behind. opacity drives the fade.
     pdfImg = (
@@ -3250,7 +3368,7 @@ const PairedRow = React.memo(function PairedRow({
         style={{
           position: "absolute",
           inset: 0,
-          opacity: diff.opacity,
+          opacity: view.opacity,
           isolation: "isolate",
           pointerEvents: "none",
         }}
@@ -3289,7 +3407,7 @@ const PairedRow = React.memo(function PairedRow({
         {pdfPage !== null ? `PAGE ${pdfPage}` : " "}
       </div>
       {overlay ? (
-        // Stacked: Bloom underneath, PDF blended/faded on top, in one box.
+        // Stacked: Bloom underneath, source blended/faded on top, in one box.
         <div ref={colRef} style={{ width: "100%" }}>
           <div style={boxStyle}>
             {bloomIframe}
@@ -3302,13 +3420,22 @@ const PairedRow = React.memo(function PairedRow({
             {/* EPUB: the faithful spine page (illustration + prose, in the EPUB's own
                 layout). PDF: a flat page render. */}
             {sourceKind === "epub" && pdfPage !== null ? (
-              <EpubPageCell runId={runId} page={pdfPage} reloadKey={reloadKey} />
+              <EpubPageCell
+                runId={runId}
+                page={pdfPage}
+                reloadKey={reloadKey}
+                natW={natW}
+                natH={natH}
+                aspect={aspect}
+              />
             ) : (
               pdfImg
             )}
           </div>
           <div style={colStyle}>
-            {bloomPage !== null && <div style={boxStyle}>{bloomIframe}</div>}
+            {/* The real Bloom page once styled; otherwise the placeholder notice
+                (first row only) explaining why there's nothing to show yet. */}
+            {bloomPage !== null ? <div style={boxStyle}>{bloomIframe}</div> : bloomNotice}
           </div>
         </div>
       )}

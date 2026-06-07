@@ -24,6 +24,7 @@ import * as path from "path";
 import { logger } from "../logger";
 import { readZip } from "./zipReader";
 import { FRONT_COVER_IMAGE_FILENAME, BACK_COVER_IMAGE_FILENAME } from "../types";
+import type { HorizontalAlign } from "../types";
 
 // ---------- tiny XHTML/XML helpers (the markup is regular; regex is enough) ----------
 
@@ -83,15 +84,16 @@ const allTagText = (xml: string, tag: string): string[] =>
 const imageSrcs = (xhtml: string): string[] =>
   [...xhtml.matchAll(/<img\b[^>]*\bsrc=["']([^"']+)["']/gi)].map((m) => m[1]);
 
+/**
+ * Decorative images we never treat as page content: the question-page answer icons
+ * (`i-1`…), publisher logos, and the small social/credit mark (`sc.`). Everything
+ * else is a real illustration.
+ */
+const isDecorativeImage = (src: string): boolean => /(^|\/)(i-\d|logo|sc\.)/i.test(src);
+
 /** The page's primary illustration src, skipping decorative icons / logos. */
 const pickMainImage = (imgs: string[]): string | undefined =>
-  imgs.find((i) => !/(^|\/)(i-\d|logo|sc\.)/i.test(i));
-
-/** Text of every `<div class="p">` (the LFA story-body convention), in order. */
-const storyParagraphs = (xhtml: string): string[] =>
-  [...xhtml.matchAll(/<div\s+class="p"[^>]*>([\s\S]*?)<\/div>/gi)]
-    .map((m) => stripTags(m[1]))
-    .filter(Boolean);
+  imgs.find((i) => !isDecorativeImage(i));
 
 /** Text of `<p|div class="…matching…">` blocks (front/back-matter prose), in order. */
 const classedParagraphs = (xhtml: string, classRe: RegExp): string[] => {
@@ -102,12 +104,168 @@ const classedParagraphs = (xhtml: string, classRe: RegExp): string[] => {
   return [...xhtml.matchAll(re)].map((m) => stripTags(m[1])).filter(Boolean);
 };
 
-/** Non-empty table cells (the discussion-questions page), skipping icon-only cells. */
-const tableCells = (xhtml: string): string[] =>
-  [...xhtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => stripTags(m[1])).filter(Boolean);
+// ---------- document-order content flow (the key to a faithful layout) ----------
 
-/** Generic fallback: every non-empty <p>, used when no template class is recognized. */
-const genericParagraphs = (xhtml: string): string[] => allTagText(xhtml, "p").filter(Boolean);
+/**
+ * What the source styles a paragraph as. We recover this generically from the
+ * EPUB's own CSS (and inline styles) rather than hard-coding template class names,
+ * so any reflowable EPUB benefits: a paragraph set in a bold font becomes bold, and
+ * a page whose prose is centered is laid out centered.
+ */
+interface ClassStyle {
+  bold?: boolean;
+  align?: HorizontalAlign;
+}
+
+/** A font family counts as bold if it's a bold/black/heavy cut — but NOT semi/demi-bold. */
+const isBoldFamily = (family: string): boolean =>
+  /bold|black|heavy/i.test(family) && !/semi-?bold|demi-?bold/i.test(family);
+
+/**
+ * Build a class → {bold, align} map from the EPUB's stylesheet(s). Bold is conveyed
+ * either by `font-weight` or — as in the Library-For-All templates — by naming a bold
+ * font cut in `font-family` (`OpenSans-Bold`) while leaving `font-weight:normal`.
+ */
+function parseClassStyles(css: string): Map<string, ClassStyle> {
+  const map = new Map<string, ClassStyle>();
+  for (const rule of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const [, selector, decl] = rule;
+    const align = (decl.match(/text-align\s*:\s*(left|center|right)/i)?.[1]?.toLowerCase() ??
+      undefined) as HorizontalAlign | undefined;
+    const family = decl.match(/font-family\s*:\s*([^;]+)/i)?.[1] ?? "";
+    const weight = decl.match(/font-weight\s*:\s*([^;]+)/i)?.[1] ?? "";
+    const bold = isBoldFamily(family) || /\b(bold|[6-9]00)\b/i.test(weight);
+    if (!align && !bold) continue;
+    for (const sel of selector.matchAll(/\.([A-Za-z0-9_-]+)/g)) {
+      const prev = map.get(sel[1]) ?? {};
+      map.set(sel[1], { align: align ?? prev.align, bold: bold || prev.bold });
+    }
+  }
+  return map;
+}
+
+/** Resolve a single element's bold/alignment from its class list, inline style, and tag. */
+function resolveElementStyle(
+  attrs: string,
+  isHeadingTag: boolean,
+  classStyles: Map<string, ClassStyle>,
+): ClassStyle {
+  let bold = isHeadingTag;
+  let align: HorizontalAlign | undefined;
+  const classList = attrs.match(/\bclass=["']([^"']*)["']/i)?.[1] ?? "";
+  for (const cls of classList.split(/\s+/).filter(Boolean)) {
+    const s = classStyles.get(cls);
+    if (s?.bold) bold = true;
+    if (s?.align && !align) align = s.align;
+  }
+  const inline = attrs.match(/\bstyle=["']([^"']*)["']/i)?.[1] ?? "";
+  const inlineAlign = inline.match(/text-align\s*:\s*(left|center|right)/i)?.[1]?.toLowerCase();
+  if (inlineAlign) align = inlineAlign as HorizontalAlign;
+  if (/font-weight\s*:\s*(bold|[6-9]00)/i.test(inline)) bold = true;
+  if (isBoldFamily(inline.match(/font-family\s*:\s*([^;]+)/i)?.[1] ?? "")) bold = true;
+  return { bold, align };
+}
+
+/** A block in document order: an illustration or a run of prose (possibly bold). */
+type FlowBlock = { type: "image"; src: string } | { type: "text"; markdown: string };
+
+/**
+ * Walk a content page's body in DOCUMENT ORDER, returning the illustrations and
+ * prose interleaved exactly as they appear in the source. This is what lets the
+ * downstream origami layout reproduce the real top-to-bottom flow (text, picture,
+ * text, …) — instead of the old behaviour, which hoisted one picture to the top and
+ * dumped all the text into a single block below it, losing both the ordering and the
+ * paragraph structure.
+ *
+ * Decorative icons/logos are skipped; a paragraph the source styles in a bold font
+ * (heading classes like `lfa-h`, `auth-h`, …) is wrapped in markdown `**…**`;
+ * consecutive prose uninterrupted by a picture is grouped into one text block (so it
+ * becomes one editable with several paragraphs). The page's horizontal alignment is
+ * reported when every prose block shares it (e.g. the fully-centered marketing page).
+ */
+function extractContentFlow(
+  xhtml: string,
+  classStyles: Map<string, ClassStyle>,
+): { blocks: FlowBlock[]; align?: HorizontalAlign } {
+  const body = xhtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? xhtml;
+
+  // Collect every block-level leaf we care about with its source position, then
+  // walk them in order, skipping any nested inside a container we already consumed
+  // (the <img> inside a <div class="container">, or a <td>'s icon).
+  interface Candidate {
+    start: number;
+    end: number;
+    attrs: string;
+    inner: string;
+    heading: boolean;
+  }
+  const candidates: Candidate[] = [];
+  for (const m of body.matchAll(/<img\b[^>]*>/gi)) {
+    candidates.push({
+      start: m.index!,
+      end: m.index! + m[0].length,
+      attrs: m[0],
+      inner: "",
+      heading: false,
+    });
+  }
+  for (const m of body.matchAll(/<(p|div|td)\b([^>]*)>([\s\S]*?)<\/\1>/gi)) {
+    candidates.push({
+      start: m.index!,
+      end: m.index! + m[0].length,
+      attrs: m[2],
+      inner: m[3],
+      heading: false,
+    });
+  }
+  for (const m of body.matchAll(/<(h[1-6])\b([^>]*)>([\s\S]*?)<\/\1>/gi)) {
+    candidates.push({
+      start: m.index!,
+      end: m.index! + m[0].length,
+      attrs: m[2],
+      inner: m[3],
+      heading: true,
+    });
+  }
+  // Earliest first; on a tie the wider span (a container) wins so it consumes its children.
+  candidates.sort((a, b) => a.start - b.start || b.end - a.end);
+
+  // Raw blocks, plus each prose block's resolved alignment (for the page-level decision).
+  const raw: FlowBlock[] = [];
+  const proseAligns: (HorizontalAlign | undefined)[] = [];
+  let consumedTo = -1;
+  for (const c of candidates) {
+    if (c.start < consumedTo) continue; // nested inside an already-emitted container
+    consumedTo = Math.max(consumedTo, c.end);
+
+    const srcs =
+      c.inner === "" ? [c.attrs.match(/\bsrc=["']([^"']+)["']/i)?.[1] ?? ""] : imageSrcs(c.inner);
+    for (const src of srcs) {
+      if (src && !isDecorativeImage(src)) raw.push({ type: "image", src });
+    }
+    const text = c.inner === "" ? "" : stripTags(c.inner);
+    if (text) {
+      const { bold, align } = resolveElementStyle(c.attrs, c.heading, classStyles);
+      raw.push({ type: "text", markdown: bold ? `**${text}**` : text });
+      proseAligns.push(align);
+    }
+  }
+
+  // Group consecutive prose (no picture between) into one multi-paragraph block.
+  const blocks: FlowBlock[] = [];
+  for (const b of raw) {
+    const last = blocks[blocks.length - 1];
+    if (b.type === "text" && last?.type === "text") last.markdown += `\n\n${b.markdown}`;
+    else blocks.push({ ...b });
+  }
+
+  // Center/right the page only when ALL prose agrees on it (mixed → leave default left).
+  const distinct = new Set(proseAligns.map((a) => a ?? "left"));
+  const align =
+    distinct.size === 1 && ![...distinct][0].includes("left") ? [...distinct][0] : undefined;
+
+  return { blocks, align: align as HorizontalAlign | undefined };
+}
 
 // ---------- posix path resolution inside the zip ----------
 
@@ -214,6 +372,14 @@ export async function epubToBloomMarkdown(
 ): Promise<EpubExtractResult> {
   const { zip, read, opfDir, opf, spineHrefs } = loadEpub(epubPath);
 
+  // The EPUB's own CSS tells us, generically, which paragraphs are bold headings and
+  // how prose is aligned — no per-template class names baked in here.
+  let combinedCss = "";
+  for (const [name, buf] of zip) {
+    if (name.toLowerCase().endsWith(".css")) combinedCss += buf.toString("utf8") + "\n";
+  }
+  const classStyles = parseClassStyles(combinedCss);
+
   // OPF metadata.
   const title = tagText(opf, "dc:title") || path.parse(epubPath).name;
   const author = tagText(opf, "dc:creator");
@@ -279,7 +445,6 @@ export async function epubToBloomMarkdown(
   for (let s = 0; s < spineHrefs.length; s++) {
     sourcePage = s + 1;
     const href = spineHrefs[s];
-    const name = path.basename(href, path.extname(href)).toLowerCase();
     const zpath = resolveZipPath(opfDir, href);
     const xhtml = read(zpath);
     if (!xhtml) continue;
@@ -320,24 +485,22 @@ export async function epubToBloomMarkdown(
     }
 
     // ---- content pages (story + discussion/about/marketing) ----
-    let paras = storyParagraphs(xhtml);
-    if (name === "question" || name === "questions") {
-      paras = [...classedParagraphs(xhtml, /quest-h/), ...tableCells(xhtml)];
-    } else if (name === "author") {
-      paras = classedParagraphs(xhtml, /auth-h|auth-t/);
-    } else if (/lfa|enjoy|about/.test(name)) {
-      paras = classedParagraphs(xhtml, /lfa-h|lfa-t/);
-    }
-    if (paras.length === 0) paras = genericParagraphs(xhtml); // template-agnostic fallback
-
+    // Walk the page in document order so pictures and prose stay interleaved exactly
+    // as authored; origami then lays them out as a faithful top-to-bottom stack
+    // (e.g. text, picture, text) instead of one picture on top of all the text.
+    const { blocks, align } = extractContentFlow(xhtml, classStyles);
     const lines: string[] = [];
-    const mainImg = pickMainImage(imgs);
-    if (mainImg) {
-      const dest = useImage(docDir, mainImg);
-      if (dest) lines.push(`![${path.basename(dest, path.extname(dest))}](${dest})`);
+    for (const block of blocks) {
+      if (block.type === "image") {
+        const dest = useImage(docDir, block.src);
+        if (dest) lines.push(`![${path.basename(dest, path.extname(dest))}](${dest})`);
+      } else {
+        lines.push(textTag(), block.markdown);
+      }
     }
-    if (paras.length) lines.push(textTag(), paras.join("\n\n"));
-    emitPage('type="content"', lines);
+    const contentAttrs =
+      align && align !== "left" ? `type="content" horizontal-align="${align}"` : 'type="content"';
+    emitPage(contentAttrs, lines);
   }
 
   logger.info(
@@ -391,102 +554,51 @@ export function getEpubPageImage(
   return { buffer, contentType };
 }
 
-// ---------- raw EPUB preview (GUI source pane) ----------
-
-const escapeAttr = (s: string): string => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-
-/** Inline every `<img src>` in a spine document as a data URI from the archive. */
-function inlineImages(xhtml: string, docDir: string, zip: Map<string, Buffer>): string {
-  return xhtml.replace(
-    /(<img\b[^>]*\bsrc=)["']([^"']+)["']/gi,
-    (whole, pre: string, src: string) => {
-      if (/^(data:|https?:)/i.test(src)) return whole;
-      const bytes = zip.get(resolveZipPath(docDir, src));
-      if (!bytes) return whole;
-      const ct = IMAGE_CONTENT_TYPES[path.extname(src).toLowerCase()] || "image/jpeg";
-      return `${pre}"data:${ct};base64,${bytes.toString("base64")}"`;
-    },
-  );
-}
-
-/** Replace `<link rel="stylesheet" href>` with the archive's CSS inlined as `<style>`. */
-function inlineStylesheets(xhtml: string, docDir: string, zip: Map<string, Buffer>): string {
-  return xhtml.replace(/<link\b[^>]*>/gi, (tag) => {
-    if (!/stylesheet/i.test(tag)) return tag;
-    const href = (tag.match(/\bhref=["']([^"']+)["']/i) || [])[1];
-    if (!href) return tag;
-    const css = zip.get(resolveZipPath(docDir, href));
-    return css ? `<style>${css.toString("utf8")}</style>` : tag;
-  });
-}
+// ---------- resource proxy (GUI paired preview) ----------
 
 /**
- * Render ONE spine page (1-based) as a self-contained HTML document — its own XHTML
- * with every image and stylesheet inlined from the archive, so it renders faithfully
- * (illustration *and* prose, in the EPUB's own layout) with nothing else to fetch.
- *
- * This is the per-page analogue of `renderEpubPreviewHtml`, used by the GUI's paired
- * preview to show the real EPUB page beside its Bloom equivalent — not just the
- * extracted illustration. Returns null if that spine page is missing/unreadable.
+ * The internal zip path of every spine page (1-based reading order). The GUI's resource
+ * proxy resolves a spine index to one of these, then serves it (and its relative images/
+ * CSS/fonts) so the page renders faithfully in an iframe — see `readEpubEntry`.
  */
-export function renderEpubPage(epubPath: string, pageIndex: number): string | null {
-  const { read, zip, opfDir, spineHrefs } = loadEpub(epubPath);
-  const href = spineHrefs[pageIndex - 1];
-  if (!href) return null;
-  const zpath = resolveZipPath(opfDir, href);
-  const xhtml = read(zpath);
-  if (!xhtml) return null;
-  const docDir = zpath.includes("/") ? zpath.slice(0, zpath.lastIndexOf("/")) : "";
-  return inlineStylesheets(inlineImages(xhtml, docDir, zip), docDir, zip);
+export function getEpubSpineHrefs(epubPath: string): string[] {
+  const { opfDir, spineHrefs } = loadEpub(epubPath);
+  return spineHrefs.map((href) => resolveZipPath(opfDir, href));
 }
 
+/** Content types for the resource kinds an EPUB document references (images + the doc/CSS/fonts). */
+const RESOURCE_CONTENT_TYPES: Record<string, string> = {
+  ...IMAGE_CONTENT_TYPES,
+  // Serve spine documents as text/html (the forgiving HTML parser) rather than strict
+  // application/xhtml+xml, so a malformed real-world XHTML doc renders instead of blanking.
+  ".xhtml": "text/html; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".css": "text/css",
+  ".js": "text/javascript",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
 /**
- * Render a reflowable EPUB into ONE self-contained, scrollable HTML document for the
- * GUI's raw-source preview pane — the EPUB analogue of embedding a PDF in an iframe.
- *
- * Each spine page becomes its own `<iframe srcdoc>` (so each page keeps its own CSS
- * and absolute-positioned layout, with no bleed between pages), with all images and
- * stylesheets inlined from the archive so nothing else has to be fetched. A tiny
- * height-sync script lets each page iframe report its rendered height to the parent
- * so the column scrolls naturally. No network, no API keys.
+ * Read one entry out of the EPUB archive by its internal (zip-relative) path, as raw
+ * bytes + content type. This backs the GUI's resource proxy: the iframe loads a spine
+ * document by URL and the browser fetches its relative `../Images`/`../Styles`/`../Fonts`
+ * through the same proxy, so the page renders with its own fonts and layout intact.
+ * Returns null if the entry is absent.
  */
-export function renderEpubPreviewHtml(epubPath: string): string {
-  const { read, zip, opfDir, spineHrefs } = loadEpub(epubPath);
-
-  const pages: string[] = [];
-  for (let s = 0; s < spineHrefs.length; s++) {
-    const zpath = resolveZipPath(opfDir, spineHrefs[s]);
-    let xhtml = read(zpath);
-    if (!xhtml) continue;
-    const docDir = zpath.includes("/") ? zpath.slice(0, zpath.lastIndexOf("/")) : "";
-    xhtml = inlineStylesheets(inlineImages(xhtml, docDir, zip), docDir, zip);
-
-    // Each page reports its height to the parent so the iframe can be sized to fit.
-    const sync =
-      `<script>(function(){var I=${s};function s(){parent.postMessage(` +
-      `{__epubPageHeight:1,i:I,h:document.documentElement.scrollHeight},"*");}` +
-      `addEventListener("load",s);addEventListener("resize",s);` +
-      `var n=0,t=setInterval(function(){s();if(++n>12)clearInterval(t);},150);})();</script>`;
-    xhtml = /<\/body>/i.test(xhtml) ? xhtml.replace(/<\/body>/i, `${sync}</body>`) : xhtml + sync;
-
-    pages.push(`<iframe class="pg" data-i="${s}" srcdoc="${escapeAttr(xhtml)}"></iframe>`);
-  }
-
-  return [
-    '<!doctype html><html><head><meta charset="utf-8">',
-    "<style>",
-    "html,body{margin:0;background:#f1f3f4;}",
-    ".pg{display:block;margin:12px auto;width:min(700px,94%);background:#fff;",
-    "border:1px solid #dadce0;box-shadow:0 1px 3px rgba(0,0,0,.18);border-radius:2px;}",
-    "iframe.pg{border:none;width:min(700px,94%);height:520px;}",
-    "</style></head><body>",
-    pages.join(""),
-    '<script>window.addEventListener("message",function(e){var d=e.data;',
-    "if(!d||!d.__epubPageHeight)return;",
-    "var f=document.querySelector('iframe[data-i=\"'+d.i+'\"]');",
-    'if(f&&d.h)f.style.height=d.h+"px";});</script>',
-    "</body></html>",
-  ].join("");
+export function readEpubEntry(
+  epubPath: string,
+  internalZipPath: string,
+): { buffer: Buffer; contentType: string } | null {
+  const buffer = readZip(epubPath).get(internalZipPath);
+  if (!buffer) return null;
+  const contentType =
+    RESOURCE_CONTENT_TYPES[path.extname(internalZipPath).toLowerCase()] ||
+    "application/octet-stream";
+  return { buffer, contentType };
 }
 
 /** Best-effort human name for a BCP-47 tag (only the common ones; falls back to the tag). */

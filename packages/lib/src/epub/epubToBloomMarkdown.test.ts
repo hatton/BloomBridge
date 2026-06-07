@@ -7,7 +7,8 @@ import {
   getEpubPageCount,
   getEpubPageImage,
   getEpubPageRoles,
-  renderEpubPage,
+  getEpubSpineHrefs,
+  readEpubEntry,
 } from "./epubToBloomMarkdown";
 
 // ---- a minimal STORE-method ZIP builder (no compression), so the test needs no
@@ -177,15 +178,27 @@ describe("epubToBloomMarkdown", () => {
     ]);
   });
 
-  it("renders a faithful single spine page (illustration + prose, images inlined)", async () => {
+  it("exposes spine hrefs (internal zip paths) in reading order for the resource proxy", async () => {
     const { epubPath } = run();
-    // Spine page 3 is the story page: its real HTML, with the image inlined as a
-    // data URI (no extra fetch) and the prose intact — not just the illustration.
-    const html = renderEpubPage(epubPath, 3) || "";
-    expect(html).toMatch(/<img\b[^>]*src="data:image\/jpeg;base64,/i);
-    expect(html).toContain("Once upon a time.");
-    // Out-of-range spine index yields null.
-    expect(renderEpubPage(epubPath, 99)).toBeNull();
+    expect(getEpubSpineHrefs(epubPath)).toEqual([
+      "OEBPS/Text/cover.xhtml",
+      "OEBPS/Text/title.xhtml",
+      "OEBPS/Text/p1.xhtml",
+      "OEBPS/Text/copy.xhtml",
+    ]);
+  });
+
+  it("reads archive entries by internal path with the right content type", async () => {
+    const { epubPath } = run();
+    // The story document — served so its relative ../Images/../Fonts resolve through the proxy.
+    const doc = readEpubEntry(epubPath, "OEBPS/Text/p1.xhtml");
+    expect(doc).not.toBeNull();
+    expect(doc!.contentType).toBe("text/html; charset=utf-8");
+    expect(doc!.buffer.toString("utf8")).toContain("Once upon a time.");
+    // An image entry keeps its image content type.
+    expect(readEpubEntry(epubPath, "OEBPS/Images/p1.jpg")!.contentType).toBe("image/jpeg");
+    // A missing entry yields null.
+    expect(readEpubEntry(epubPath, "OEBPS/nope.css")).toBeNull();
   });
 
   it("uses the OPF language for l1", async () => {

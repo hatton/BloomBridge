@@ -1,7 +1,7 @@
 /* Domain model for the Conversion Manager.
    Mirrors the mock data shape; the server will later return these same shapes. */
 
-export type Stage = "ocr" | "llm" | "plan" | "html";
+export type Stage = "ocr" | "llm" | "plan" | "html" | "bloom";
 
 /** Raw lifecycle status stored on a run. */
 export type RunStatus = "notrun" | "queued" | "running" | "failed" | "done";
@@ -9,10 +9,22 @@ export type RunStatus = "notrun" | "queued" | "running" | "failed" | "done";
 /** Quality rating a user applies to a completed run. */
 export type Mark = "good" | "bad" | "neutral";
 
+/** A user's review verdict on one extracted-metadata item (absent = unreviewed). */
+export type ChecklistMark = "up" | "down";
+
+/** One extracted-metadata item shown in the review checklist. */
+export interface MetadataItem {
+  key: string;
+  label: string;
+  /** The value we extracted; "" when nothing was detected. */
+  value: string;
+}
+
 /**
- * Effective status — the unified 7-state value shown in the UI. Rating folds
- * into status once a run is completed: done+good = keeper, done+bad = disapproved,
- * done+neutral = completed ("Awaiting Review").
+ * Effective status — the unified value shown in the UI. Rating folds into status
+ * once a run is completed: done+good = keeper, done+bad = disapproved. An unrated
+ * completed run is "completed" ("Awaiting Review") until every Conversion Review
+ * Checklist item has been worked through, at which point it becomes "reviewed".
  */
 export type EffStatus =
   | "notrun"
@@ -20,6 +32,7 @@ export type EffStatus =
   | "running"
   | "failed"
   | "completed"
+  | "reviewed"
   | "keeper"
   | "disapproved";
 
@@ -72,6 +85,8 @@ export interface Run {
   startedAt?: number;
   finishedAt?: number;
   notes: string;
+  /** Per-item metadata-review marks (item key → "up"/"down"); absent = unreviewed. */
+  checklist?: Record<string, ChecklistMark>;
   tags: string[];
   params: Params;
   preset?: string;

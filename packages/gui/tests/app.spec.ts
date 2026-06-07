@@ -15,7 +15,6 @@ test("app loads, scans a folder, lists PDFs, and runs an images-only conversion"
 
   // 1) The app shell renders.
   await expect(page.getByText("BloomBridge").first()).toBeVisible();
-  await expect(page.getByText("Conversion Manager").first()).toBeVisible();
 
   // If no OpenRouter key is configured, the Settings dialog auto-opens and blocks
   // the UI. Dismiss it (saving with the empty field doesn't overwrite any key).
@@ -35,28 +34,32 @@ test("app loads, scans a folder, lists PDFs, and runs an images-only conversion"
   // 3) The scanned PDFs appear in the table.
   await expect(page.getByText("bilingual-sample").first()).toBeVisible();
 
-  // 4) Select the PDF → the PDF detail pane shows a prominent Run button.
+  // 4) Select the PDF → the always-open preview pane shows a prominent Run button.
   await page.getByText("bilingual-sample").first().click();
-  const runBtn = page.getByRole("button", { name: /Run conversion/i });
+  const runBtn = page.getByRole("button", { name: /Convert to Bloom/i });
   await expect(runBtn).toBeVisible();
 
-  // 5) Use no collection (keeps this test independent of a running Bloom) and the
-  //    images-only target (no API key needed), then launch.
-  await page
-    .locator('label:has-text("Bloom collection") select')
-    .selectOption({ label: "No collection" });
+  // 5) Open the conversion-settings modal (gear), pick the images-only target (no
+  //    API key needed), then close the modal and launch from the preview pane.
+  await page.getByRole("button", { name: "Conversion settings" }).click();
+  await page.getByRole("button", { name: /Advanced/i }).click();
   const targetSelect = page.locator('label:has-text("Target output") select');
   await expect(targetSelect).toBeVisible();
   await targetSelect.selectOption({ label: "Images (extract only)" });
+  await page.getByRole("button", { name: "Done" }).click();
   await runBtn.click();
 
   // 6) The run goes through queued/running and reaches the completed ("Awaiting
   //    Review") state — proving launch → live SSE → completion end-to-end.
   await expect(page.getByText("Awaiting Review").first()).toBeVisible({ timeout: 60_000 });
 
-  // 7) Open the run and confirm the Artifacts tab shows the extracted images and
-  //    the new "File Explorer" / "VS Code" actions.
-  await page.getByText("Awaiting Review").first().click();
+  // 7) Open the run-details modal (the row's details button) and confirm the
+  //    Artifacts tab shows the extracted images and the File Explorer / VS Code
+  //    actions.
+  await page
+    .getByRole("button", { name: /Run details/i })
+    .first()
+    .click();
   await expect(page.getByRole("button", { name: "File Explorer" })).toBeVisible({
     timeout: 15_000,
   });

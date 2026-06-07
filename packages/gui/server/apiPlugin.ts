@@ -13,14 +13,13 @@ import {
   bringBloomToFront,
   reloadBloomCollection,
   selectBookInBloom,
-  processBookInBloom,
   renderPdfPageToImage,
   getPdfPageInfo,
   getEpubPageCount,
   getEpubPageImage,
   getEpubPageRoles,
-  renderEpubPage,
-  renderEpubPreviewHtml,
+  getEpubSpineHrefs,
+  readEpubEntry,
 } from "@bloombridge/lib";
 import { getSettings, saveSettings, redactSettings } from "./settings";
 import {
@@ -34,12 +33,15 @@ import {
   setNotes,
   getFolderTree,
   getRunArtifacts,
+  getRunMetadata,
+  setChecklistMark,
   getRunLog,
   readArtifactFile,
   getRunRecord,
   osOpen,
   pickFolder,
   cleanupRuns,
+  processBookInBloomForRun,
 } from "./engine";
 
 function send(res: ServerResponse, status: number, body: unknown) {
@@ -47,6 +49,33 @@ function send(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   res.end(json);
+}
+
+/** Human-readable byte size, matching the source-file size style ("2.3 MB"). */
+function humanSize(bytes: number): string {
+  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + " MB";
+  if (bytes >= 1e3) return (bytes / 1e3).toFixed(0) + " KB";
+  return bytes + " B";
+}
+
+/** Total size of every file under `dir` (recursively). 0 on any read error. */
+async function dirSize(dir: string): Promise<number> {
+  let bytes = 0;
+  try {
+    for (const ent of await fs.readdir(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) bytes += await dirSize(p);
+      else
+        try {
+          bytes += (await fs.stat(p)).size;
+        } catch {
+          /* skip unreadable file */
+        }
+    }
+  } catch {
+    /* unreadable dir */
+  }
+  return bytes;
 }
 
 /** Map a file extension to a Content-Type for serving raw book/preview assets. */
@@ -320,26 +349,82 @@ export function conversionApiPlugin(): Plugin {
             return;
           }
 
-          // Serve a source EPUB rendered as one scrollable HTML doc (the EPUB analogue
-          // of the PDF iframe). Restricted to EPUBs inside a known/recent source folder.
-          if (p === "/api/source-epub" && method === "GET") {
-            const fp = u.searchParams.get("path") || "";
-            const resolved = path.resolve(fp);
-            if (!resolved.toLowerCase().endsWith(".epub"))
-              return send(res, 400, { error: "not an epub" });
-            const recents = await getRecentFolders();
-            const allowed = recents.some((r) => resolved.startsWith(path.resolve(r)));
-            if (!allowed) return send(res, 403, { error: "epub is outside known source folders" });
+          // EPUB resource proxy for the paired preview. Serves a spine document AND its
+          // relative images/CSS/fonts by URL, so the page renders faithfully in an iframe
+          // (its own fonts + layout intact) — the thing inlining-into-srcdoc could not do.
+          //   /api/epub/run/<runId>/spine/<index>  → 302 to that spine doc's resource URL
+          //   /api/epub/run/<runId>/<internal/zip/path>  → raw bytes
+          //   /api/epub/src/<base64url(path)>/...   → same, for an unconverted source EPUB
+          // The document's own relative links (../Images, ../Styles, ../Fonts) resolve under
+          // the same prefix because the id is a leading path segment. Path-keyed access is
+          // guarded by the same recent-source-folder check the /api/source-* routes use.
+          if (p.startsWith("/api/epub/") && method === "GET") {
+            const rest = p.slice("/api/epub/".length); // "<scheme>/<id>/<tail…>"
+            const schemeSlash = rest.indexOf("/");
+            const scheme = rest.slice(0, schemeSlash);
+            const afterScheme = rest.slice(schemeSlash + 1);
+            const idSlash = afterScheme.indexOf("/");
+            const id = decodeURIComponent(
+              idSlash < 0 ? afterScheme : afterScheme.slice(0, idSlash),
+            );
+            const tail = idSlash < 0 ? "" : afterScheme.slice(idSlash + 1);
+
+            // Resolve the id → an .epub file path.
+            let epubPath: string | null = null;
+            if (scheme === "run") {
+              const rec = await getRunRecord(id);
+              if (rec?.sourcePath?.toLowerCase().endsWith(".epub")) epubPath = rec.sourcePath;
+            } else if (scheme === "src") {
+              try {
+                const resolved = path.resolve(Buffer.from(id, "base64url").toString("utf8"));
+                const recents = await getRecentFolders();
+                if (
+                  resolved.toLowerCase().endsWith(".epub") &&
+                  recents.some((r) => resolved.startsWith(path.resolve(r)))
+                )
+                  epubPath = resolved;
+              } catch {
+                /* fall through to 404 */
+              }
+            }
+            if (!epubPath) {
+              res.statusCode = 404;
+              return res.end();
+            }
+
+            // /spine/<index> → redirect to that spine document's resource URL.
+            const spineMatch = tail.match(/^spine\/(\d+)$/);
+            if (spineMatch) {
+              try {
+                const href = getEpubSpineHrefs(epubPath)[Number(spineMatch[1]) - 1];
+                if (!href) {
+                  res.statusCode = 404;
+                  return res.end();
+                }
+                const loc = href.split("/").map(encodeURIComponent).join("/");
+                res.statusCode = 302;
+                res.setHeader("Location", `/api/epub/${scheme}/${encodeURIComponent(id)}/${loc}`);
+                return res.end();
+              } catch {
+                res.statusCode = 404;
+                return res.end();
+              }
+            }
+
+            // Otherwise `tail` is the internal zip path of a single entry.
             try {
-              const html = renderEpubPreviewHtml(resolved);
+              const entry = readEpubEntry(epubPath, decodeURIComponent(tail));
+              if (!entry) {
+                res.statusCode = 404;
+                return res.end();
+              }
               res.statusCode = 200;
-              res.setHeader("Content-Type", "text/html; charset=utf-8");
-              res.end(html);
+              res.setHeader("Content-Type", entry.contentType);
+              return res.end(entry.buffer);
             } catch {
               res.statusCode = 404;
-              res.end();
+              return res.end();
             }
-            return;
           }
 
           if (p === "/api/folder" && method === "GET") {
@@ -404,6 +489,17 @@ export function conversionApiPlugin(): Plugin {
             const body = await readBody(req);
             const sources = Array.isArray(body.sources) ? body.sources : [];
             if (!sources.length) return send(res, 400, { error: "no sources" });
+            // The pipeline now ends with a "Process in Bloom" stage that needs a
+            // running Bloom. Gate the launch up front (only when the run will reach
+            // that stage) rather than letting every book fail at the end.
+            if ((body.params?.target ?? "bloom") === "bloom") {
+              const bloom = await getRunningBloomCollection();
+              if (!bloom)
+                return send(res, 400, {
+                  error:
+                    "Bloom isn't running. Open Bloom with a collection, then start the conversion.",
+                });
+            }
             const created = await enqueueRuns(sources, body.params || {}, body.collection);
             return send(res, 200, { runIds: created.map((r) => r.id) });
           }
@@ -452,7 +548,10 @@ export function conversionApiPlugin(): Plugin {
                 `display:inline-block;width:auto;min-width:0;max-width:none;margin:0;padding:2px 9px;` +
                 `background:#5f6368;color:#fff;border-radius:999px;` +
                 `font-size:10px;font-weight:600;letter-spacing:.3px;line-height:1.4;` +
-                `text-transform:none;box-shadow:0 1px 3px rgba(0,0,0,.3)}</style>` +
+                `text-transform:none;box-shadow:0 1px 3px rgba(0,0,0,.3)}` +
+                // Bloom appends a trailing colon to xMatter labels (e.g. "Front
+                // Cover:") via a ::after pseudo-element — drop it.
+                `.bloom-page .pageLabel::after{content:''!important}</style>` +
                 `<script>document.addEventListener('DOMContentLoaded',function(){` +
                 `var ps=document.querySelectorAll('body > .bloom-page');` +
                 `var el=ps[${n - 1}];if(!el)return;el.style.display='block';` +
@@ -460,7 +559,9 @@ export function conversionApiPlugin(): Plugin {
                 // floating text elements) is really just one big picture, so label
                 // it "Full Page Image" rather than repeating the generic "Canvas".
                 `var lbl=el.querySelector('.pageLabel');` +
-                `if(lbl){var cv=el.querySelector('.bloom-canvas');` +
+                // Drop any trailing colon Bloom puts after the label text.
+                `if(lbl){lbl.textContent=lbl.textContent.replace(/\\s*:\\s*$/,'');` +
+                `var cv=el.querySelector('.bloom-canvas');` +
                 `if(cv&&lbl.textContent.trim()==='Canvas'){` +
                 `var els=cv.querySelectorAll(':scope > .bloom-canvas-element');` +
                 `if(els.length===1&&els[0].classList.contains('bloom-backgroundImage'))` +
@@ -508,6 +609,14 @@ export function conversionApiPlugin(): Plugin {
               return send(res, 200, { ok: true });
             }
             if (action === "resume" && method === "POST") {
+              // Same Bloom gate as a fresh launch — a resumed bloom-target run reaches
+              // the final Process-in-Bloom stage too.
+              const orig = await getRunRecord(runId);
+              if ((orig?.target ?? "bloom") === "bloom" && !(await getRunningBloomCollection()))
+                return send(res, 400, {
+                  error:
+                    "Bloom isn't running. Open Bloom with a collection, then resume the conversion.",
+                });
               const rec = await enqueueResume(runId);
               return send(res, 200, { runId: rec.id });
             }
@@ -528,6 +637,19 @@ export function conversionApiPlugin(): Plugin {
             }
             if (action === "log" && method === "GET") {
               return send(res, 200, await getRunLog(runId));
+            }
+            // Extracted-metadata checklist: items (with values) + the user's marks.
+            if (action === "metadata" && method === "GET") {
+              return send(res, 200, await getRunMetadata(runId));
+            }
+            // Set/clear one metadata-review mark.
+            if (action === "checklist" && method === "POST") {
+              const body = await readBody(req);
+              const key = String(body.key || "");
+              const mark = body.mark === "up" || body.mark === "down" ? body.mark : null;
+              if (!key) return send(res, 400, { error: "key required" });
+              await setChecklistMark(runId, key, mark);
+              return send(res, 200, { ok: true });
             }
             // Render (and cache) a single source-PDF page as a JPEG for the paired
             // run preview. Reuses the OCR poppler renderer; nothing client-supplied
@@ -577,53 +699,57 @@ export function conversionApiPlugin(): Plugin {
                 return res.end();
               }
             }
-            // Render one source EPUB spine page (illustration + prose, in the EPUB's
-            // own layout) as a self-contained HTML doc for the paired preview's left
-            // column — the faithful page, not just the extracted illustration the
-            // pdf-page endpoint serves. The EPUB path comes from the run record.
-            if (action === "epub-page" && method === "GET") {
-              const page = Math.floor(Number(u.searchParams.get("page") || "0"));
-              if (!Number.isInteger(page) || page < 1) return send(res, 400, { error: "bad page" });
-              const rec = await getRunRecord(runId);
-              if (!rec || !rec.sourcePath?.toLowerCase().endsWith(".epub")) {
-                res.statusCode = 404;
-                return res.end();
-              }
-              try {
-                const html = renderEpubPage(rec.sourcePath, page);
-                if (!html) {
-                  res.statusCode = 404;
-                  return res.end();
-                }
-                res.statusCode = 200;
-                res.setHeader("Content-Type", "text/html; charset=utf-8");
-                return res.end(html);
-              } catch {
-                res.statusCode = 404;
-                return res.end();
-              }
-            }
+            // (EPUB spine pages are served faithfully by the /api/epub resource proxy
+            // above — the GUI loads them in an iframe, not as a baked HTML blob here.)
             // Counts + page geometry driving the paired run preview.
             if (action === "page-pairs" && method === "GET") {
               const rec = await getRunRecord(runId);
               if (!rec) return send(res, 200, { ready: false, reason: "Run not found." });
-              if (rec.status !== "done" || !rec.bookFolderPath)
-                return send(res, 200, {
-                  ready: false,
-                  reason: "This run hasn't produced a Bloom book yet.",
-                });
-              const root = rec.bookFolderPath;
-              let htmName: string | undefined;
+              const isEpub = !!rec.sourcePath?.toLowerCase().endsWith(".epub");
+              // The source page count is available regardless of run status, so we can
+              // show the source column even before (or without) a Bloom book.
+              let pdfPages = 0;
               try {
-                htmName = (await fs.readdir(root)).find((f) => /\.html?$/i.test(f));
+                pdfPages = isEpub
+                  ? getEpubPageCount(rec.sourcePath!)
+                  : (await getPdfPageInfo(rec.sourcePath)).pageCount;
               } catch {
-                /* unreadable */
+                /* source gone/unreadable — leave 0 */
               }
-              if (!htmName)
+
+              // Locate the Bloom HTML, if this run got far enough to produce one.
+              const root = rec.status === "done" ? rec.bookFolderPath : undefined;
+              let htmName: string | undefined;
+              if (root) {
+                try {
+                  htmName = (await fs.readdir(root)).find((f) => /\.html?$/i.test(f));
+                } catch {
+                  /* unreadable */
+                }
+              }
+
+              // No Bloom book yet (still running, failed, or done without HTML): return
+              // source-only rows so the client keeps the source column on the left and
+              // renders its own placeholder where the Bloom column would be.
+              if (!root || !htmName) {
+                if (pdfPages === 0)
+                  return send(res, 200, {
+                    ready: false,
+                    reason: "This run hasn't produced a Bloom book yet.",
+                  });
                 return send(res, 200, {
-                  ready: false,
-                  reason: "No Bloom HTML found in the book folder.",
+                  ready: true,
+                  sourceKind: isEpub ? "epub" : "pdf",
+                  pdfPages,
+                  bloomPages: 0,
+                  rows: Array.from({ length: pdfPages }, (_, i) => ({
+                    pdfPage: i + 1,
+                    bloomPage: null,
+                  })),
+                  pageSize: "A5Portrait",
+                  bookReady: false,
                 });
+              }
               const htm = await fs.readFile(path.join(root, htmName), "utf-8");
               // Scan the body's bloom-page divs in document order. `bloomPage` below
               // is this 1-based document index — the same index `__page-N.html` uses
@@ -649,15 +775,6 @@ export function conversionApiPlugin(): Plugin {
                 /class="[^"]*\b(A3|A4|A5|A6|Letter|Legal|Device16x9|HalfLetter|QuarterLetter)(Portrait|Landscape)\b/,
               );
               const pageSize = sizeMatch ? sizeMatch[1] + sizeMatch[2] : "A5Portrait";
-              const isEpub = !!rec.sourcePath?.toLowerCase().endsWith(".epub");
-              let pdfPages = 0;
-              try {
-                pdfPages = isEpub
-                  ? getEpubPageCount(rec.sourcePath!)
-                  : (await getPdfPageInfo(rec.sourcePath)).pageCount;
-              } catch {
-                /* source gone/unreadable — leave 0 */
-              }
               let bookReady = false;
               try {
                 await fs.access(path.join(root, "basePage.css"));
@@ -665,6 +782,8 @@ export function conversionApiPlugin(): Plugin {
               } catch {
                 /* CSS not written yet */
               }
+              // Folder total (HTML + images + CSS), for the Bloom column's size sub-label.
+              const bloomSize = humanSize(await dirSize(root));
 
               // Align the two columns. When Bloom pages carry source-page numbers we
               // merge by them (so a blank/dropped source page shows a PDF-only row and
@@ -750,6 +869,7 @@ export function conversionApiPlugin(): Plugin {
                 sourceKind: isEpub ? "epub" : "pdf",
                 pdfPages,
                 bloomPages,
+                bloomSize,
                 rows,
                 pageSize,
                 bookReady,
@@ -763,58 +883,16 @@ export function conversionApiPlugin(): Plugin {
             // the processing, then copy the rewritten files back.
             if (action === "process" && method === "POST") {
               const rec = await getRunRecord(runId);
-              if (!rec || !rec.bookFolderPath)
+              if (!rec)
                 return send(res, 400, { error: "This run hasn't produced a Bloom book yet." });
-              let isBook = false;
               try {
-                await fs.access(path.join(rec.bookFolderPath, "meta.json"));
-                isBook = true;
-              } catch {
-                /* no meta.json */
-              }
-              if (!isBook)
-                return send(res, 400, { error: "This run has no Bloom book to process." });
-
-              const bloom = await getRunningBloomCollection();
-              if (!bloom)
-                return send(res, 400, {
-                  error:
-                    "Bloom isn't running. Open Bloom with a collection, switch to the Collection tab, then try again.",
-                });
-
-              const dest = path.join(bloom.collectionFolder, "preview - " + rec.bookName);
-              try {
-                await copyDir(rec.bookFolderPath, dest);
+                const result = await processBookInBloomForRun(rec);
+                return send(res, 200, { ok: true, processed: result.processed });
               } catch (e: any) {
-                return send(res, 500, { error: "copy failed: " + (e?.message || e) });
-              }
-
-              const notify = await notifyBloomOfBook(dest);
-              if (!notify.bookId)
-                return send(res, 400, {
-                  error: "Could not read the book id from meta.json.",
+                return send(res, e?.httpStatus || 500, {
+                  error: e?.message || "Bloom couldn't process the book.",
                 });
-              // process-book requires the Collection tab to be active; bring Bloom
-              // forward and select the book to nudge it there.
-              await bringBloomToFront(bloom.port);
-              await selectBookInBloom(notify.bookId, bloom.port);
-
-              const result = await processBookInBloom(notify.bookId, bloom.port);
-              if (!result.ok)
-                return send(res, 502, {
-                  error: result.error || "Bloom couldn't process the book.",
-                });
-
-              // Copy the processed book (now with CSS + fix-ups) back over the run's
-              // workspace folder. copyFile overwrites; the run's intermediate .md
-              // artifacts are left untouched.
-              try {
-                await copyDir(dest, rec.bookFolderPath);
-              } catch (e: any) {
-                return send(res, 500, { error: "copy-back failed: " + (e?.message || e) });
               }
-
-              return send(res, 200, { ok: true, processed: result.processed });
             }
             if (action === "artifacts" && method === "GET") {
               return send(res, 200, await getRunArtifacts(runId));

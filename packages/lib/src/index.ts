@@ -77,9 +77,9 @@ export {
   getEpubPageCount,
   getEpubPageImage,
   getEpubPageRoles,
+  getEpubSpineHrefs,
+  readEpubEntry,
   classifyEpubSpinePage,
-  renderEpubPage,
-  renderEpubPreviewHtml,
 } from "./epub/epubToBloomMarkdown";
 export type { EpubExtractResult, EpubPageRole } from "./epub/epubToBloomMarkdown";
 

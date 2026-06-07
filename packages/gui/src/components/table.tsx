@@ -13,6 +13,7 @@ import {
   fmt,
   STATUS_META,
   effStatus,
+  ChecklistStatus,
   ElapsedTimer,
   PinButton,
 } from "./primitives";
@@ -45,6 +46,8 @@ interface CenterTableProps {
   onSortClick: (key: string) => void;
   onCleanup: () => void;
   onConfigRun: (s: Source, r: Run) => void;
+  onOpenRunDetails: (sid: string, rid: string) => void;
+  onDeleteRun: (sid: string, rid: string) => void;
   onExpandAll: () => void;
   allExpanded: boolean;
   defaults?: Params;
@@ -76,6 +79,8 @@ export function CenterTable(props: CenterTableProps) {
     onSortClick,
     onCleanup,
     onConfigRun,
+    onOpenRunDetails,
+    onDeleteRun,
     onExpandAll,
     allExpanded,
     defaults,
@@ -85,7 +90,8 @@ export function CenterTable(props: CenterTableProps) {
   const visibleSources = sources.filter((s) => {
     if (statusFilter === "all") return true;
     if (statusFilter === "notrun") return s.runs.length === 0;
-    if (statusFilter === "needsattn") return !s.runs.some((r) => effStatus(r) === "keeper");
+    if (statusFilter === "needsattn")
+      return !s.runs.some((r) => effStatus(r) === "keeper" || effStatus(r) === "reviewed");
     return s.runs.some((r) => effStatus(r) === statusFilter);
   });
 
@@ -231,6 +237,8 @@ export function CenterTable(props: CenterTableProps) {
               onCancelRun={onCancelRun}
               onPreview={onPreview}
               onConfigRun={onConfigRun}
+              onOpenRunDetails={onOpenRunDetails}
+              onDeleteRun={onDeleteRun}
               defaults={defaults}
             />
           ))}
@@ -297,7 +305,7 @@ function statusRank(s: Source) {
   if (s.runs.some((r) => r.status === "failed")) return 4;
   if (s.runs.some((r) => effStatus(r) === "disapproved")) return 3;
   if (s.runs.some((r) => effStatus(r) === "completed")) return 2;
-  if (s.runs.some((r) => effStatus(r) === "keeper")) return 1;
+  if (s.runs.some((r) => effStatus(r) === "keeper" || effStatus(r) === "reviewed")) return 1;
   return 0;
 }
 
@@ -330,7 +338,11 @@ function Toolbar({
   const has = (s: Source, eff: string) => s.runs.some((r) => effStatus(r) === eff);
   const options: FilterOption[] = [
     { value: "all", label: "All books", count: sources.length },
-    { value: "needsattn", label: "Needs attention", count: n((s) => !has(s, "keeper")) },
+    {
+      value: "needsattn",
+      label: "Needs attention",
+      count: n((s) => !has(s, "keeper") && !has(s, "reviewed")),
+    },
     { value: "notrun", label: "Not run", st: "idle", count: n((s) => s.runs.length === 0) },
     { value: "queued", label: "Queued", st: "queued", count: n((s) => has(s, "queued")) },
     { value: "running", label: "Running", st: "run", count: n((s) => has(s, "running")) },
@@ -341,6 +353,7 @@ function Toolbar({
       st: "keeper",
       count: n((s) => has(s, "completed")),
     },
+    { value: "reviewed", label: "Reviewed", st: "done", count: n((s) => has(s, "reviewed")) },
     { value: "keeper", label: "Approved", st: "done", count: n((s) => has(s, "keeper")) },
     {
       value: "disapproved",
@@ -526,6 +539,8 @@ function SourceRow({
   onCancelRun,
   onPreview,
   onConfigRun,
+  onOpenRunDetails,
+  onDeleteRun,
   defaults,
 }: {
   source: Source;
@@ -544,6 +559,8 @@ function SourceRow({
   onCancelRun: (sid: string, rid: string) => void;
   onPreview: (r: Run) => void;
   onConfigRun: (s: Source, r: Run) => void;
+  onOpenRunDetails: (sid: string, rid: string) => void;
+  onDeleteRun: (sid: string, rid: string) => void;
   defaults?: Params;
 }) {
   const runs = source.runs;
@@ -627,15 +644,12 @@ function SourceRow({
             >
               {source.name}
             </div>
-            {runs.length > 0 && (
-              <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 1 }}>
-                {runs.length} run{runs.length > 1 ? "s" : ""}
-              </div>
-            )}
           </div>
         </div>
-        <div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
           <StatusPill status={bookStatus(source)} size="sm" />
+          {/* Echo the most recent existing run's metadata-review status. */}
+          <ChecklistStatus run={source.runs[0]} />
         </div>
         <div></div>
         <div></div>
@@ -652,6 +666,8 @@ function SourceRow({
             selected={selectedRunId === r.id}
             onSelect={() => onSelectRun(source.id, r.id)}
             onPin={(v) => onPin(source.id, r.id, v)}
+            onOpenDetails={() => onOpenRunDetails(source.id, r.id)}
+            onDelete={() => onDeleteRun(source.id, r.id)}
             defaults={defaults}
           />
         ))}
@@ -720,6 +736,8 @@ function RunRow({
   selected,
   onSelect,
   onPin,
+  onOpenDetails,
+  onDelete,
   defaults,
 }: {
   run: Run;
@@ -728,6 +746,8 @@ function RunRow({
   selected: boolean;
   onSelect: () => void;
   onPin: (v: boolean) => void;
+  onOpenDetails: () => void;
+  onDelete: () => void;
   defaults?: Params;
 }) {
   const running = run.status === "running";
@@ -794,12 +814,37 @@ function RunRow({
           >
             {runSummary(run, defaults)}
           </span>
-          <span style={{ marginLeft: "auto", flexShrink: 0 }}>
+          <span style={{ marginLeft: "auto", flexShrink: 0, display: "inline-flex", gap: 2 }}>
             <PinButton pinned={!!run.pinned} onChange={onPin} size={13} />
+            <IconBtn
+              name="external"
+              size={22}
+              iconSize={12}
+              title="Run details (log, artifacts, metrics, notes)"
+              onClick={(e?: React.MouseEvent) => {
+                e?.stopPropagation();
+                onOpenDetails();
+              }}
+            />
+            <IconBtn
+              name="trash"
+              size={22}
+              iconSize={12}
+              danger
+              title="Delete run"
+              onClick={(e?: React.MouseEvent) => {
+                e?.stopPropagation();
+                onDelete();
+              }}
+            />
           </span>
         </div>
-        <div title={failed && run.error ? run.error.message : undefined}>
+        <div
+          title={failed && run.error ? run.error.message : undefined}
+          style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}
+        >
           <StatusPill status={effStatus(run)} size="sm" />
+          <ChecklistStatus run={run} />
         </div>
         <div>
           <StageBadges

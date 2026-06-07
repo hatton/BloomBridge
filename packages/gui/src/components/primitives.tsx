@@ -73,10 +73,18 @@ export const STATUS_META: Record<string, { label: string; st: string; icon?: str
   running: { label: "Running", st: "run" },
   failed: { label: "Failed", st: "fail", icon: "alert" },
   completed: { label: "Awaiting Review", st: "keeper", icon: "clock" },
+  reviewed: { label: "Reviewed", st: "done", icon: "check" },
   keeper: { label: "Approved", st: "done", icon: "thumbsUp" },
   disapproved: { label: "Disapproved", st: "disapprove", icon: "thumbsDown" },
   done: { label: "Awaiting Review", st: "keeper", icon: "clock" }, // alias fallback
 };
+
+/** True once every Conversion Review Checklist item has been worked through
+ *  (each item is thumbed up or down). */
+export function checklistComplete(run?: Run | null): boolean {
+  const marks = run?.checklist || {};
+  return BLOOM.CHECKLIST_ITEMS.every((it) => marks[it.key] === "up" || marks[it.key] === "down");
+}
 
 // Unified run status: rating folds into status once a run is completed
 export function effStatus(run?: Run | null): EffStatus {
@@ -84,7 +92,45 @@ export function effStatus(run?: Run | null): EffStatus {
   if (run.status !== "done") return run.status as EffStatus; // notrun | queued | running | failed
   if (run.mark === "good") return "keeper";
   if (run.mark === "bad") return "disapproved";
-  return "completed";
+  // An unrated completed run is "Awaiting Review" until the checklist is worked
+  // through; once it is, it reads as "Reviewed" rather than awaiting.
+  return checklistComplete(run) ? "reviewed" : "completed";
+}
+
+// ---------- Metadata-review checklist status ----------
+/** The checklist items a user has thumbed down, by label. There is no overall
+ *  up/down verdict — only the individual items that were flagged as problems. */
+export function checklistDownLabels(run?: Run | null): string[] {
+  const marks = run?.checklist || {};
+  return BLOOM.CHECKLIST_ITEMS.filter((it) => marks[it.key] === "down").map((it) => it.label);
+}
+
+/** Compact Status-column indicator: a thumbs-down + the list of checklist items the
+ *  user flagged as problems. Nothing is shown when there are no flagged items —
+ *  there is no "all good" or "review pending" overall state. */
+export function ChecklistStatus({ run }: { run?: Run | null }) {
+  const downLabels = checklistDownLabels(run);
+  if (!downLabels.length) return null;
+  return (
+    <span
+      title={"Checklist issues: " + downLabels.join(", ")}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        color: "var(--bad)",
+        fontSize: 10.5,
+        fontWeight: 600,
+        minWidth: 0,
+        maxWidth: "100%",
+      }}
+    >
+      <Icon name="thumbsDown" size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {downLabels.join(", ")}
+      </span>
+    </span>
+  );
 }
 
 // ---------- Status pill ----------
@@ -368,14 +414,20 @@ export function ProgressBar({
 
 // Overall completion fraction (0..1) for a running run. Stages get weighted
 // segments; OCR — the expensive, page-by-page stage — subdivides by page.
-const STAGE_WEIGHTS: Record<string, number> = { ocr: 0.4, llm: 0.4, plan: 0.1, html: 0.1 };
-const TARGET_LAST_STAGE: Record<string, number> = { images: -1, ocr: 0, tagged: 2, bloom: 3 };
+const STAGE_WEIGHTS: Record<string, number> = {
+  ocr: 0.4,
+  llm: 0.4,
+  plan: 0.1,
+  html: 0.1,
+  bloom: 0.15,
+};
+const TARGET_LAST_STAGE: Record<string, number> = { images: -1, ocr: 0, tagged: 2, bloom: 4 };
 export function runProgress(run: Run): number {
   if (run.status === "done") return 1;
   if (run.status !== "running") return 0;
-  const order = ["ocr", "llm", "plan", "html"];
+  const order = ["ocr", "llm", "plan", "html", "bloom"];
   const target = (run.params as any)?.target || "bloom";
-  const lastIdx = TARGET_LAST_STAGE[target] ?? 3;
+  const lastIdx = TARGET_LAST_STAGE[target] ?? 4;
   const active = lastIdx < 0 ? [] : order.slice(0, lastIdx + 1);
   if (active.length === 0) return 0.5; // images: no per-stage info to show
   const totalW = active.reduce((a, s) => a + (STAGE_WEIGHTS[s] || 0), 0);

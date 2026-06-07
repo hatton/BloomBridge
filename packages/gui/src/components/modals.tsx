@@ -2,10 +2,31 @@
 import React from "react";
 import { Icon } from "../lib/icons";
 import { BLOOM } from "../data/mockData";
-import { Btn, IconBtn, Field, Select, Thumb, StatusPill, effStatus, fmt } from "./primitives";
-import { SectionLabel, ParamControls } from "./panels";
+import {
+  Btn,
+  IconBtn,
+  Field,
+  Select,
+  Thumb,
+  StatusPill,
+  MarkControl,
+  PinButton,
+  effStatus,
+  fmt,
+} from "./primitives";
+import {
+  SectionLabel,
+  ParamControls,
+  LogTab,
+  DetailsTab,
+  MetricsTab,
+  ArtifactsTab,
+  NotesTab,
+  ErrorBanner,
+  CopyRunButton,
+} from "./panels";
 import { api } from "../api";
-import type { Params, Run, Settings, Source, Stage } from "../types";
+import type { Mark, Params, Run, Settings, Source, Stage } from "../types";
 
 // ---------- shells ----------
 export function Overlay({
@@ -184,8 +205,13 @@ export function RunConfig({
   const set = (k: keyof Params, v: any) => setP((o) => ({ ...o, [k]: v }));
 
   // which stages are cached/available for resume
-  const cached = run ? run.stages : { ocr: false, llm: false, plan: false, html: false };
+  const cached = run
+    ? run.stages
+    : { ocr: false, llm: false, plan: false, html: false, bloom: false };
   const stageEnabled = (s: Stage) => {
+    // "bloom" always runs after HTML as the final stage — it's a post-process, not a
+    // resumable artifact, so it can never be a start point.
+    if (s === "bloom") return false;
     if (!run) return s === "ocr"; // fresh run starts at ocr
     const idx = BLOOM.STAGES.indexOf(s);
     if (idx === 0) return true;
@@ -318,7 +344,7 @@ export function RunConfig({
             Cancel
           </Btn>
           <Btn variant="primary" icon="play" onClick={() => onConfirm({ params: p, start })}>
-            {run ? "Re-run" : "Run conversion"}
+            {run ? "Re-run" : "Convert to Bloom"}
           </Btn>
         </div>
       </div>
@@ -369,7 +395,9 @@ function Stepper({
           hasRun && cached[s] && BLOOM.STAGES.indexOf(s) < BLOOM.STAGES.indexOf(start);
         const willRun = BLOOM.STAGES.indexOf(s) >= BLOOM.STAGES.indexOf(start);
         const tip = !enabled
-          ? `${BLOOM.STAGE_LABELS[s]} can't be a start point — its input (${BLOOM.STAGE_LABELS[BLOOM.STAGES[i - 1]]} output) doesn't exist for this run yet.`
+          ? s === "bloom"
+            ? "Bloom always runs after HTML as the final stage — it can't be a start point."
+            : `${BLOOM.STAGE_LABELS[s]} can't be a start point — its input (${BLOOM.STAGE_LABELS[BLOOM.STAGES[i - 1]]} output) doesn't exist for this run yet.`
           : isStart
             ? "Start here"
             : willRun
@@ -983,6 +1011,253 @@ export function ConfirmModal({
             >
               {confirmLabel || "Confirm"}
             </Btn>
+          </div>
+        </div>
+      </ModalCard>
+    </Overlay>
+  );
+}
+
+// ============ CONVERSION SETTINGS ============
+// The conversion settings (formerly the body of the right-hand Details pane),
+// now reached via the gear button beside "Run conversion" in the preview pane.
+export function ConvSettingsModal({
+  source,
+  params,
+  defaults,
+  onChange,
+  onRun,
+  onClose,
+}: {
+  source?: Source | null;
+  params: Params;
+  defaults?: Params;
+  onChange: (k: keyof Params, v: any) => void;
+  onRun: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Overlay onClose={onClose}>
+      <ModalCard
+        width={560}
+        title="Conversion settings"
+        subtitle={source?.name}
+        icon="sliders"
+        onClose={onClose}
+      >
+        <div style={{ padding: "16px 18px", overflowY: "auto" }}>
+          <ParamControls params={params} onChange={onChange} defaults={defaults} />
+        </div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 8,
+            padding: "12px 18px",
+            borderTop: "1px solid var(--border)",
+            background: "var(--surface-2)",
+          }}
+        >
+          <Btn variant="default" onClick={onClose}>
+            Done
+          </Btn>
+          <Btn
+            variant="primary"
+            icon="play"
+            onClick={() => {
+              onRun();
+              onClose();
+            }}
+          >
+            Convert to Bloom
+          </Btn>
+        </div>
+      </ModalCard>
+    </Overlay>
+  );
+}
+
+// ============ RUN DETAILS ============
+// Everything that used to live in the right-hand run Details pane — the live log,
+// artifacts browser, metrics, notes, plus mark/pin/re-run/resume/delete actions —
+// now opened on demand as a modal from a row's details button or the preview pane.
+export function RunDetailsModal({
+  run,
+  source,
+  onClose,
+  onMark,
+  onPin,
+  onNotes,
+  onCancel,
+  onConfigRerun,
+  onResume,
+  onDelete,
+  onCompare,
+}: {
+  run: Run;
+  source: Source;
+  onClose: () => void;
+  onMark: (sid: string, rid: string, v: Mark) => void;
+  onPin: (sid: string, rid: string, v: boolean) => void;
+  onNotes: (sid: string, rid: string, patch: Partial<Run>) => void;
+  onCancel: (sid: string, rid: string) => void;
+  onConfigRerun: (s: Source, r: Run) => void;
+  onResume: (s: Source, r: Run) => void;
+  onDelete: (sid: string, rid: string) => void;
+  onCompare?: (s: Source) => void;
+}) {
+  const [tab, setTab] = React.useState("artifacts");
+  const eff = effStatus(run);
+  return (
+    <Overlay onClose={onClose}>
+      <ModalCard width={640} title={source.name} subtitle={run.id} icon="layers" onClose={onClose}>
+        {/* Fixed height (not max-height) so the dialog stays the same size as you
+            switch tabs — the content area below fills the remainder and scrolls. */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+            height: "min(82vh, 680px)",
+          }}
+        >
+          {/* sub-header: status + curation + actions */}
+          <div style={{ padding: "12px 16px 11px", borderBottom: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
+              {/* The disapproval is already conveyed by MarkControl, so skip the
+                  redundant "Disapproved" pill. */}
+              {eff !== "disapproved" && <StatusPill status={eff} />}
+              {run.status === "done" && (
+                <MarkControl mark={run.mark} onChange={(v) => onMark(source.id, run.id, v)} />
+              )}
+              <PinButton pinned={!!run.pinned} onChange={(v) => onPin(source.id, run.id, v)} />
+              <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                {onCompare && source.runs.length > 1 && (
+                  <IconBtn name="diff" title="Compare runs" onClick={() => onCompare(source)} />
+                )}
+                <CopyRunButton source={source} run={run} />
+                <IconBtn
+                  name="trash"
+                  title="Delete run"
+                  danger
+                  onClick={() => onDelete(source.id, run.id)}
+                />
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {run.status === "running" || run.status === "queued" ? (
+                <Btn
+                  variant="danger"
+                  size="sm"
+                  icon="stop"
+                  onClick={() => onCancel(source.id, run.id)}
+                  style={{ flex: 1 }}
+                >
+                  Cancel run
+                </Btn>
+              ) : (
+                <Btn
+                  variant="primary"
+                  size="sm"
+                  icon="refresh"
+                  onClick={() => onConfigRerun(source, run)}
+                  style={{ flex: 1 }}
+                >
+                  Re-run with new settings
+                </Btn>
+              )}
+            </div>
+            {run.status === "failed" && (
+              <Btn
+                variant="ghost"
+                size="sm"
+                icon="layers"
+                onClick={() => onResume(source, run)}
+                style={{ width: "100%", marginTop: 6 }}
+                title={
+                  run.resumeStage
+                    ? `Reuse cached output through ${BLOOM.STAGE_LABELS[run.resumeStage] || run.resumeStage} and continue`
+                    : "Start over from the source (no earlier stage completed)"
+                }
+              >
+                Run from last successful stage
+              </Btn>
+            )}
+          </div>
+
+          {run.status === "failed" && run.error && <ErrorBanner error={run.error} />}
+
+          {/* tabs */}
+          <div
+            style={{
+              display: "flex",
+              gap: 2,
+              padding: "8px 12px 0",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            {(
+              [
+                ["log", "Log"],
+                ["artifacts", "Artifacts"],
+                ["details", "Settings"],
+                ["metrics", "Metrics"],
+                ["notes", "Notes"],
+              ] as [string, string][]
+            ).map(([v, l]) => {
+              const hasNotes = v === "notes" && !!run.notes && run.notes.trim().length > 0;
+              return (
+                <button
+                  key={v}
+                  onClick={() => setTab(v)}
+                  style={{
+                    position: "relative",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    padding: "7px 11px 9px",
+                    border: "none",
+                    background: "transparent",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: tab === v ? "var(--text)" : hasNotes ? "var(--accent)" : "var(--text-3)",
+                    cursor: "pointer",
+                  }}
+                >
+                  {hasNotes && <Icon name="note" size={12} />}
+                  {l}
+                  {tab === v && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        left: 8,
+                        right: 8,
+                        bottom: -1,
+                        height: 2,
+                        borderRadius: 2,
+                        background: "var(--accent)",
+                      }}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            style={{
+              flex: 1,
+              minHeight: 260,
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {tab === "log" && <LogTab run={run} />}
+            {tab === "details" && <DetailsTab run={run} source={source} />}
+            {tab === "metrics" && <MetricsTab run={run} />}
+            {tab === "artifacts" && <ArtifactsTab run={run} />}
+            {tab === "notes" && <NotesTab run={run} source={source} onNotes={onNotes} />}
           </div>
         </div>
       </ModalCard>

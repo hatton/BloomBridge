@@ -1,17 +1,17 @@
 /* App — talks to the local API (served by Vite) and live-updates over SSE. */
 import React, { useState, useEffect } from "react";
 import { Icon } from "./lib/icons";
-import { Btn, IconBtn, ProgressBar } from "./components/primitives";
+import { IconBtn } from "./components/primitives";
 import { CenterTable } from "./components/table";
+import { SourcePanel, BatchPane, RunSelectionPane, PdfViewerPane } from "./components/panels";
 import {
-  SourcePanel,
-  DetailPanel,
-  PdfDetail,
-  BatchPane,
-  RunSelectionPane,
-  PdfViewerPane,
-} from "./components/panels";
-import { RunConfig, CompareModal, SettingsModal, ConfirmModal } from "./components/modals";
+  RunConfig,
+  CompareModal,
+  SettingsModal,
+  ConfirmModal,
+  ConvSettingsModal,
+  RunDetailsModal,
+} from "./components/modals";
 import { useTweaks } from "./components/devPanel";
 import { api, subscribeEvents, markToRating, type ServerSettingsView } from "./api";
 import type { Focus, Mark, Params, Run, Settings, Source } from "./types";
@@ -76,29 +76,14 @@ export function App() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState("status");
   const [sortDir, setSortDir] = useState("desc");
-  const [panelOpen, setPanelOpen] = useState(true);
   const [modal, setModal] = useState<any>(null);
-  const [pdfOpen, setPdfOpen] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("bloombridge.pdfPane.open") === "1";
-    } catch {
-      return false;
-    }
-  });
   const [pdfWidth, setPdfWidth] = useState<number>(() => {
     try {
-      return Number(localStorage.getItem("bloombridge.pdfPane.width")) || 380;
+      return Number(localStorage.getItem("bloombridge.pdfPane.width")) || 420;
     } catch {
-      return 380;
+      return 420;
     }
   });
-  useEffect(() => {
-    try {
-      localStorage.setItem("bloombridge.pdfPane.open", pdfOpen ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }, [pdfOpen]);
   useEffect(() => {
     try {
       localStorage.setItem("bloombridge.pdfPane.width", String(pdfWidth));
@@ -260,14 +245,27 @@ export function App() {
     focus && focus.type === "run" && focusedSource
       ? focusedSource.runs.find((r) => r.id === focus.runId)
       : null;
+
+  // Conversion settings the preview pane's "Convert to Bloom" button and the gear
+  // settings modal both edit. Seeded from the focused book's most-recent run (or
+  // the defaults) and reset only when the focused book changes — so editing in the
+  // settings modal isn't clobbered by live run updates.
+  const [convParams, setConvParams] = useState<Params>(defaults);
+  useEffect(() => {
+    const seed = focusedSource?.runs[0]?.params || defaults;
+    setConvParams({ ...seed });
+    // Only when the focused book changes (not on every run update).
+  }, [focus?.sourceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const onSelectRun = (sid: string, rid: string) => {
     setFocus({ type: "run", sourceId: sid, runId: rid });
-    setPanelOpen(true);
   };
   const onSelectPdf = (sid: string) => {
     setFocus({ type: "pdf", sourceId: sid });
-    setPanelOpen(true);
   };
+  // Open the run-details modal (log / artifacts / metrics / notes) for a run.
+  const openRunDetails = (sid: string, rid: string) =>
+    setModal({ type: "runDetails", sourceId: sid, runId: rid });
   const onToggleExpand = (id: string) =>
     setExpanded((e) => {
       const n = new Set(e);
@@ -281,7 +279,6 @@ export function App() {
 
   const onCheck = (rid: string, v: boolean) => {
     if (v) {
-      setPanelOpen(true);
       if (checkedPdfs.size) setCheckedPdfs(new Set());
     }
     setChecked((c) => {
@@ -292,7 +289,6 @@ export function App() {
   };
   const onCheckMany = (ids: string[], v: boolean) => {
     if (v) {
-      setPanelOpen(true);
       if (checkedPdfs.size) setCheckedPdfs(new Set());
     }
     setChecked((c) => {
@@ -303,7 +299,6 @@ export function App() {
   };
   const onCheckPdf = (sid: string, v: boolean) => {
     if (v) {
-      setPanelOpen(true);
       if (checked.size) setChecked(new Set());
     }
     setCheckedPdfs((c) => {
@@ -507,13 +502,28 @@ export function App() {
     0,
   );
   const batchActive = checkedPdfs.size >= 1;
+  const multiSelected = checkedPdfs.size > 1;
+  // The run the always-open preview pane shows: an explicitly-focused run, else
+  // the focused book's most-recent run — so a user can ignore the fact that we
+  // store multiple runs and just work from the top level of the tree.
+  const previewRun = multiSelected
+    ? null
+    : focus && focus.type === "run"
+      ? focusedRun
+      : focusedSource
+        ? focusedSource.runs[0] || null
+        : null;
+  const previewRunId = previewRun ? previewRun.id : undefined;
+  const previewMode: "run" | "pdf" = previewRunId ? "run" : "pdf";
+  // A single book is in focus (not a batch / multi-run selection) → the preview
+  // pane's Run-conversion / settings / details controls apply.
+  const showPreviewActions = !batchActive && checked.size === 0 && !!focusedSource;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <TopBar
         dark={t.dark}
         onToggleTheme={() => setTweak("dark", !t.dark)}
-        bloom={bloom}
         onSettings={openSettings}
       />
 
@@ -551,7 +561,6 @@ export function App() {
             onCheckMany={onCheckMany}
             onCheckManyPdfs={(ids, v) => {
               if (v) {
-                setPanelOpen(true);
                 if (checked.size) setChecked(new Set());
               }
               setCheckedPdfs((c) => {
@@ -571,6 +580,8 @@ export function App() {
             onSortClick={onSortClick}
             onCleanup={onCleanup}
             onConfigRun={onConfigRun}
+            onOpenRunDetails={openRunDetails}
+            onDeleteRun={onDeleteRun}
             onExpandAll={onExpandAll}
             allExpanded={allExpanded}
             defaults={defaults}
@@ -579,96 +590,52 @@ export function App() {
           <EmptyWorkspace recentFolders={recentFolders} onPick={pickFolder} />
         )}
 
-        {panelOpen ? (
-          batchActive ? (
-            <BatchPane
-              count={checkedPdfs.size}
-              parallelism={maxParallel}
-              defaultParams={defaults}
-              onClose={() => setPanelOpen(false)}
-              onClear={() => setCheckedPdfs(new Set())}
-              onRun={batchRun}
-            />
-          ) : checked.size >= 1 ? (
-            <RunSelectionPane
-              count={checked.size}
-              onClose={() => setPanelOpen(false)}
-              onClear={() => setChecked(new Set())}
-              onDelete={bulkDelete}
-              onApprove={() => bulkMark("good")}
-              onDisapprove={() => bulkMark("bad")}
-              onCancel={bulkCancel}
-              onRun={bulkRun}
-            />
-          ) : focus && focus.type === "pdf" && focusedSource ? (
-            <PdfDetail
-              source={focusedSource}
-              defaultParams={defaults}
-              parallelism={maxParallel}
-              onClose={() => setPanelOpen(false)}
-              onRunNow={(params) => quickStart(focusedSource, params)}
-              onPreview={onPreview}
-              onSelectRun={onSelectRun}
-              onMark={onMark}
-            />
-          ) : (
-            <DetailPanel
-              run={focusedRun}
-              source={focusedSource}
-              onClose={() => setPanelOpen(false)}
-              onMark={onMark}
-              onPin={onPin}
-              onNotes={onNotes}
-              onCancel={onCancelRun}
-              onPreview={onPreview}
-              onConfigRerun={(s, r) => onConfigRun(s, r)}
-              onResume={onResumeRun}
-              onCompare={(s) =>
-                setModal({
-                  type: "compare",
-                  source: s,
-                  initialA: focus ? (focus as any).runId : null,
-                })
-              }
-              onDelete={onDeleteRun}
-            />
-          )
-        ) : (
-          <RightRail icon="panel-right" label="Details" onExpand={() => setPanelOpen(true)} />
-        )}
-
-        {pdfOpen ? (
-          <PdfViewerPane
-            source={checkedPdfs.size > 1 ? null : focusedSource}
-            multiSelected={checkedPdfs.size > 1}
-            runId={
-              checkedPdfs.size <= 1 && focus && focus.type === "run"
-                ? (focus as any).runId
-                : undefined
-            }
-            mode={checkedPdfs.size <= 1 && focus && focus.type === "run" ? "run" : "pdf"}
-            width={pdfWidth}
-            onResize={setPdfWidth}
-            onClose={() => setPdfOpen(false)}
+        {/* Batch / multi-run selection still get a dedicated middle pane; single
+            selections are handled by the always-open preview pane on the right. */}
+        {batchActive ? (
+          <BatchPane
+            count={checkedPdfs.size}
+            parallelism={maxParallel}
+            defaultParams={defaults}
+            onClose={() => setCheckedPdfs(new Set())}
+            onClear={() => setCheckedPdfs(new Set())}
+            onRun={batchRun}
           />
-        ) : (
-          (() => {
-            const isEpub = /\.epub$/i.test(focusedSource?.file || focusedSource?.path || "");
-            return (
-              <RightRail
-                icon={
-                  checkedPdfs.size <= 1 && focus && focus.type === "run"
-                    ? "/preview-collapsed.svg"
-                    : isEpub
-                      ? "/epub.svg"
-                      : "/pdf.svg"
-                }
-                label={isEpub ? "EPUB preview" : "PDF preview"}
-                onExpand={() => setPdfOpen(true)}
-              />
-            );
-          })()
-        )}
+        ) : checked.size >= 1 ? (
+          <RunSelectionPane
+            count={checked.size}
+            onClose={() => setChecked(new Set())}
+            onClear={() => setChecked(new Set())}
+            onDelete={bulkDelete}
+            onApprove={() => bulkMark("good")}
+            onDisapprove={() => bulkMark("bad")}
+            onCancel={bulkCancel}
+            onRun={bulkRun}
+          />
+        ) : null}
+
+        {/* The preview pane is always open. It hosts Run conversion + settings +
+            run-details, and compares the source against the most-recent run. */}
+        <PdfViewerPane
+          source={multiSelected ? null : focusedSource}
+          multiSelected={multiSelected}
+          runId={previewRunId}
+          mode={previewMode}
+          runStatus={previewRun?.status}
+          runStage={previewRun?.progress?.stage}
+          runFailedStage={previewRun?.error?.stage}
+          width={pdfWidth}
+          onResize={setPdfWidth}
+          showActions={showPreviewActions}
+          hasRun={!!previewRun}
+          onRunNow={() => focusedSource && quickStart(focusedSource, convParams)}
+          onOpenSettings={() => setModal({ type: "convSettings" })}
+          onOpenDetails={() =>
+            previewRun && focusedSource && openRunDetails(focusedSource.id, previewRun.id)
+          }
+          bloomRunning={bloom.running}
+          bloomCollectionName={bloom.collectionName}
+        />
       </div>
 
       <QueueBar
@@ -706,6 +673,37 @@ export function App() {
         />
       )}
       {modal?.type === "confirm" && <ConfirmModal {...modal} onClose={() => setModal(null)} />}
+      {modal?.type === "convSettings" && (
+        <ConvSettingsModal
+          source={focusedSource}
+          params={convParams}
+          defaults={defaults}
+          onChange={(k, v) => setConvParams((o) => ({ ...o, [k]: v }))}
+          onRun={() => focusedSource && quickStart(focusedSource, convParams)}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.type === "runDetails" &&
+        (() => {
+          const s = sources.find((x) => x.id === modal.sourceId);
+          const r = s?.runs.find((x) => x.id === modal.runId);
+          if (!s || !r) return null;
+          return (
+            <RunDetailsModal
+              run={r}
+              source={s}
+              onClose={() => setModal(null)}
+              onMark={onMark}
+              onPin={onPin}
+              onNotes={onNotes}
+              onCancel={onCancelRun}
+              onConfigRerun={(src, run) => onConfigRun(src, run)}
+              onResume={onResumeRun}
+              onDelete={onDeleteRun}
+              onCompare={(src) => setModal({ type: "compare", source: src, initialA: r.id })}
+            />
+          );
+        })()}
 
       {toast && (
         <div
@@ -769,12 +767,10 @@ export function App() {
 function TopBar({
   dark,
   onToggleTheme,
-  bloom,
   onSettings,
 }: {
   dark: boolean;
   onToggleTheme: () => void;
-  bloom: { running: boolean; collectionName?: string };
   onSettings: () => void;
 }) {
   return (
@@ -797,45 +793,8 @@ function TopBar({
         </div>
       </div>
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-        {/* live indicator (not a control) — reflects the actually-running Bloom */}
-        <span
-          title={
-            bloom.running
-              ? "Connected to a running Bloom with this collection open"
-              : "Not connected to a running Bloom"
-          }
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 7,
-            height: 28,
-            padding: "0 11px",
-            borderRadius: 999,
-            border: "1px solid var(--border)",
-            background: "var(--surface)",
-            fontSize: 11.5,
-            fontWeight: 600,
-            color: "var(--text-2)",
-            maxWidth: 280,
-            overflow: "hidden",
-          }}
-        >
-          <span
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: 999,
-              flexShrink: 0,
-              background: bloom.running ? "var(--st-done-fg)" : "var(--text-3)",
-            }}
-          />
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {bloom.running
-              ? `Bloom connected: ${bloom.collectionName || "running"}`
-              : "Bloom not connected"}
-          </span>
-        </span>
-        <div style={{ width: 1, height: 20, background: "var(--border)" }} />
+        {/* The Bloom connection indicator now lives in the preview pane, just above the
+            "Convert to Bloom" action where it's most relevant. */}
         <IconBtn name={dark ? "sun" : "moon"} onClick={onToggleTheme} title="Toggle theme" />
         <IconBtn name="settings" onClick={onSettings} title="Settings" />
       </div>
@@ -971,87 +930,6 @@ function LeftRail({
         }}
       >
         <Icon name="chevron" size={14} />
-      </button>
-    </aside>
-  );
-}
-
-// A collapsed right-hand column. Mirrors LeftRail: a thin, full-height column
-// (so the layout keeps a column there) with a vertical label + expand button.
-function RightRail({
-  icon,
-  label,
-  onExpand,
-}: {
-  icon: string | string[];
-  label: string;
-  onExpand: () => void;
-}) {
-  const icons = Array.isArray(icon) ? icon : [icon];
-  return (
-    <aside
-      style={{
-        width: 40,
-        flexShrink: 0,
-        background: "var(--surface)",
-        borderLeft: "1px solid var(--border)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        paddingTop: 10,
-        gap: 10,
-      }}
-    >
-      <button
-        onClick={onExpand}
-        title={`Show ${label}`}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 2,
-          minWidth: 28,
-          height: 28,
-          padding: "0 5px",
-          borderRadius: 6,
-          border: "1px solid var(--border)",
-          background: "var(--surface-2)",
-          color: "var(--text-2)",
-          cursor: "pointer",
-        }}
-      >
-        {icons.map((n, i) =>
-          n.startsWith("/") ? (
-            <img
-              key={i}
-              src={n}
-              alt=""
-              aria-hidden="true"
-              style={{ maxHeight: 26, maxWidth: 18, width: "auto", height: "auto" }}
-            />
-          ) : (
-            <Icon key={i} name={n} size={icons.length > 1 ? 13 : 15} />
-          ),
-        )}
-      </button>
-      <button
-        onClick={onExpand}
-        title={`Show ${label}`}
-        style={{
-          width: "100%",
-          border: "none",
-          background: "transparent",
-          color: "var(--text-3)",
-          cursor: "pointer",
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: ".5px",
-          writingMode: "vertical-rl",
-          textTransform: "uppercase",
-          padding: 0,
-        }}
-      >
-        {label}
       </button>
     </aside>
   );
