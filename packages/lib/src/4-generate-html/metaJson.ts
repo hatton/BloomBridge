@@ -179,7 +179,8 @@ function looksFullBleed(book: Book): boolean {
  */
 export async function writeAppearanceJson(bookFolderPath: string, book: Book): Promise<void> {
   const fullBleed = looksFullBleed(book);
-  const whiteCover = hasFullPageFrontCover(book);
+  // A full-page cover, or an explicit request (EPUBs: a plain image+title cover on white).
+  const whiteCover = hasFullPageFrontCover(book) || !!book.frontMatterMetadata.whiteCover;
   if (!fullBleed && !whiteCover) return; // nothing to assert; let Bloom manage it
 
   const appearancePath = path.join(bookFolderPath, "appearance.json");

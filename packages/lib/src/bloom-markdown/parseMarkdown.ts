@@ -36,6 +36,7 @@ export class BloomMarkdown {
       if (familyMatch) metadata.normalFontFamily = familyMatch[1];
       const pageSizeMatch = bookComment[1].match(/page-size=["']?([A-Za-z0-9]+)["']?/);
       if (pageSizeMatch) metadata.pageSize = pageSizeMatch[1];
+      if (/cover-color=["']?white["']?/i.test(bookComment[1])) metadata.whiteCover = true;
     }
 
     // Strip the book comment out of the body before splitting into pages. If left

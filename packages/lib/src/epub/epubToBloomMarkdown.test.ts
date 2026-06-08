@@ -315,29 +315,45 @@ describe("epubToBloomMarkdown", () => {
     return (await epubToBloomMarkdown(epubPath, path.join(dir, "book"))).markdown;
   }
 
-  it("emits a landscape page-size hint when illustrations are landscape", async () => {
+  it("emits a Device16x9 landscape page-size hint when illustrations are landscape", async () => {
     const md = await convert(epubWithImageSize(1024, 600));
-    expect(md).toContain('<!-- book page-size="A5Landscape" -->');
+    expect(md).toMatch(/<!-- book page-size="Device16x9Landscape"[^>]*-->/);
   });
 
-  it("emits no page-size hint for portrait illustrations (portrait is the default)", async () => {
+  it("emits a Device16x9 portrait page-size hint for portrait illustrations", async () => {
     const md = await convert(epubWithImageSize(600, 900));
-    expect(md).not.toContain("page-size=");
+    expect(md).toMatch(/<!-- book page-size="Device16x9Portrait"[^>]*-->/);
   });
 
-  // A picture-book page that absolutely-positions prose over a full-bleed illustration.
+  // A picture-book whose spine isn't named (cov/p1/p2/p3, like StoryWeaver's 1..N): the
+  // first spine page is the cover, the rest absolutely-position prose over full-bleed art.
   function epubWithPositionedText(): Uint8Array {
     const opf = `<?xml version="1.0"?>
-<package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:language>or</dc:language></metadata>
+<package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:language>or</dc:language>
+<dc:title>My Story Title</dc:title>
+<dc:creator>An Author</dc:creator>
+<dc:date>2023-01-01</dc:date>
+<meta name="cover" content="icov"/>
+</metadata>
 <manifest>
+<item id="cov" href="Text/cov.xhtml" media-type="application/xhtml+xml"/>
 <item id="p1" href="Text/p1.xhtml" media-type="application/xhtml+xml"/>
 <item id="p2" href="Text/p2.xhtml" media-type="application/xhtml+xml"/>
 <item id="p3" href="Text/p3.xhtml" media-type="application/xhtml+xml"/>
+<item id="icov" href="Images/cov.jpg" media-type="image/jpeg"/>
 <item id="i1" href="Images/p1.jpg" media-type="image/jpeg"/>
 <item id="i2" href="Images/p2.jpg" media-type="image/jpeg"/>
 <item id="i3" href="Images/p3.jpg" media-type="image/jpeg"/>
 </manifest>
-<spine><itemref idref="p1"/><itemref idref="p2"/><itemref idref="p3"/></spine></package>`;
+<spine><itemref idref="cov"/><itemref idref="p1"/><itemref idref="p2"/><itemref idref="p3"/></spine></package>`;
+    // cov: the cover — illustration + the title/author/illustrator contributor prose.
+    const cov = `<html><body><div class="front-cover-page">
+<div class="illustration"><img src="../Images/cov.jpg"/></div>
+<div class="cover_title">My Story Title</div>
+<div class="contributor_attribution illustrators">Illustrator: An Illustrator</div>
+<div class="contributor_attribution translators">Translator: A Translator</div>
+</div></body></html>`;
     // p1: one positioned caption over a full-bleed illustration (a wrapper layer at
     // 0/0/100%/100% must be ignored). p2: two positioned blocks (multi-box canvas).
     const p1 = `<html><body><div class="page">
@@ -365,9 +381,11 @@ describe("epubToBloomMarkdown", () => {
         `<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
       ),
       file("OEBPS/content.opf", opf),
+      file("OEBPS/Text/cov.xhtml", cov),
       file("OEBPS/Text/p1.xhtml", p1),
       file("OEBPS/Text/p2.xhtml", p2),
       file("OEBPS/Text/p3.xhtml", p3),
+      { name: "OEBPS/Images/cov.jpg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
       { name: "OEBPS/Images/p1.jpg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
       { name: "OEBPS/Images/p2.jpg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
       { name: "OEBPS/Images/p3.jpg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
@@ -395,6 +413,33 @@ describe("epubToBloomMarkdown", () => {
     expect(md).toContain('full-page-image="true"');
     expect(md).toContain("![p3](p3.jpg)");
     expect(md).not.toContain("3/3");
+  });
+
+  it("recognizes the cover and emits OPF + mined metadata when the spine isn't named", async () => {
+    const md = await convert(epubWithPositionedText());
+
+    // The first (unnamed) spine page is the cover: the OPF cover image becomes Bloom's
+    // `coverImage` under its own name (a STANDARD cover with title, not the full-bleed
+    // reserved `cover.jpg`), and the page is NOT re-rendered as content.
+    expect(md).toContain("![cover](cov.jpg)");
+    expect(md).not.toContain("cover.jpg");
+
+    // OPF metadata → title fields; illustrator + translator mined from the pages.
+    expect(md).toContain('field="bookTitle"');
+    expect(md).toContain("My Story Title");
+    expect(md).toContain('field="author"');
+    expect(md).toContain("An Author");
+    expect(md).toContain('field="illustrator"');
+    expect(md).toContain("An Illustrator");
+    expect(md).toContain("© 2023");
+
+    // The cover credit carries the ROLES (not bare names), and EPUBs default to a white
+    // cover (a plain image + title), so Bloom keeps the regenerated cover white.
+    expect(md).toContain('field="smallCoverCredits"');
+    expect(md).toContain("Author: An Author");
+    expect(md).toContain("Illustrator: An Illustrator");
+    expect(md).toContain("Translator: A Translator");
+    expect(md).toContain('cover-color="white"');
   });
 
   it("preserves full-page-image through the parse → generate round-trip Stage 3 performs", async () => {

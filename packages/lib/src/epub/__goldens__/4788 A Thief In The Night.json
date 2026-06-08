@@ -1,79 +1,79 @@
 {
-  "pageSize": "A5Portrait",
+  "pageSize": "Device16x9Portrait",
   "pageCount": 15,
   "pages": [
     {
-      "classes": "A5Portrait bloom-customLayout bloom-frontMatter cover frontCover outsideFrontCover",
+      "classes": "Device16x9Portrait bloom-customLayout bloom-frontMatter cover frontCover outsideFrontCover",
       "texts": 0,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 0
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 2,
       "images": 1
     },
     {
-      "classes": "A5Portrait customPage numberedPage",
+      "classes": "Device16x9Portrait customPage numberedPage",
       "texts": 0,
       "images": 1
     },
     {
-      "classes": "A5Portrait bloom-backMatter bloom-customLayout cover outsideBackCover",
+      "classes": "Device16x9Portrait bloom-backMatter bloom-customLayout cover outsideBackCover",
       "texts": 0,
       "images": 1
     }

@@ -15,6 +15,10 @@ export interface FrontMatterMetadata {
   // Bloom page-size class matching the source PDF, e.g. "A4Portrait" (see
   // 1-ocr/detectNormalStyle.ts). Defaults to A5Portrait when absent.
   pageSize?: string;
+  // Force the regenerated xMatter cover background to white (rather than Bloom's
+  // random/branding cover color). Set for EPUBs, whose covers are a plain image +
+  // title on white. Carried in the `<!-- book cover-color="white" -->` hint.
+  whiteCover?: boolean;
   //coverImage?: string;
   // isbn?: string;
   // license?: string;

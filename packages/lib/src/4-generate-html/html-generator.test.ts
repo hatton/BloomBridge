@@ -97,6 +97,32 @@ describe("generateHtmlDocument", () => {
     expect(result).toContain("--page-background-color: #79d3f5");
   });
 
+  it("uses object-fit:cover on a print canvas page but contain on an EPUB device page", () => {
+    const canvasBook = (pageSize: string): Book => ({
+      frontMatterMetadata: { languages: { en: "English" }, l1: "en", pageSize },
+      pages: [
+        {
+          type: "content" as const,
+          canvasTextBoxes: [{ x: 0.13, y: 0.07, w: 0.74, h: 0.86 }],
+          elements: [
+            { type: "image" as const, src: "pic.png" },
+            { type: "text" as const, content: { en: "caption" } },
+          ],
+        },
+      ],
+    });
+
+    // Print size: the page matches the source artwork, so the art fills full-bleed.
+    expect(HtmlGenerator.generateHtmlDocument(canvasBook("A4Portrait"), () => {})).toContain(
+      'src="pic.png" class="bloom-imageObjectFit-cover"',
+    );
+    // EPUB device page: the art rarely matches 16:9, so we keep the whole image visible
+    // (Bloom's default contain) rather than cropping its edges.
+    const device = HtmlGenerator.generateHtmlDocument(canvasBook("Device16x9Landscape"), () => {});
+    expect(device).toContain('src="pic.png" class=""');
+    expect(device).not.toContain("bloom-imageObjectFit-cover");
+  });
+
   it("renders a flattened (too-complex) page as a full-page image with a conversion note", () => {
     const book: Book = {
       frontMatterMetadata: { languages: { en: "English" }, l1: "en", pageSize: "A4Portrait" },

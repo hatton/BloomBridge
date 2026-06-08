@@ -190,7 +190,9 @@ export class HtmlGenerator {
           element.type === "image" && element.src === FRONT_COVER_IMAGE_FILENAME,
       ),
     );
-    if (!hasFullCover) return "";
+    // EPUBs ask for a plain white cover (image + title on white) via metadata, even
+    // though they have no full-bleed cover image.
+    if (!hasFullCover && !book.frontMatterMetadata.whiteCover) return "";
     return `<meta name="preserveCoverColor" content="true" />
     <style type="text/css" name="appearanceCoverBackgroundColor">.bloom-page { --cover-background-color: white; }</style>`;
   }
@@ -486,6 +488,7 @@ export class HtmlGenerator {
       A6: [105, 148],
       Letter: [215.9, 279.4],
       Legal: [215.9, 355.6],
+      Device16x9: [100, 177.77777778], // Bloom's 16:9 device page
     };
     const base = pageSize.replace(/(Portrait|Landscape)$/, "");
     const landscape = pageSize.endsWith("Landscape");
@@ -500,6 +503,19 @@ export class HtmlGenerator {
       canvasW: Math.round(pageW - 2 * MARGIN_PX),
       canvasH: Math.round(pageH - 2 * MARGIN_PX),
     };
+  }
+
+  /**
+   * The img class that controls how a full-bleed canvas image fits its element.
+   * EPUB imports are forced to a 16:9 device page (see epubToBloomMarkdown), but their
+   * illustrations rarely match that aspect, so `cover` would crop the art's edges
+   * (e.g. lop the bottom band off a ~1.4 illustration). For device pages we therefore
+   * fall back to Bloom's default `contain` — the whole illustration stays visible and
+   * the page background fills the aspect gap. For print sizes (PDF flow), the page
+   * matches the source artwork, so we keep `cover` for a true full bleed.
+   */
+  private static fullBleedImageClass(pageSize: string): string {
+    return pageSize.startsWith("Device16x9") ? "" : "bloom-imageObjectFit-cover";
   }
 
   /**
@@ -521,8 +537,9 @@ export class HtmlGenerator {
 
   /**
    * A content page that is a single full-bleed background image with no editable text:
-   * the page margins and page number are dropped and the `object-fit:cover` image fills
-   * the printable area. Used both for "too-complex" flattened pages (with a conversion
+   * the page margins and page number are dropped and the image fills the printable area
+   * (`object-fit:cover` on print sizes; `contain` on EPUB device pages — see
+   * fullBleedImageClass). Used both for "too-complex" flattened pages (with a conversion
    * note) and for wordless picture-book pages (no note). `noteAttr` is an optional
    * pre-built `data-conversion-note='…'` attribute string.
    */
@@ -543,7 +560,7 @@ export class HtmlGenerator {
           <div class="bloom-canvas bloom-has-canvas-element" data-tool-id="canvas" data-imgsizebasedon="${canvasW},${canvasH}" title="">
             <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${canvasW}px; height: ${canvasH}px; top: 0px; left: 0px;" data-bubble="${bgBubble}">
               <div class="bloom-imageContainer" data-tool-id="canvas" style="direction: ltr;">
-                <img src="${escapeHtml(src)}" class="bloom-imageObjectFit-cover" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
+                <img src="${escapeHtml(src)}" class="${this.fullBleedImageClass(pageSize)}" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
               </div>
             </div>
           </div>
@@ -674,7 +691,7 @@ export class HtmlGenerator {
           <div class="bloom-canvas bloom-has-canvas-element" data-tool-id="canvas" data-imgsizebasedon="${canvasW},${canvasH}" title="">
             <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${canvasW}px; height: ${canvasH}px; top: 0px; left: 0px;" data-bubble="${bgBubble}">
               <div class="bloom-imageContainer" data-tool-id="canvas" style="direction: ltr;">
-                <img src="${escapeHtml(imageEl.src)}" class="bloom-imageObjectFit-cover" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
+                <img src="${escapeHtml(imageEl.src)}" class="${this.fullBleedImageClass(pageSize)}" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
               </div>
             </div>
 ${textElementsHtml}
@@ -691,8 +708,10 @@ ${textElementsHtml}
    * It mirrors what Bloom itself writes so the custom layout round-trips on import.
    *
    * The px sizing fills the whole page (full bleed) for the given page size; Bloom
-   * recomputes it when the book is edited. `bloom-imageObjectFit-cover` on the img
-   * makes the art fill the page (cropping bleed) rather than letterboxing.
+   * recomputes it when the book is edited. On print sizes the img gets
+   * `bloom-imageObjectFit-cover` so the art fills the page (cropping bleed); on EPUB
+   * device pages it falls back to `contain` so the whole cover stays visible (see
+   * fullBleedImageClass).
    */
   private static coverCanvasHtml(
     imageSrc: string,
@@ -707,7 +726,7 @@ ${textElementsHtml}
     return `<div class="bloom-canvas bloom-has-canvas-element" data-imgsizebasedon="${pageW},${pageH}" title="">
           <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${pageW}px; top: 0px; left: 0px; height: ${pageH}px;" data-bubble="${this.COVER_DATA_BUBBLE}">
             <div class="bloom-imageContainer" style="direction: ltr;">
-              <img src="${escapeHtml(imageSrc)}" class="bloom-imageObjectFit-cover" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt=""${inactiveCoverImage} />
+              <img src="${escapeHtml(imageSrc)}" class="${this.fullBleedImageClass(pageSize)}" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt=""${inactiveCoverImage} />
             </div>
           </div>
         </div>`;

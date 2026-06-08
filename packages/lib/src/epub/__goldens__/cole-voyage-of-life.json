@@ -1,54 +1,59 @@
 {
-  "pageSize": "A5Landscape",
-  "pageCount": 10,
+  "pageSize": "Device16x9Landscape",
+  "pageCount": 11,
   "pages": [
     {
-      "classes": "A5Landscape customPage numberedPage",
-      "texts": 2,
-      "images": 1
-    },
-    {
-      "classes": "A5Landscape customPage numberedPage",
-      "texts": 2,
-      "images": 1
-    },
-    {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 0,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 2,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
-      "texts": 0,
-      "images": 1
-    },
-    {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 2,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 0,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 2,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 0,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
+      "texts": 2,
+      "images": 1
+    },
+    {
+      "classes": "Device16x9Landscape customPage numberedPage",
+      "texts": 0,
+      "images": 1
+    },
+    {
+      "classes": "Device16x9Landscape customPage numberedPage",
+      "texts": 2,
+      "images": 1
+    },
+    {
+      "classes": "Device16x9Landscape customPage numberedPage",
+      "texts": 0,
+      "images": 1
+    },
+    {
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 0
     }

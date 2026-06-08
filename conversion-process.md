@@ -326,6 +326,12 @@ left/top/width/height:%` and emits a `canvas-text-boxes="x,y,w,h;…"` page comm
   (`extractContentFlow`): block-level leaves by source position, decorative images skipped,
   consecutive prose grouped, bold/centering recovered from the EPUB's own CSS — so a
   text→image→text page lays out as that origami stack, not one picture over dumped text.
+- **Page size.** EPUBs are screen-first, reflowable books, so we always size them as a
+  16:9 device page rather than a print A5: `orientationFromAspects` reads the dominant
+  illustration aspect (median w/h) and picks `Device16x9Landscape` (median > 1.15) or
+  else `Device16x9Portrait` (the default, also when there's too little artwork to judge).
+  This is emitted as a `<!-- book page-size=… -->` hint — the same channel the PDF stage
+  uses — so Stage 3/4 and the GUI preview honor it.
 - **Source alignment for the GUI:** every emitted page carries
   `source-pdf-page="<spine index>"`, and `getEpubPageImage`/`getEpubPageCount` serve
   each spine page's illustration so the GUI's paired preview compares EPUB↔Bloom the

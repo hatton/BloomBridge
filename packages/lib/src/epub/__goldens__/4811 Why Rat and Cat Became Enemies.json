@@ -1,89 +1,89 @@
 {
-  "pageSize": "A5Landscape",
+  "pageSize": "Device16x9Landscape",
   "pageCount": 17,
   "pages": [
     {
-      "classes": "A5Landscape bloom-customLayout bloom-frontMatter cover frontCover outsideFrontCover",
+      "classes": "Device16x9Landscape bloom-customLayout bloom-frontMatter cover frontCover outsideFrontCover",
       "texts": 0,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 0
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 1,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 2,
       "images": 1
     },
     {
-      "classes": "A5Landscape customPage numberedPage",
+      "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 0,
       "images": 1
     },
     {
-      "classes": "A5Landscape bloom-backMatter bloom-customLayout cover outsideBackCover",
+      "classes": "Device16x9Landscape bloom-backMatter bloom-customLayout cover outsideBackCover",
       "texts": 0,
       "images": 1
     }

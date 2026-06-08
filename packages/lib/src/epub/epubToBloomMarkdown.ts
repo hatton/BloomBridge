@@ -127,18 +127,18 @@ function intrinsicSize(buf: Buffer): { w: number; h: number } | null {
 }
 
 /**
- * Decide a Bloom page-size token from the illustrations' dominant aspect. Reflowable
- * picture books carry no page geometry, but their illustrations do: a landscape book
- * has landscape illustrations. Median aspect > 1.15 → landscape, < 0.87 → portrait,
- * otherwise default portrait. Returns null when there aren't enough images to judge.
+ * Decide a Bloom page-size token from the illustrations' dominant aspect. EPUBs are
+ * screen-first, reflowable books, so we always size them as a 16:9 device page
+ * (Device16x9Portrait / Device16x9Landscape) rather than a print A5. Reflowable picture
+ * books carry no page geometry, but their illustrations do: a landscape book has
+ * landscape illustrations. Median aspect > 1.15 → landscape; otherwise portrait (the
+ * default, also used when there aren't enough images to judge).
  */
-function orientationFromAspects(aspects: number[]): "A5Landscape" | "A5Portrait" | null {
-  if (aspects.length < 2) return null;
+function orientationFromAspects(aspects: number[]): "Device16x9Landscape" | "Device16x9Portrait" {
+  if (aspects.length < 2) return "Device16x9Portrait";
   const sorted = [...aspects].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
-  if (median > 1.15) return "A5Landscape";
-  if (median < 0.87) return "A5Portrait";
-  return null; // ambiguous → leave the pipeline default (A5Portrait)
+  return median > 1.15 ? "Device16x9Landscape" : "Device16x9Portrait";
 }
 
 /** Text of `<p|div class="…matching…">` blocks (front/back-matter prose), in order. */
@@ -510,20 +510,76 @@ export async function epubToBloomMarkdown(
   const publisher = tagText(opf, "dc:publisher");
   const date = tagText(opf, "dc:date");
   const language = (tagText(opf, "dc:language") || "en").trim();
-  const isbn = allTagText(opf, "dc:identifier").find((s) => /\d{6,}/.test(s));
+  // A real ISBN is 10 or 13 digits (X check-digit allowed); skip URL/URN identifiers
+  // (e.g. StoryWeaver's `/stories/317894-…`, whose digits would otherwise look ISBN-ish).
+  const isbn = allTagText(opf, "dc:identifier").find((s) => {
+    if (/[/:]/.test(s)) return false;
+    const digits = s.replace(/[^0-9Xx]/g, "");
+    return digits.length === 10 || digits.length === 13;
+  });
   const subjects = allTagText(opf, "dc:subject").filter((s) => /^[a-z ]+$/i.test(s));
 
-  // Mine a few extra fields from the copyright page if present.
+  // The cover IMAGE, declared explicitly by the OPF: EPUB2 `<meta name="cover"
+  // content="ID">` (resolved through the manifest) or EPUB3 `<item
+  // properties="cover-image" href="...">`. Href is relative to the OPF directory.
+  const manifest: Record<string, string> = {};
+  for (const im of opf.matchAll(/<item\b([^>]*)\/?>/gi)) {
+    const id = (im[1].match(/\bid=["']([^"']+)["']/i) || [])[1];
+    const href = (im[1].match(/\bhref=["']([^"']+)["']/i) || [])[1];
+    if (id && href) manifest[id] = href;
+  }
+  const coverMetaId = (opf.match(
+    /<meta\b[^>]*\bname=["']cover["'][^>]*\bcontent=["']([^"']+)["']/i,
+  ) ||
+    opf.match(/<meta\b[^>]*\bcontent=["']([^"']+)["'][^>]*\bname=["']cover["']/i) ||
+    [])[1];
+  const coverItemHref = (opf.match(
+    /<item\b[^>]*\bproperties=["'][^"']*cover-image[^"']*["'][^>]*\bhref=["']([^"']+)["']/i,
+  ) ||
+    opf.match(
+      /<item\b[^>]*\bhref=["']([^"']+)["'][^>]*\bproperties=["'][^"']*cover-image[^"']*["']/i,
+    ) ||
+    [])[1];
+  const opfCoverHref = (coverMetaId && manifest[coverMetaId]) || coverItemHref;
+
+  // Which standard matter pages does the spine NAME (LFA/Vanuatu style)? StoryWeaver-style
+  // books name pages 1..N, so none are named — we then synthesize the cover (first spine
+  // page) and the title/credits metadata from the OPF + page prose below.
+  const namedRoles = new Set(spineHrefs.map(classifyEpubSpinePage));
+  const hasNamedCover = namedRoles.has("front-cover");
+  const hasNamedTitle = namedRoles.has("title");
+  const hasNamedCredits = namedRoles.has("credits");
+
+  // Mine contributor/license/publisher prose. The author + title come from the OPF
+  // (authoritative); the illustrator, CC license and publisher are usually only in the
+  // cover page's contributor block or the trailing attribution/copyright pages, so scan
+  // those bodies (kept general — keyed on the words, not on any template's class names).
+  const bodyText = (h?: string): string =>
+    h ? stripTags(h.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? h) : "";
   const copyHref = spineHrefs.find((h) => /copy/i.test(path.basename(h)));
   const copyXhtml = copyHref ? read(resolveZipPath(opfDir, copyHref)) : undefined;
+  const proseToMine = [
+    bodyText(read(resolveZipPath(opfDir, spineHrefs[0]))), // cover/title page
+    bodyText(copyXhtml),
+    ...spineHrefs.slice(-3).map((h) => bodyText(read(resolveZipPath(opfDir, h)))), // attribution
+  ].join("\n");
   const illustrator =
-    copyXhtml && (copyXhtml.match(/illustrations?\s+by\s+([^<.]+)/i) || [])[1]?.trim();
-  const ccUrl =
-    copyXhtml &&
-    (copyXhtml.match(/https?:\/\/creativecommons\.org\/licenses\/[^\s"'<]+/i) || [])[0];
+    (copyXhtml && (copyXhtml.match(/illustrations?\s+by\s+([^<.]+)/i) || [])[1]?.trim()) ||
+    (proseToMine.match(
+      /Illustrat(?:or|ions?|ed)\b\s*(?:by)?\s*:?\s*([^\n.]+?)(?=\s+(?:Translator|Author|Publisher|Editor)\b|[\n.]|$)/i,
+    ) || [])[1]?.trim();
+  const translator = (proseToMine.match(
+    /Translat(?:or|ion|ed)\b\s*(?:by)?\s*:?\s*([^\n.]+?)(?=\s+(?:Illustrator|Author|Publisher|Editor)\b|[\n.]|$)/i,
+  ) || [])[1]?.trim();
+  const ccUrl = (proseToMine.match(/https?:\/\/creativecommons\.org\/licenses\/[^\s"'<]+/i) ||
+    [])[0];
+  const minedPublisher =
+    publisher ||
+    (proseToMine.match(/published\s+(?:on\s+\S+\s+)?by\s+([^.]+?)\s*\./i) || [])[1]?.trim();
   const fundingLine =
-    copyXhtml &&
-    classedParagraphs(copyXhtml, /p1/).find((t) => /made possible|support of|funded/i.test(t));
+    (copyXhtml &&
+      classedParagraphs(copyXhtml, /p1/).find((t) => /made possible|support of|funded/i.test(t))) ||
+    (proseToMine.match(/(?:made possible|supported)\b[^.]*\bby\s+([^.]+?)\s*\./i) || [])[0]?.trim();
 
   // Emit images + tagged markdown.
   fs.mkdirSync(bookFolder, { recursive: true });
@@ -582,6 +638,74 @@ export async function epubToBloomMarkdown(
   const textTag = (field?: string) =>
     `<!-- text lang="${L1}"${field ? ` field="${field}"` : ""} -->`;
 
+  // The title/credits metadata as `field=` blocks. Bloom collects these from the dataDiv
+  // and regenerates its own title-page and credits xMatter from them, so the same
+  // builders serve both a named title/credits spine page and the synthesized cover page.
+  const titleFieldLines = (): string[] => {
+    const lines: string[] = [textTag("bookTitle"), title];
+    if (author) lines.push(textTag("author"), author);
+    if (illustrator) lines.push(textTag("illustrator"), illustrator);
+    if (subjects[0]) lines.push(textTag("topic"), subjects[0]);
+    // The cover credit line Bloom shows on the FRONT COVER (and title page) — Bloom's
+    // `author`/`illustrator` fields only flow to the credits acknowledgments, so without
+    // this the author/illustrator never appear on the cover itself. We label each role
+    // (Author/Illustrator/Translator) the way the source cover does — Bloom renders the
+    // field verbatim, so the bare names alone would lose the roles.
+    const coverCredit = [
+      author && `Author: ${author}`,
+      illustrator && `Illustrator: ${illustrator}`,
+      translator && `Translator: ${translator}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    if (coverCredit) lines.push(textTag("smallCoverCredits"), coverCredit);
+    return lines;
+  };
+  const creditFieldLines = (pub?: string): string[] => {
+    const lines: string[] = [];
+    const year = (date || "").match(/\d{4}/)?.[0] ?? (date || "").trim();
+    if (pub || year) lines.push(textTag("copyright"), `© ${year} ${pub || ""}`.trim());
+    if (isbn) lines.push(textTag("isbn"), isbn);
+    if (ccUrl) lines.push(textTag("licenseUrl"), ccUrl);
+    if (pub) lines.push(textTag("originalPublisher"), pub);
+    if (fundingLine) lines.push(textTag("funding"), fundingLine);
+    return lines;
+  };
+
+  // Emit the EPUB's explicit metadata up front, when the spine doesn't NAME dedicated
+  // matter pages (StoryWeaver: 1.xhtml…N.xhtml). This is the part that applies to EVERY
+  // such EPUB — novels included — so Bloom regenerates a populated cover/title/credits
+  // from the dataDiv instead of showing only the language:
+  //   • the OPF-declared cover image becomes Bloom's coverImage;
+  //   • the OPF title + author (+ mined illustrator/topic) become the title fields;
+  //   • the mined copyright/license/publisher/funding become the credits fields.
+  // A fixed-layout PICTURE book additionally has its cover AS its first spine page, so we
+  // also skip rendering that page as content below (no duplicated cover). A reflowable
+  // novel's first spine page is real content, so it is NOT skipped.
+  const coverIsFirstSpine = fixedLayoutBook && !hasNamedCover;
+  if (!hasNamedCover) {
+    sourcePage = 1;
+    const firstXhtml = read(resolveZipPath(opfDir, spineHrefs[0]));
+    const firstDocDir = (() => {
+      const zp = resolveZipPath(opfDir, spineHrefs[0]);
+      return zp.includes("/") ? zp.slice(0, zp.lastIndexOf("/")) : "";
+    })();
+    const coverSrc =
+      opfCoverHref ??
+      (coverIsFirstSpine && firstXhtml ? pickMainImage(imageSrcs(firstXhtml)) : undefined);
+    if (coverSrc) {
+      // Copy the cover art under its OWN name (NOT the reserved cover.jpg). The reserved
+      // name triggers Stage 4's full-bleed custom-layout cover, which fills the page with
+      // the art and shows no title. Keeping a plain name makes it the book's `coverImage`
+      // instead, so Bloom lays out its standard cover — title + author/illustrator credit
+      // over the art. The EPUB's cover art has no title baked in, so we want Bloom's title.
+      const dest = useImage(opfCoverHref ? opfDir : firstDocDir, coverSrc);
+      if (dest) emitPage('type="front-matter"', [`![cover](${dest})`]);
+    }
+    if (!hasNamedTitle) emitPage('type="front-matter"', titleFieldLines());
+    if (!hasNamedCredits) emitPage('type="back-matter"', creditFieldLines(minedPublisher));
+  }
+
   for (let s = 0; s < spineHrefs.length; s++) {
     sourcePage = s + 1;
     const href = spineHrefs[s];
@@ -592,6 +716,11 @@ export async function epubToBloomMarkdown(
     const imgs = imageSrcs(xhtml);
     const role = classifyEpubSpinePage(href);
 
+    // The first spine page of a fixed-layout picture book IS the cover we emitted above.
+    if (s === 0 && coverIsFirstSpine) {
+      continue;
+    }
+
     if (role === "front-cover") {
       if (imgs[0]) useImage(docDir, imgs[0], FRONT_COVER_IMAGE_FILENAME);
       emitPage('type="front-matter"', [`![cover](${FRONT_COVER_IMAGE_FILENAME})`]);
@@ -600,22 +729,11 @@ export async function epubToBloomMarkdown(
     if (role === "title") {
       // The rendered title picture can't be shown by Bloom; carry the metadata as
       // fields so Bloom regenerates the title/credits xMatter from the dataDiv.
-      const lines: string[] = [textTag("bookTitle"), title];
-      if (author) lines.push(textTag("author"), author);
-      if (illustrator) lines.push(textTag("illustrator"), illustrator);
-      if (subjects[0]) lines.push(textTag("topic"), subjects[0]);
-      emitPage('type="front-matter"', lines);
+      emitPage('type="front-matter"', titleFieldLines());
       continue;
     }
     if (role === "credits") {
-      const lines: string[] = [];
-      if (publisher)
-        lines.push(textTag("copyright"), `© ${(date || "").trim()} ${publisher}`.trim());
-      if (isbn) lines.push(textTag("isbn"), isbn);
-      if (ccUrl) lines.push(textTag("licenseUrl"), ccUrl);
-      if (publisher) lines.push(textTag("originalPublisher"), publisher);
-      if (fundingLine) lines.push(textTag("funding"), fundingLine);
-      emitPage('type="back-matter"', lines);
+      emitPage('type="back-matter"', creditFieldLines(publisher));
       continue;
     }
     if (role === "back-cover") {
@@ -685,16 +803,18 @@ export async function epubToBloomMarkdown(
     emitPage(contentAttrs, lines);
   }
 
-  // A landscape book (landscape illustrations) is told to Bloom — and shown in the GUI
-  // preview — as landscape, via a `<!-- book page-size=… -->` hint that parseMarkdown reads
-  // into the book's pageSize (the same channel the PDF stage uses). Portrait is the default,
-  // so we only emit the hint for landscape.
+  // Every EPUB is told to Bloom — and shown in the GUI preview — as a 16:9 device page,
+  // via a `<!-- book page-size=… -->` hint that parseMarkdown reads into the book's
+  // pageSize (the same channel the PDF stage uses). The orientation (portrait vs.
+  // landscape) follows the book's own artwork; see orientationFromAspects.
   const pageSize = orientationFromAspects(aspects);
-  const bookHint = pageSize === "A5Landscape" ? [`<!-- book page-size="${pageSize}" -->`, ""] : [];
+  // `cover-color="white"`: an EPUB cover is a plain image + title, so Bloom should keep
+  // the regenerated cover white rather than painting its random/branding color around it.
+  const bookHint = [`<!-- book page-size="${pageSize}" cover-color="white" -->`, ""];
 
   logger.info(
-    `EPUB extracted: ${emitted} page(s), language "${L1}", ${copied.size} image(s)` +
-      `${pageSize ? `, ${pageSize}` : ""} — no OCR/LLM needed.`,
+    `EPUB extracted: ${emitted} page(s), language "${L1}", ${copied.size} image(s), ` +
+      `${pageSize} — no OCR/LLM needed.`,
   );
 
   return {

@@ -2331,6 +2331,7 @@ const PAGE_DIMS_MM: Record<string, [number, number]> = {
   A6: [105, 148],
   Letter: [215.9, 279.4],
   Legal: [215.9, 355.6],
+  Device16x9: [100, 177.77777778], // Bloom's 16:9 device page
 };
 const MM_TO_PX = 96 / 25.4;
 
