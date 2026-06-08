@@ -3072,7 +3072,16 @@ function MetadataOverlay({ runId, onClose }: { runId: string; onClose?: () => vo
 // reader's normalization lives. Today it just restores image aspect (books set
 // `img{width:..%;height:..%}` with no object-fit, which stretches a logo); swapping in
 // the full ReadiumCSS sheet later is a one-line change here.
-const EPUB_PREVIEW_CSS = "img{height:auto!important;object-fit:contain!important;}";
+// Injected into the preview iframe after load. The img rule keeps illustrations from
+// being squashed by their authored fixed heights. The line-height rule undoes a
+// StoryWeaver editor-CSS quirk: under its narrow-viewport media queries the matter
+// pages' text is collapsed to a near-zero line-height (e.g. `line-height:0.1em` on a
+// landscape `.content`, `0.3em` on `.content p`), so the credits/attribution pages
+// otherwise render as overlapping, illegible text. Scoped to StoryWeaver's
+// `#selected_page` so it can't affect other EPUBs.
+const EPUB_PREVIEW_CSS =
+  "img{height:auto!important;object-fit:contain!important;}" +
+  "#selected_page .content,#selected_page .content *{line-height:1.4!important;}";
 
 // One source EPUB spine page in the compare grid's left column. A reflowable EPUB page
 // is just a web page, so we load its real document from the resource proxy (its own

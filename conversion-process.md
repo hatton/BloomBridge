@@ -312,11 +312,28 @@ key; `planConversion` maps `.epub` to the `EPUB` artifact whose floor stage is
   reserved `cover.jpg`/`back-cover.jpg` names (§5.3) so Stage 4 makes full-bleed
   covers; OPF metadata (title, author, illustrator, ISBN, CC license, publisher,
   funding, topic) becomes `field=` blocks that flow to the dataDiv.
+- **Canvas pages (fixed-layout picture books).** When a content page absolutely-positions
+  its prose over a full-bleed illustration (StoryWeaver, Library-For-All, …),
+  `extractCanvasLayout` reads each block's box from its inline `position:absolute;
+left/top/width/height:%` and emits a `canvas-text-boxes="x,y,w,h;…"` page comment + the
+  illustration + one text block per box — so Stage 4's `generateCanvasPage` (§9.4)
+  reproduces the exact size and location of the picture and each text. A **wordless** page
+  of such a book (illustration, no prose — a bare "10/13" page number is not prose) is
+  emitted as `full-page-image="true"` → Stage 4 renders a background-only full-bleed page
+  (§9.4). This is gated on a per-book "is any content page positioned?" check, so a generic
+  reflowable EPUB keeps the document-order origami flow below.
+- **Document-order fallback.** A page without positioned prose is walked in document order
+  (`extractContentFlow`): block-level leaves by source position, decorative images skipped,
+  consecutive prose grouped, bold/centering recovered from the EPUB's own CSS — so a
+  text→image→text page lays out as that origami stack, not one picture over dumped text.
 - **Source alignment for the GUI:** every emitted page carries
   `source-pdf-page="<spine index>"`, and `getEpubPageImage`/`getEpubPageCount` serve
   each spine page's illustration so the GUI's paired preview compares EPUB↔Bloom the
   same way it compares PDF↔Bloom (§13). `process`/`preview`/notify operate on the
-  produced book folder, so they work unchanged for EPUB-derived books.
+  produced book folder, so they work unchanged for EPUB-derived books. The paired
+  preview renders spine pages faithfully through a resource proxy; `readEpubEntry`
+  strips `<img>`s whose `src` can't resolve in the archive (website-only loaders / remote
+  CDN logos) so they don't show as broken-image boxes.
 - **Tuning:** the role/text heuristics target the Library-For-All / Vanuatu template;
   other templates convert best-effort (text captured where it's in `<p>`/`div.p`).
   Language is taken verbatim from OPF `dc:language` (a mislabeled OPF carries through).

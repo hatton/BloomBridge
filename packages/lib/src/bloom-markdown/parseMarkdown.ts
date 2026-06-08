@@ -338,6 +338,7 @@ export class BloomMarkdown {
       flattenAsImage: pageAttributes.flattenAsImage,
       flattenScore: pageAttributes.flattenScore,
       flattenLevel: pageAttributes.flattenLevel,
+      fullPageImage: pageAttributes.fullPageImage,
     };
   }
 
@@ -357,6 +358,7 @@ export class BloomMarkdown {
     flattenAsImage?: string;
     flattenScore?: number;
     flattenLevel?: string;
+    fullPageImage?: boolean;
   } {
     const attributes: {
       type?: string;
@@ -371,6 +373,7 @@ export class BloomMarkdown {
       flattenAsImage?: string;
       flattenScore?: number;
       flattenLevel?: string;
+      fullPageImage?: boolean;
     } = {};
 
     // Extract type attribute
@@ -441,6 +444,13 @@ export class BloomMarkdown {
       if (scoreMatch) attributes.flattenScore = Number(scoreMatch[1]);
       const levelMatch = pageComment.match(/flatten-level=["']?([^"'\s>]+)["']?/);
       if (levelMatch) attributes.flattenLevel = levelMatch[1];
+    }
+
+    // Marks a wordless full-bleed illustration page (a picture-book page with art but
+    // no text), rendered as a background-only canvas page (see generatePage).
+    const fullPageImageMatch = pageComment.match(/full-page-image=["']?(true|false)["']?/);
+    if (fullPageImageMatch) {
+      attributes.fullPageImage = fullPageImageMatch[1] === "true";
     }
 
     // Canvas text boxes: one or more "x,y,w,h" groups (separated by ";") marking

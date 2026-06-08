@@ -89,7 +89,12 @@ const imageSrcs = (xhtml: string): string[] =>
  * (`i-1`…), publisher logos, and the small social/credit mark (`sc.`). Everything
  * else is a real illustration.
  */
-const isDecorativeImage = (src: string): boolean => /(^|\/)(i-\d|logo|sc\.)/i.test(src);
+const isDecorativeImage = (src: string): boolean =>
+  /(^|\/)(i-\d|logo|sc\.)/i.test(src) ||
+  // Absolute (`/assets/loader-….svg`) or remote (`https://…cdn…`) srcs are website-only
+  // chrome that never resolves inside the archive — never a real page illustration.
+  /^(https?:)?\/\//i.test(src) ||
+  src.startsWith("/");
 
 /** The page's primary illustration src, skipping decorative icons / logos. */
 const pickMainImage = (imgs: string[]): string | undefined =>
@@ -308,6 +313,84 @@ function extractContentFlow(
   return { blocks, align: align as HorizontalAlign | undefined };
 }
 
+// ---------- canvas (full-bleed art + absolutely-positioned prose) ----------
+
+/** A text block placed over the page, with its box as page fractions (x,y,w,h in 0..1). */
+interface CanvasText {
+  box: { x: number; y: number; w: number; h: number };
+  markdown: string;
+  align?: HorizontalAlign;
+}
+
+const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
+
+/** A page-number-only string like "10" or "10/13" — not real story prose. */
+const isPageNumberish = (markdown: string): boolean =>
+  /^\s*\d+\s*(\/\s*\d+)?\s*$/.test(markdown.replace(/\*\*/g, ""));
+
+/** A CSS-percentage value of one property in an inline `style` string, as a 0..1 fraction. */
+function stylePercent(style: string, prop: string): number | null {
+  const m = style.match(new RegExp(`(?:^|[;{\\s])${prop}\\s*:\\s*([\\d.]+)%`, "i"));
+  return m ? Number(m[1]) / 100 : null;
+}
+
+/** Inner HTML of a positioned block → markdown, one paragraph per `<p>`/`<div>` (bold preserved). */
+function positionedInnerToMarkdown(inner: string, classStyles: Map<string, ClassStyle>): string {
+  const paras = [...inner.matchAll(/<(p|div|h[1-6])\b([^>]*)>([\s\S]*?)<\/\1>/gi)]
+    .map((m) => {
+      const text = stripTags(m[3]);
+      if (!text) return "";
+      const { bold } = resolveElementStyle(m[2], /^h[1-6]$/i.test(m[1]), classStyles);
+      return bold ? `**${text}**` : text;
+    })
+    .filter(Boolean);
+  return paras.length ? paras.join("\n\n") : stripTags(inner);
+}
+
+/**
+ * A picture-book "canvas" page: a full-bleed illustration with prose the source
+ * absolutely-positions over it. We read each block's box straight from its inline
+ * `position:absolute; left/top/width/height:%` — the geometry reflowable picture-book
+ * exporters (StoryWeaver, Library-For-All, …) write — so Bloom can reproduce the exact
+ * size and location of the text instead of stacking it under the picture (origami).
+ * This stays generic: any absolutely-positioned prose over a single illustration
+ * qualifies; there's no per-template class matching. Returns null when the page has no
+ * positioned prose or no illustration, so the caller falls back to the origami flow.
+ */
+function extractCanvasLayout(
+  xhtml: string,
+  classStyles: Map<string, ClassStyle>,
+): { src: string; texts: CanvasText[] } | null {
+  const body = xhtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? xhtml;
+
+  const texts: CanvasText[] = [];
+  for (const m of body.matchAll(/<(p|div)\b([^>]*)>([\s\S]*?)<\/\1>/gi)) {
+    const attrs = m[2];
+    const style = attrs.match(/\bstyle=["']([^"']*)["']/i)?.[1] ?? "";
+    if (!/position\s*:\s*absolute/i.test(style)) continue;
+    const x = stylePercent(style, "left");
+    const y = stylePercent(style, "top");
+    const w = stylePercent(style, "width");
+    const h = stylePercent(style, "height");
+    if (x === null || y === null || w === null || h === null) continue;
+    // A full-bleed layer (whole-page wrapper/overlay), not a text box — skip it.
+    if (x === 0 && y === 0 && w >= 0.99 && h >= 0.99) continue;
+    const markdown = positionedInnerToMarkdown(m[3], classStyles);
+    if (!markdown) continue;
+    const { align } = resolveElementStyle(attrs, false, classStyles);
+    texts.push({
+      box: { x: round4(x), y: round4(y), w: round4(w), h: round4(h) },
+      markdown,
+      align,
+    });
+  }
+  if (texts.length === 0) return null;
+
+  const src = pickMainImage(imageSrcs(xhtml));
+  if (!src) return null;
+  return { src, texts };
+}
+
 // ---------- posix path resolution inside the zip ----------
 
 function resolveZipPath(baseDir: string, rel: string): string {
@@ -474,6 +557,17 @@ export async function epubToBloomMarkdown(
   ];
   const out: string[] = [];
 
+  // Is this a fixed-layout picture book (text absolutely-positioned over full-bleed
+  // art)? If ANY content page is, then a content page that has only an illustration is
+  // a *wordless* page of the same book — emit it as a full-bleed image too, rather than
+  // a margin-boxed origami image. (A generic reflowable EPUB has no such pages, so it
+  // keeps the document-order origami flow.)
+  const fixedLayoutBook = spineHrefs.some((href) => {
+    if (classifyEpubSpinePage(href) !== "content") return false;
+    const x = read(resolveZipPath(opfDir, href));
+    return x ? extractCanvasLayout(x, classStyles) !== null : false;
+  });
+
   let emitted = 0;
   let sourcePage = 0; // 1-based spine index of the page being processed
   const emitPage = (attrs: string, lines: string[]) => {
@@ -531,10 +625,52 @@ export async function epubToBloomMarkdown(
     }
 
     // ---- content pages (story + discussion/about/marketing) ----
-    // Walk the page in document order so pictures and prose stay interleaved exactly
-    // as authored; origami then lays them out as a faithful top-to-bottom stack
+    // A page that absolutely-positions its prose over a full-bleed illustration (the
+    // common picture-book layout) becomes a Bloom *canvas* page: the illustration fills
+    // the page and each text block keeps its source size & location. We emit the boxes
+    // as `canvas-text-boxes`; Stage 4's generateCanvasPage turns them into positioned
+    // canvas elements. Pages without positioned prose fall through to origami below.
+    const canvas = extractCanvasLayout(xhtml, classStyles);
+    if (canvas) {
+      const dest = useImage(docDir, canvas.src);
+      if (dest) {
+        const lines: string[] = [`![${path.basename(dest, path.extname(dest))}](${dest})`];
+        for (const t of canvas.texts) lines.push(textTag(), t.markdown);
+        const boxesAttr = canvas.texts
+          .map((t) => `${t.box.x},${t.box.y},${t.box.w},${t.box.h}`)
+          .join(";");
+        // The page is centered when every box's prose is centered (the picture-book norm).
+        const aligns = new Set(canvas.texts.map((t) => t.align ?? "left"));
+        const pageAlign =
+          aligns.size === 1 && ![...aligns][0].includes("left") ? [...aligns][0] : undefined;
+        const alignAttr = pageAlign ? ` horizontal-align="${pageAlign}"` : "";
+        emitPage(`type="content"${alignAttr} canvas-text-boxes="${boxesAttr}"`, lines);
+        continue;
+      }
+    }
+
+    // Otherwise walk the page in document order so pictures and prose stay interleaved
+    // exactly as authored; origami then lays them out as a faithful top-to-bottom stack
     // (e.g. text, picture, text) instead of one picture on top of all the text.
     const { blocks, align } = extractContentFlow(xhtml, classStyles);
+
+    // A WORDLESS page of a fixed-layout picture book — a full-bleed illustration with no
+    // real prose (only the source page number, e.g. "10/13") — is rendered full-bleed
+    // like its lettered siblings, not as a margin-boxed origami image. We require "no
+    // prose" (not just "no positioned prose") so attribution/credits pages, which carry
+    // flow text + logos, still go to origami below and keep their text.
+    const hasProse = blocks.some((b) => b.type === "text" && !isPageNumberish(b.markdown));
+    if (fixedLayoutBook && !hasProse) {
+      const src = pickMainImage(imgs);
+      const dest = src ? useImage(docDir, src) : null;
+      if (dest) {
+        emitPage('type="content" full-page-image="true"', [
+          `![${path.basename(dest, path.extname(dest))}](${dest})`,
+        ]);
+        continue;
+      }
+    }
+
     const lines: string[] = [];
     for (const block of blocks) {
       if (block.type === "image") {
@@ -641,21 +777,57 @@ const RESOURCE_CONTENT_TYPES: Record<string, string> = {
 };
 
 /**
+ * Drop every `<img>` whose `src` can't be resolved to a real entry in this EPUB's
+ * archive — the faithful-preview iframe would otherwise render them as broken-image
+ * placeholder boxes laid over the page. Real-world EPUBs (e.g. StoryWeaver exports)
+ * carry website-only UI cruft that 404s through our local resource proxy: a hidden
+ * dictionary "loader" `<img src="/assets/loader-….svg">` on every content page, and
+ * remote CDN `<img src="https://…">` donor logos on the attribution pages. The page's
+ * real illustrations use ordinary relative srcs (resolved against the document) and
+ * survive untouched. Purely cosmetic: it removes only images that could not have
+ * displayed anyway.
+ */
+function stripUnresolvableImages(html: string, zip: Map<string, Buffer>, docDir: string): string {
+  return html.replace(/<img\b[^>]*>/gi, (tag) => {
+    // Match the real `src` attribute only — require whitespace before it so we don't
+    // pick up a `data-*-src` (e.g. StoryWeaver's `data-size1-src="https://…cdn…"`,
+    // which sits before the working relative `src` on the same multi-line <img>).
+    const src = tag.match(/\ssrc\s*=\s*["']([^"']*)["']/i)?.[1];
+    if (!src) return ""; // no usable src → nothing the browser can show
+    if (/^data:/i.test(src)) return tag; // inline image → always renders, keep
+    if (/^(https?:)?\/\//i.test(src)) return ""; // remote / protocol-relative → never proxied
+    // Relative to the document, or root-absolute (e.g. "/assets/…") tried as a zip path.
+    const zpath = src.startsWith("/") ? src.replace(/^\/+/, "") : resolveZipPath(docDir, src);
+    return zip.has(zpath) ? tag : "";
+  });
+}
+
+/**
  * Read one entry out of the EPUB archive by its internal (zip-relative) path, as raw
  * bytes + content type. This backs the GUI's resource proxy: the iframe loads a spine
  * document by URL and the browser fetches its relative `../Images`/`../Styles`/`../Fonts`
  * through the same proxy, so the page renders with its own fonts and layout intact.
- * Returns null if the entry is absent.
+ * Spine documents (HTML) are first passed through `stripUnresolvableImages` so the
+ * preview never shows broken-image boxes for resources that live only on the publisher's
+ * website. Returns null if the entry is absent.
  */
 export function readEpubEntry(
   epubPath: string,
   internalZipPath: string,
 ): { buffer: Buffer; contentType: string } | null {
-  const buffer = readZip(epubPath).get(internalZipPath);
+  const zip = readZip(epubPath);
+  const buffer = zip.get(internalZipPath);
   if (!buffer) return null;
   const contentType =
     RESOURCE_CONTENT_TYPES[path.extname(internalZipPath).toLowerCase()] ||
     "application/octet-stream";
+  if (contentType.startsWith("text/html")) {
+    const docDir = internalZipPath.includes("/")
+      ? internalZipPath.slice(0, internalZipPath.lastIndexOf("/"))
+      : "";
+    const cleaned = stripUnresolvableImages(buffer.toString("utf8"), zip, docDir);
+    return { buffer: Buffer.from(cleaned, "utf8"), contentType };
+  }
   return { buffer, contentType };
 }
 

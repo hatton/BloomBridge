@@ -519,39 +519,22 @@ export class HtmlGenerator {
     return page.sourcePdfPage !== undefined ? ` data-source-pdf-page="${page.sourcePdfPage}"` : "";
   }
 
-  private static generateFullPageImagePage(page: Page, metadata: FrontMatterMetadata): string {
-    const src = page.flattenAsImage!;
-    const pageSize = metadata.pageSize || "A5Portrait";
-    // Size the canvas to the marginBox (canvasW × canvasH), NOT the full page.
-    // A content "numberedPage" lays its bloom-canvas out inside the marginBox; if
-    // we declare a full-page-sized canvas with a different aspect ratio, Bloom
-    // scales it down to fit and letterboxes it — leaving large top/bottom margins.
-    // Sizing to the marginBox (matching Bloom's own master books) lets the
-    // object-fit:cover image fill the printable area with no letterbox. (Full-page
-    // sizing is correct only for bloom-customLayout COVER pages, which bleed.)
+  /**
+   * A content page that is a single full-bleed background image with no editable text:
+   * the page margins and page number are dropped and the `object-fit:cover` image fills
+   * the printable area. Used both for "too-complex" flattened pages (with a conversion
+   * note) and for wordless picture-book pages (no note). `noteAttr` is an optional
+   * pre-built `data-conversion-note='…'` attribute string.
+   */
+  private static fullBleedImagePageHtml(
+    src: string,
+    pageSize: string,
+    page: Page,
+    noteAttr: string,
+  ): string {
     const { canvasW, canvasH } = this.pagePx(pageSize);
     const pageId = randomUUID();
     const bgBubble = this.COVER_DATA_BUBBLE;
-
-    const note = {
-      severity: "note",
-      code: "complex-page-flattened",
-      message:
-        `This page exceeded the too-complex threshold (score ${page.flattenScore ?? "?"}, ` +
-        `level ${page.flattenLevel ?? "?"}), so it was imported as a full-page image instead ` +
-        `of editable text. To keep it as text, re-import with --complex-becomes-image off ` +
-        `(or a higher level).`,
-      score: page.flattenScore,
-      level: page.flattenLevel,
-    };
-    // Single-quote the attribute so the JSON value can use normal double quotes.
-    const noteAttr = ` data-conversion-note='${JSON.stringify(note)}'`;
-
-    // A flattened page is a single full-bleed image with no editable text, so a
-    // page number floating on top of the art is just visual noise (and often lands
-    // on the picture). Suppress it with Bloom's `--pageNumber-show` appearance
-    // variable. This is a content page, never xMatter, so front/back-matter page
-    // numbering is unaffected.
     return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang="" style="--pageNumber-show: none;"${noteAttr}${this.sourcePageAttr(page)}>
       <div class="pageLabel" data-i18n="TemplateBooks.PageLabel.Canvas">Canvas</div>
       <div class="pageDescription"></div>
@@ -567,6 +550,28 @@ export class HtmlGenerator {
         </div>
       </div>
     </div>`;
+  }
+
+  private static generateFullPageImagePage(page: Page, metadata: FrontMatterMetadata): string {
+    const note = {
+      severity: "note",
+      code: "complex-page-flattened",
+      message:
+        `This page exceeded the too-complex threshold (score ${page.flattenScore ?? "?"}, ` +
+        `level ${page.flattenLevel ?? "?"}), so it was imported as a full-page image instead ` +
+        `of editable text. To keep it as text, re-import with --complex-becomes-image off ` +
+        `(or a higher level).`,
+      score: page.flattenScore,
+      level: page.flattenLevel,
+    };
+    // Single-quote the attribute so the JSON value can use normal double quotes.
+    const noteAttr = ` data-conversion-note='${JSON.stringify(note)}'`;
+    return this.fullBleedImagePageHtml(
+      page.flattenAsImage!,
+      metadata.pageSize || "A5Portrait",
+      page,
+      noteAttr,
+    );
   }
 
   /**
@@ -669,7 +674,7 @@ export class HtmlGenerator {
           <div class="bloom-canvas bloom-has-canvas-element" data-tool-id="canvas" data-imgsizebasedon="${canvasW},${canvasH}" title="">
             <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${canvasW}px; height: ${canvasH}px; top: 0px; left: 0px;" data-bubble="${bgBubble}">
               <div class="bloom-imageContainer" data-tool-id="canvas" style="direction: ltr;">
-                <img src="${escapeHtml(imageEl.src)}" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
+                <img src="${escapeHtml(imageEl.src)}" class="bloom-imageObjectFit-cover" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
               </div>
             </div>
 ${textElementsHtml}
@@ -774,6 +779,16 @@ ${textElementsHtml}
         metadata.pageSize || "A5Portrait",
         page.sourcePdfPage,
       );
+    }
+
+    // A wordless picture-book page: a single full-bleed illustration, no text. Render
+    // it as a background-only canvas page (full bleed, no page number) — the EPUB
+    // front-end sets this for fixed-layout books so wordless pages match their lettered
+    // siblings instead of becoming a margin-boxed origami image.
+    if (page.fullPageImage) {
+      const img = page.elements.find((e): e is ImageElement => e.type === "image");
+      if (img)
+        return this.fullBleedImagePageHtml(img.src, metadata.pageSize || "A5Portrait", page, "");
     }
 
     // A canvas page: full-page background image with text floating on top, at the

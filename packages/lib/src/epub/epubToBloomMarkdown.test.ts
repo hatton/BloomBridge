@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { describe, it, expect } from "vite-plus/test";
 import * as fs from "fs";
 import * as os from "os";
@@ -195,10 +196,60 @@ describe("epubToBloomMarkdown", () => {
     expect(doc).not.toBeNull();
     expect(doc!.contentType).toBe("text/html; charset=utf-8");
     expect(doc!.buffer.toString("utf8")).toContain("Once upon a time.");
+    // The real illustration (a relative src that resolves in the zip) is preserved.
+    expect(doc!.buffer.toString("utf8")).toContain("p1.jpg");
     // An image entry keeps its image content type.
     expect(readEpubEntry(epubPath, "OEBPS/Images/p1.jpg")!.contentType).toBe("image/jpeg");
     // A missing entry yields null.
     expect(readEpubEntry(epubPath, "OEBPS/nope.css")).toBeNull();
+  });
+
+  it("strips unresolvable <img>s from served spine docs (no broken-image boxes)", async () => {
+    // A StoryWeaver-style page: a real relative illustration, a hidden dictionary loader
+    // with an absolute /assets path, and a remote CDN logo. Only the first can render
+    // through the local proxy; the other two would otherwise show as broken-image boxes.
+    // The illustration is a multi-line <img> whose `data-size1-src` (a remote CDN URL,
+    // used only by the publisher's lazy-load JS) precedes the real relative `src` — we
+    // must key off the real src, not the `data-*-src`, or we'd drop the illustration.
+    const page = `<html><body><section>
+<div class="container"><img class="responsive_illustration"
+  data-size1-src="https://static.example.org/crops/size1/abc.jpg"
+  src="../Images/p1.jpg"
+/></div>
+<div class="loader"><img src="/assets/loader-deadbeef.svg"/></div>
+<div class="logo"><img alt="donor" data-src="https://static.example.org/donors/logo.png" src="https://static.example.org/donors/logo.png"/></div>
+</section></body></html>`;
+    const opf = `<?xml version="1.0"?>
+<package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:language>en</dc:language></metadata>
+<manifest>
+<item id="p1" href="Text/p1.xhtml" media-type="application/xhtml+xml"/>
+<item id="i1" href="Images/p1.jpg" media-type="image/jpeg"/>
+</manifest>
+<spine><itemref idref="p1"/></spine></package>`;
+    const bytes = zip([
+      file("mimetype", "application/epub+zip"),
+      file(
+        "META-INF/container.xml",
+        `<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
+      ),
+      file("OEBPS/content.opf", opf),
+      file("OEBPS/Text/p1.xhtml", page),
+      { name: "OEBPS/Images/p1.jpg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
+    ]);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "epub-imgstrip-"));
+    const epubPath = path.join(dir, "in.epub");
+    fs.writeFileSync(epubPath, bytes);
+
+    const html = readEpubEntry(epubPath, "OEBPS/Text/p1.xhtml")!.buffer.toString("utf8");
+    // Real illustration kept — keyed off its working relative src, not the data-*-src.
+    expect(html).toContain('src="../Images/p1.jpg"');
+    expect(html).toContain("responsive_illustration");
+    // The dictionary loader (absolute /assets path) and the donor logo (remote CDN src)
+    // are dropped, leaving their wrapper divs empty so no broken-image box can render.
+    expect(html).not.toContain("/assets/loader-deadbeef.svg");
+    expect(html).not.toContain('<img alt="donor"');
+    expect(html).toMatch(/<div class="loader"><\/div>/);
+    expect(html).toMatch(/<div class="logo"><\/div>/);
   });
 
   // A minimal but real JPEG header (SOF0) declaring w×h, so intrinsicSize can read it.
@@ -272,6 +323,87 @@ describe("epubToBloomMarkdown", () => {
   it("emits no page-size hint for portrait illustrations (portrait is the default)", async () => {
     const md = await convert(epubWithImageSize(600, 900));
     expect(md).not.toContain("page-size=");
+  });
+
+  // A picture-book page that absolutely-positions prose over a full-bleed illustration.
+  function epubWithPositionedText(): Uint8Array {
+    const opf = `<?xml version="1.0"?>
+<package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:language>or</dc:language></metadata>
+<manifest>
+<item id="p1" href="Text/p1.xhtml" media-type="application/xhtml+xml"/>
+<item id="p2" href="Text/p2.xhtml" media-type="application/xhtml+xml"/>
+<item id="p3" href="Text/p3.xhtml" media-type="application/xhtml+xml"/>
+<item id="i1" href="Images/p1.jpg" media-type="image/jpeg"/>
+<item id="i2" href="Images/p2.jpg" media-type="image/jpeg"/>
+<item id="i3" href="Images/p3.jpg" media-type="image/jpeg"/>
+</manifest>
+<spine><itemref idref="p1"/><itemref idref="p2"/><itemref idref="p3"/></spine></package>`;
+    // p1: one positioned caption over a full-bleed illustration (a wrapper layer at
+    // 0/0/100%/100% must be ignored). p2: two positioned blocks (multi-box canvas).
+    const p1 = `<html><body><div class="page">
+<div class="illustration"><img class="responsive_illustration"
+  data-size1-src="https://cdn.example.org/big.jpg" src="../Images/p1.jpg"/></div>
+<svg style="width:100%; height:100%; position:absolute; top:0; left:0;"></svg>
+<div class="content" style="position: absolute; width: 53.3%; height: 52.43%; top: 25.83%; left: 38.83%;">
+<p>Hello there.</p><p>Second line.</p></div>
+</div></body></html>`;
+    const p2 = `<html><body><div class="page">
+<div class="illustration"><img src="../Images/p2.jpg"/></div>
+<div class="content" style="position:absolute; width:30%; height:20%; top:10%; left:5%;"><p>Top box.</p></div>
+<div class="content" style="position:absolute; width:25%; height:15%; top:80%; left:60%;"><p>Bottom box.</p></div>
+</div></body></html>`;
+    // p3: a WORDLESS page — full-bleed illustration, no positioned prose, only a
+    // (non-story) page-number div like StoryWeaver's "3/3".
+    const p3 = `<html><body><div class="page">
+<div class="illustration"><img src="../Images/p3.jpg"/></div>
+<div class="page_number">3/3</div>
+</div></body></html>`;
+    return zip([
+      file("mimetype", "application/epub+zip"),
+      file(
+        "META-INF/container.xml",
+        `<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
+      ),
+      file("OEBPS/content.opf", opf),
+      file("OEBPS/Text/p1.xhtml", p1),
+      file("OEBPS/Text/p2.xhtml", p2),
+      file("OEBPS/Text/p3.xhtml", p3),
+      { name: "OEBPS/Images/p1.jpg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
+      { name: "OEBPS/Images/p2.jpg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
+      { name: "OEBPS/Images/p3.jpg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
+    ]);
+  }
+
+  it("emits canvas-text-boxes for full-bleed art with absolutely-positioned prose", async () => {
+    const md = await convert(epubWithPositionedText());
+
+    // Page 1: a single box at the source fractions (left,top,width,height ÷ 100),
+    // the illustration, and the caption's two paragraphs kept as one block.
+    expect(md).toContain('canvas-text-boxes="0.3883,0.2583,0.533,0.5243"');
+    expect(md).toContain("![p1](p1.jpg)");
+    expect(md).toContain("Hello there.\n\nSecond line.");
+    // The full-bleed wrapper layer (0,0,100%,100%) is NOT treated as a text box.
+    expect(md).not.toContain("0,0,1,1");
+
+    // Page 2: two boxes (multi-text canvas), in document order, each its own block.
+    expect(md).toContain('canvas-text-boxes="0.05,0.1,0.3,0.2;0.6,0.8,0.25,0.15"');
+    expect(md).toContain("Top box.");
+    expect(md).toContain("Bottom box.");
+
+    // Page 3: wordless → a full-bleed image page (no canvas boxes), and the page
+    // number is dropped, not emitted as a stray text block.
+    expect(md).toContain('full-page-image="true"');
+    expect(md).toContain("![p3](p3.jpg)");
+    expect(md).not.toContain("3/3");
+  });
+
+  it("preserves full-page-image through the parse → generate round-trip Stage 3 performs", async () => {
+    const { getMarkdownFromBook } = await import("../bloom-markdown/generateMarkdown");
+    const { BloomMarkdown } = await import("../bloom-markdown/parseMarkdown");
+    const md = await convert(epubWithPositionedText());
+    const book = new BloomMarkdown().parseMarkdown(md);
+    expect(book.pages.some((p) => p.fullPageImage)).toBe(true);
+    expect(getMarkdownFromBook(book)).toContain('full-page-image="true"');
   });
 
   it("uses the OPF language for l1", async () => {

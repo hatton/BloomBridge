@@ -119,6 +119,11 @@ export interface Page {
   flattenAsImage?: string;
   flattenScore?: number;
   flattenLevel?: string;
+  // When set, this content page is a single full-bleed illustration with no text — a
+  // wordless picture-book page. Rendered as a background-only canvas page (no margins,
+  // no page number), the same full-bleed treatment as a flattened page but without the
+  // "too-complex" conversion note. Set by the EPUB front-end for fixed-layout books.
+  fullPageImage?: boolean;
 }
 
 export interface Book {
