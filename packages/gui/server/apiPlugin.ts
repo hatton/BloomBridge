@@ -815,10 +815,22 @@ export function conversionApiPlugin(): Plugin {
                   outsideBackCover: "back-cover",
                 };
                 const byRole = (role: string) => roles.find((r) => r.role === role)?.index ?? null;
+                // The EPUB's front cover is its first spine page. LFA/Vanuatu books NAME it
+                // (`cover.*` → role front-cover), so byRole finds it; StoryWeaver books name
+                // their pages 1..N, so NO page is classified front-cover even though spine page
+                // 1 IS the cover. When the role is missing, fall back to spine page 1 — unless a
+                // Bloom CONTENT page already claims page 1 as its source (a reflowable novel's
+                // first spine page is real content, not a cover, and is paired by source-page
+                // instead). This keeps the two covers paired side by side even though the EPUB
+                // cover art and Bloom's regenerated cover look very different.
+                const bloomClaimsPage1 = bloom.some((b) => b.src === 1);
+                const frontCoverEpubPage =
+                  byRole("front-cover") ?? (roles.length > 0 && !bloomClaimsPage1 ? 1 : null);
                 const consumed = new Set<number>();
                 for (const b of bloom) {
                   let epubPage: number | null = null;
                   if (b.src !== undefined) epubPage = b.src;
+                  else if (b.xmatter === "frontCover") epubPage = frontCoverEpubPage;
                   else if (b.xmatter && XMATTER_TO_ROLE[b.xmatter])
                     epubPage = byRole(XMATTER_TO_ROLE[b.xmatter]);
                   if (epubPage !== null) consumed.add(epubPage);
