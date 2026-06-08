@@ -1,0 +1,86 @@
+{
+  "pageSize": "A5Landscape",
+  "pageCount": 16,
+  "pages": [
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 1,
+      "images": 3
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 1,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 1,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 1,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 1,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 1,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 1,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 1,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 1,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 0,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 2,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 2,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 2,
+      "images": 1
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 2,
+      "images": 2
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 2,
+      "images": 2
+    },
+    {
+      "classes": "A5Landscape customPage numberedPage",
+      "texts": 2,
+      "images": 1
+    }
+  ]
+}

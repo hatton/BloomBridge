@@ -1,0 +1,76 @@
+{
+  "pageSize": "A5Portrait",
+  "pageCount": 14,
+  "pages": [
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 0,
+      "images": 1
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    },
+    {
+      "classes": "A5Portrait customPage numberedPage",
+      "texts": 1,
+      "images": 0
+    }
+  ]
+}
