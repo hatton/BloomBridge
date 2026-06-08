@@ -404,9 +404,10 @@ export class HtmlGenerator {
       logger.info(`Generated licenseUrl from license: ${licenseValue} -> ${licenseUrl}`);
     } else if (!licenseField && licenseUrlField) {
       // We have a licenseUrl but no license, so we need to generate the license
+      // TOKEN from the URL (getLicenseFromUrl), not the other way round.
       const firstLang = Object.keys(licenseUrlField["licenseUrl"])[0];
       const licenseUrlValue = licenseUrlField["licenseUrl"][firstLang];
-      const licenseValue = getUrlFromLicense(licenseUrlValue);
+      const licenseValue = getLicenseFromUrl(licenseUrlValue);
       fields.push({
         license: { [firstLang]: licenseValue },
       });
@@ -610,7 +611,9 @@ export class HtmlGenerator {
         e.field !== "pageNumber" &&
         Object.values(e.content).some((v) => v && v.trim() !== ""),
     );
-    if (!imageEl || textEls.length === 0) return null;
+    // A canvas needs floating text; the background image is OPTIONAL. A grid/table page
+    // (e.g. EPUB discussion questions) has positioned text over a blank page and no image.
+    if (textEls.length === 0) return null;
 
     const pageSize = metadata.pageSize || "A5Portrait";
     const { pageW, pageH, canvasW } = this.pagePx(pageSize);
@@ -683,18 +686,24 @@ export class HtmlGenerator {
       ? ` style="--page-background-color: ${page.backgroundColor}"`
       : "";
 
+    // The full-bleed background image — omitted entirely for a background-less (grid/table)
+    // canvas, whose positioned text floats over the blank page.
+    const backgroundHtml = imageEl
+      ? `            <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${canvasW}px; height: ${canvasH}px; top: 0px; left: 0px;" data-bubble="${bgBubble}">
+              <div class="bloom-imageContainer" data-tool-id="canvas" style="direction: ltr;">
+                <img src="${escapeHtml(imageEl.src)}" class="${this.fullBleedImageClass(pageSize)}" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
+              </div>
+            </div>
+`
+      : "";
+
     return `    <div class="bloom-page numberedPage customPage bloom-combinedPage ${pageSize} bloom-monolingual" data-page="" id="${pageId}" data-tool-id="canvas" data-pagelineage="3d5adbdc-d42e-4b32-8032-04910cea0036" lang=""${sourceHashAttr}${pageStyleAttr}${this.sourcePageAttr(page)}>
       <div class="pageLabel" data-i18n="TemplateBooks.PageLabel.Canvas">Canvas</div>
       <div class="pageDescription"></div>
       <div class="marginBox">
         <div class="split-pane-component-inner">
           <div class="bloom-canvas bloom-has-canvas-element" data-tool-id="canvas" data-imgsizebasedon="${canvasW},${canvasH}" title="">
-            <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${canvasW}px; height: ${canvasH}px; top: 0px; left: 0px;" data-bubble="${bgBubble}">
-              <div class="bloom-imageContainer" data-tool-id="canvas" style="direction: ltr;">
-                <img src="${escapeHtml(imageEl.src)}" class="${this.fullBleedImageClass(pageSize)}" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
-              </div>
-            </div>
-${textElementsHtml}
+${backgroundHtml}${textElementsHtml}
           </div>
         </div>
       </div>

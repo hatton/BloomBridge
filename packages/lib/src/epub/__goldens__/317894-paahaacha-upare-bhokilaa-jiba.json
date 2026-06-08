@@ -1,6 +1,6 @@
 {
   "pageSize": "Device16x9Landscape",
-  "pageCount": 16,
+  "pageCount": 13,
   "pages": [
     {
       "classes": "Device16x9Landscape customPage numberedPage",
@@ -61,21 +61,6 @@
       "classes": "Device16x9Landscape customPage numberedPage",
       "texts": 2,
       "images": 1
-    },
-    {
-      "classes": "Device16x9Landscape customPage numberedPage",
-      "texts": 2,
-      "images": 1
-    },
-    {
-      "classes": "Device16x9Landscape customPage numberedPage",
-      "texts": 2,
-      "images": 2
-    },
-    {
-      "classes": "Device16x9Landscape customPage numberedPage",
-      "texts": 2,
-      "images": 2
     },
     {
       "classes": "Device16x9Landscape customPage numberedPage",

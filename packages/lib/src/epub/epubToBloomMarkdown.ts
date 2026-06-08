@@ -25,6 +25,8 @@ import { logger } from "../logger";
 import { readZip } from "./zipReader";
 import { FRONT_COVER_IMAGE_FILENAME, BACK_COVER_IMAGE_FILENAME } from "../types";
 import type { HorizontalAlign } from "../types";
+import { extractCcLicenseUrl } from "../4-generate-html/licenses";
+import { isStoryWeaverEpub, analyzeStoryWeaver, type StoryWeaverInfo } from "./storyweaver";
 
 // ---------- tiny XHTML/XML helpers (the markup is regular; regex is enough) ----------
 
@@ -391,6 +393,100 @@ function extractCanvasLayout(
   return { src, texts };
 }
 
+/**
+ * A "grid" content page — discussion questions, vocabulary lists, and the like — lays its
+ * prose out in a `<table>` (typically an icon column beside a text column) rather than the
+ * normal one-illustration-plus-caption flow. The origami flow would stack every cell into
+ * a single text block, losing the row structure (see the discussion-questions page). So
+ * when a content page's prose lives in a table, we lay it out as a TEXT-ONLY Bloom canvas:
+ * a leading heading box at the top, then one positioned box per remaining text block,
+ * stacked evenly down the page. The source table carries no pixel geometry, so the boxes
+ * are SYNTHESIZED (even vertical bands) — a faithful-enough starting point an editor can
+ * nudge in Bloom, and far closer to the source than a single merged paragraph. Stays
+ * general: it keys on the presence of a text-bearing `<table>`, not any template's class
+ * names. Returns null when there's no such table (caller falls back to the origami flow).
+ */
+function extractTableCanvas(
+  xhtml: string,
+  classStyles: Map<string, ClassStyle>,
+): { texts: CanvasText[] } | null {
+  const body = xhtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? xhtml;
+  const table = body.match(/<table\b[\s\S]*?<\/table>/i)?.[0];
+  if (!table) return null;
+  // A table whose cells are mostly hyperlinks is a navigation/contents/index table (e.g. a
+  // Gutenberg novel's table of contents), not a discussion grid — leave it to origami.
+  const cellCount = (table.match(/<td\b/gi) || []).length;
+  const linkCount = (table.match(/<a\b[^>]*\bhref=/gi) || []).length;
+  if (cellCount > 0 && linkCount * 2 >= cellCount) return null;
+
+  // Individual text blocks in document order (NOT grouped): the heading paragraph(s)
+  // before the table, then each row's text cell. We reuse extractContentFlow's
+  // candidate-walk with its nesting guard, but keep each prose block separate (so each
+  // becomes its own positioned box) and drop the interleaved images (the row icons).
+  interface Candidate {
+    start: number;
+    end: number;
+    attrs: string;
+    inner: string;
+    heading: boolean;
+  }
+  const candidates: Candidate[] = [];
+  for (const m of body.matchAll(/<(p|div|td)\b([^>]*)>([\s\S]*?)<\/\1>/gi))
+    candidates.push({
+      start: m.index!,
+      end: m.index! + m[0].length,
+      attrs: m[2],
+      inner: m[3],
+      heading: false,
+    });
+  for (const m of body.matchAll(/<(h[1-6])\b([^>]*)>([\s\S]*?)<\/\1>/gi))
+    candidates.push({
+      start: m.index!,
+      end: m.index! + m[0].length,
+      attrs: m[2],
+      inner: m[3],
+      heading: true,
+    });
+  candidates.sort((a, b) => a.start - b.start || b.end - a.end);
+
+  const blocks: { markdown: string; bold: boolean; align?: HorizontalAlign }[] = [];
+  let consumedTo = -1;
+  for (const c of candidates) {
+    if (c.start < consumedTo) continue; // nested inside an already-emitted container
+    consumedTo = Math.max(consumedTo, c.end);
+    const text = stripTags(c.inner);
+    if (!text || isPageNumberish(text)) continue; // image-only cell / stray page number
+    const { bold, align } = resolveElementStyle(c.attrs, c.heading, classStyles);
+    blocks.push({ markdown: bold ? `**${text}**` : text, bold: !!bold, align });
+  }
+  // A canvas only pays off for a real, SHORT grid: a one/two-line table is better left to
+  // origami (avoids canvas-ifying an incidental table), and a long table is tabular data
+  // (vocabulary lists, schedules) that overflows evenly-spaced boxes — origami reads better.
+  if (blocks.length < 3 || blocks.length > 12) return null;
+
+  // Synthesize positions: a leading bold heading gets the top band; the remaining blocks
+  // share the rest of the page in even vertical bands, slightly inset and gapped.
+  const texts: CanvasText[] = [];
+  const headingCount = blocks[0].bold ? 1 : 0;
+  if (headingCount)
+    texts.push({
+      box: { x: 0.05, y: 0.03, w: 0.9, h: 0.13 },
+      markdown: blocks[0].markdown,
+      align: blocks[0].align ?? "center",
+    });
+  const rest = blocks.slice(headingCount);
+  const top = headingCount ? 0.19 : 0.04;
+  const band = (0.98 - top) / rest.length;
+  rest.forEach((b, i) => {
+    texts.push({
+      box: { x: 0.07, y: round4(top + i * band), w: 0.86, h: round4(band * 0.88) },
+      markdown: b.markdown,
+      align: b.align,
+    });
+  });
+  return { texts };
+}
+
 // ---------- posix path resolution inside the zip ----------
 
 function resolveZipPath(baseDir: string, rel: string): string {
@@ -504,15 +600,18 @@ export async function epubToBloomMarkdown(
   }
   const classStyles = parseClassStyles(combinedCss);
 
-  // OPF metadata.
-  const title = tagText(opf, "dc:title") || path.parse(epubPath).name;
-  const author = tagText(opf, "dc:creator");
+  // OPF metadata. Title/author/ISBN are `let` because a stale OPF (an LFA template whose
+  // metadata still describes the book it was copied from) is corrected from the book's own
+  // pages further below — see the "OPF appears stale" recovery.
+  const opfTitle = tagText(opf, "dc:title");
+  let title = opfTitle || path.parse(epubPath).name;
+  let author = tagText(opf, "dc:creator");
   const publisher = tagText(opf, "dc:publisher");
   const date = tagText(opf, "dc:date");
   const language = (tagText(opf, "dc:language") || "en").trim();
   // A real ISBN is 10 or 13 digits (X check-digit allowed); skip URL/URN identifiers
   // (e.g. StoryWeaver's `/stories/317894-…`, whose digits would otherwise look ISBN-ish).
-  const isbn = allTagText(opf, "dc:identifier").find((s) => {
+  let isbn = allTagText(opf, "dc:identifier").find((s) => {
     if (/[/:]/.test(s)) return false;
     const digits = s.replace(/[^0-9Xx]/g, "");
     return digits.length === 10 || digits.length === 13;
@@ -550,10 +649,23 @@ export async function epubToBloomMarkdown(
   const hasNamedTitle = namedRoles.has("title");
   const hasNamedCredits = namedRoles.has("credits");
 
+  // Pratham Books' StoryWeaver is a major source and has a very consistent structure, so
+  // we parse it precisely: contributors from the cover, copyright/license/publisher/donor
+  // from the trailing attribution pages, and the blurb from the back cover (see
+  // storyweaver.ts). Crucially this also tells us WHICH spine pages are end matter, so we
+  // skip them as content below — Bloom's regenerated xMatter conveys that info instead of
+  // the duplicated StoryWeaver pages. Other EPUBs fall back to the generic mining below.
+  const spineBodies = spineHrefs.map((h) => read(resolveZipPath(opfDir, h)));
+  const sw: StoryWeaverInfo | null = isStoryWeaverEpub(opf, spineBodies)
+    ? analyzeStoryWeaver(spineBodies)
+    : null;
+  if (sw) logger.info(`StoryWeaver EPUB detected — ${sw.matterPages.size} end-matter page(s).`);
+
   // Mine contributor/license/publisher prose. The author + title come from the OPF
   // (authoritative); the illustrator, CC license and publisher are usually only in the
   // cover page's contributor block or the trailing attribution/copyright pages, so scan
   // those bodies (kept general — keyed on the words, not on any template's class names).
+  // StoryWeaver values, when present, take precedence over this generic mining.
   const bodyText = (h?: string): string =>
     h ? stripTags(h.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? h) : "";
   const copyHref = spineHrefs.find((h) => /copy/i.test(path.basename(h)));
@@ -564,22 +676,85 @@ export async function epubToBloomMarkdown(
     ...spineHrefs.slice(-3).map((h) => bodyText(read(resolveZipPath(opfDir, h)))), // attribution
   ].join("\n");
   const illustrator =
+    sw?.meta.illustrator ||
     (copyXhtml && (copyXhtml.match(/illustrations?\s+by\s+([^<.]+)/i) || [])[1]?.trim()) ||
     (proseToMine.match(
       /Illustrat(?:or|ions?|ed)\b\s*(?:by)?\s*:?\s*([^\n.]+?)(?=\s+(?:Translator|Author|Publisher|Editor)\b|[\n.]|$)/i,
     ) || [])[1]?.trim();
-  const translator = (proseToMine.match(
-    /Translat(?:or|ion|ed)\b\s*(?:by)?\s*:?\s*([^\n.]+?)(?=\s+(?:Illustrator|Author|Publisher|Editor)\b|[\n.]|$)/i,
-  ) || [])[1]?.trim();
-  const ccUrl = (proseToMine.match(/https?:\/\/creativecommons\.org\/licenses\/[^\s"'<]+/i) ||
-    [])[0];
+  const translator =
+    sw?.meta.translator ||
+    (proseToMine.match(
+      /Translat(?:or|ion|ed)\b\s*(?:by)?\s*:?\s*([^\n.]+?)(?=\s+(?:Illustrator|Author|Publisher|Editor)\b|[\n.]|$)/i,
+    ) || [])[1]?.trim();
+  // Mine the CC license URL with the shared extractor, which stops at the version
+  // segment — the prose often ends the sentence right after the URL ("…/4.0/."), and a
+  // greedy match would swallow that trailing period into the URL, leaving Bloom unable to
+  // map it back to a license token (it then shows "Custom" instead of e.g. CC-BY-NC-ND).
+  const ccUrl = sw?.meta.licenseUrl || extractCcLicenseUrl(proseToMine);
   const minedPublisher =
+    sw?.meta.publisher ||
     publisher ||
     (proseToMine.match(/published\s+(?:on\s+\S+\s+)?by\s+([^.]+?)\s*\./i) || [])[1]?.trim();
   const fundingLine =
+    sw?.meta.funding ||
     (copyXhtml &&
       classedParagraphs(copyXhtml, /p1/).find((t) => /made possible|support of|funded/i.test(t))) ||
     (proseToMine.match(/(?:made possible|supported)\b[^.]*\bby\s+([^.]+?)\s*\./i) || [])[0]?.trim();
+
+  // ---- recover a STALE OPF (title/author/ISBN describe the wrong book) ----
+  // Every XHTML page carries the book's own title in its <head><title>. When the OPF's
+  // <dc:title> matches none of those page titles but the pages agree on a different one,
+  // the OPF is a leftover template still describing the book it was copied from (a real
+  // Library-For-All failure mode). The book's own pages are then authoritative: take the
+  // title from the page-title consensus, and the author + ISBN from the copyright page's
+  // colophon (the paragraph that carries the ISBN). Kept general — no template classes.
+  const headTitle = (h?: string): string =>
+    h ? stripTags(h.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "") : "";
+  const pageTitles = spineBodies.map(headTitle).filter(Boolean);
+  const titleCounts = new Map<string, number>();
+  for (const t of pageTitles) titleCounts.set(t, (titleCounts.get(t) ?? 0) + 1);
+  const pageTitleMode = [...titleCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const opfTitleInPages =
+    !!opfTitle && pageTitles.some((t) => t.toLowerCase() === opfTitle.toLowerCase());
+  if (
+    opfTitle &&
+    pageTitleMode &&
+    !opfTitleInPages &&
+    pageTitleMode.toLowerCase() !== opfTitle.toLowerCase()
+  ) {
+    logger.info(
+      `OPF metadata appears stale (title "${opfTitle}" is on no page; the book is ` +
+        `"${pageTitleMode}") — recovering title/author/ISBN from the book's own pages.`,
+    );
+    title = pageTitleMode;
+    // The colophon is the copyright-page paragraph carrying the ISBN, e.g.
+    //   <p>Angie Visits the Volcano<br/>Tarisu, Esther<br/>ISBN: 978-1-…<br/>SKU…</p>
+    // Its <br/>-separated lines are: title, author ("Last, First"), ISBN, (SKU). Read the
+    // author as the line(s) between the title and the ISBN, and the ISBN from its line.
+    const colophon = copyXhtml
+      ? [...copyXhtml.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+          .map((m) => m[1])
+          .find((html) => /ISBN/i.test(html))
+      : undefined;
+    if (colophon) {
+      const lines = colophon
+        .split(/<br\s*\/?>/i)
+        .map(stripTags)
+        .filter(Boolean);
+      const tIdx = lines.findIndex((l) => l.toLowerCase() === pageTitleMode.toLowerCase());
+      const isbnIdx = lines.findIndex((l) => /ISBN/i.test(l));
+      if (tIdx >= 0 && isbnIdx > tIdx + 1) {
+        const recovered = lines
+          .slice(tIdx + 1, isbnIdx)
+          .join(" ")
+          .trim();
+        // Colophons list the author "Surname, Given"; Bloom shows author names "Given Surname".
+        if (recovered) author = recovered.replace(/^([^,]+),\s*(.+)$/, "$2 $1").trim();
+      }
+      const isbnDigits = lines.find((l) => /ISBN/i.test(l))?.match(/([0-9][0-9 -]{8,18}[0-9Xx])/);
+      if (isbnDigits) isbn = isbnDigits[1].replace(/[\s-]/g, "");
+    }
+  }
 
   // Emit images + tagged markdown.
   fs.mkdirSync(bookFolder, { recursive: true });
@@ -587,7 +762,17 @@ export async function epubToBloomMarkdown(
   // Illustration aspect ratios (w/h), gathered as we copy real illustrations, so we can
   // pick the page orientation from the book's own artwork (see orientationFromAspects).
   const aspects: number[] = [];
-  const useImage = (docDir: string, src: string, destName?: string): string | null => {
+  // The cover image's aspect, captured separately: for a REFLOWABLE book the interior
+  // illustrations are scene art placed at the top of a portrait page (so their aspect
+  // doesn't reflect the page), but the cover is sized to the target device — it's the
+  // reliable orientation signal. See the page-size decision near the end.
+  let coverAspect: number | null = null;
+  const useImage = (
+    docDir: string,
+    src: string,
+    destName?: string,
+    isCover = false,
+  ): string | null => {
     const zpath = resolveZipPath(docDir, src);
     const bytes = zip.get(zpath);
     if (!bytes) {
@@ -598,7 +783,10 @@ export async function epubToBloomMarkdown(
     fs.writeFileSync(path.join(bookFolder, dest), bytes);
     copied.add(dest);
     const size = intrinsicSize(bytes);
-    if (size && size.w > 0 && size.h > 0) aspects.push(size.w / size.h);
+    if (size && size.w > 0 && size.h > 0) {
+      aspects.push(size.w / size.h);
+      if (isCover) coverAspect = size.w / size.h;
+    }
     return dest;
   };
 
@@ -623,6 +811,11 @@ export async function epubToBloomMarkdown(
     const x = read(resolveZipPath(opfDir, href));
     return x ? extractCanvasLayout(x, classStyles) !== null : false;
   });
+  // A fixed-layout (FXL) EPUB the OPF declares `rendition:layout = pre-paginated`: every
+  // page has real geometry, so its full-page art does reflect the page orientation, even
+  // when the book uses no absolute positioning we can read as a canvas (e.g. cole-voyage).
+  const prePaginated = /pre-paginated/i.test(opf);
+  const isFixedLayout = fixedLayoutBook || prePaginated;
 
   let emitted = 0;
   let sourcePage = 0; // 1-based spine index of the page being processed
@@ -663,12 +856,17 @@ export async function epubToBloomMarkdown(
   };
   const creditFieldLines = (pub?: string): string[] => {
     const lines: string[] = [];
+    // StoryWeaver gives an exact copyright (holder + the right year, e.g. the translation's);
+    // otherwise build one from the publisher + the OPF date's year.
     const year = (date || "").match(/\d{4}/)?.[0] ?? (date || "").trim();
-    if (pub || year) lines.push(textTag("copyright"), `© ${year} ${pub || ""}`.trim());
+    const copyright = sw?.meta.copyright || (pub || year ? `© ${year} ${pub || ""}`.trim() : "");
+    if (copyright) lines.push(textTag("copyright"), copyright);
     if (isbn) lines.push(textTag("isbn"), isbn);
     if (ccUrl) lines.push(textTag("licenseUrl"), ccUrl);
     if (pub) lines.push(textTag("originalPublisher"), pub);
     if (fundingLine) lines.push(textTag("funding"), fundingLine);
+    // The back-cover blurb becomes Bloom's book summary (shown on its outside back cover).
+    if (sw?.meta.summary) lines.push(textTag("summary"), sw.meta.summary);
     return lines;
   };
 
@@ -699,7 +897,7 @@ export async function epubToBloomMarkdown(
       // the art and shows no title. Keeping a plain name makes it the book's `coverImage`
       // instead, so Bloom lays out its standard cover — title + author/illustrator credit
       // over the art. The EPUB's cover art has no title baked in, so we want Bloom's title.
-      const dest = useImage(opfCoverHref ? opfDir : firstDocDir, coverSrc);
+      const dest = useImage(opfCoverHref ? opfDir : firstDocDir, coverSrc, undefined, true);
       if (dest) emitPage('type="front-matter"', [`![cover](${dest})`]);
     }
     if (!hasNamedTitle) emitPage('type="front-matter"', titleFieldLines());
@@ -721,8 +919,16 @@ export async function epubToBloomMarkdown(
       continue;
     }
 
+    // StoryWeaver end-matter (attribution + back cover): we mined its copyright, license,
+    // publisher, donor and blurb into the credits/back-cover fields above, so Bloom's
+    // regenerated xMatter conveys it. Don't ALSO import these as content pages — that's
+    // the duplicated end matter the paired preview showed.
+    if (sw?.matterPages.has(sourcePage)) {
+      continue;
+    }
+
     if (role === "front-cover") {
-      if (imgs[0]) useImage(docDir, imgs[0], FRONT_COVER_IMAGE_FILENAME);
+      if (imgs[0]) useImage(docDir, imgs[0], FRONT_COVER_IMAGE_FILENAME, true);
       emitPage('type="front-matter"', [`![cover](${FRONT_COVER_IMAGE_FILENAME})`]);
       continue;
     }
@@ -767,6 +973,22 @@ export async function epubToBloomMarkdown(
       }
     }
 
+    // A grid/table page (discussion questions, vocabulary, …) becomes a TEXT-ONLY canvas:
+    // its rows keep a row-per-box layout instead of collapsing into one origami block. No
+    // background image (the source page is white, the row icons are decorative), so we emit
+    // the boxes with no `![]()` line — Stage 4's generateCanvasPage builds a background-less
+    // canvas of positioned text. Falls through to origami when the page has no such table.
+    const tableCanvas = extractTableCanvas(xhtml, classStyles);
+    if (tableCanvas) {
+      const lines: string[] = [];
+      for (const t of tableCanvas.texts) lines.push(textTag(), t.markdown);
+      const boxesAttr = tableCanvas.texts
+        .map((t) => `${t.box.x},${t.box.y},${t.box.w},${t.box.h}`)
+        .join(";");
+      emitPage(`type="content" canvas-text-boxes="${boxesAttr}"`, lines);
+      continue;
+    }
+
     // Otherwise walk the page in document order so pictures and prose stay interleaved
     // exactly as authored; origami then lays them out as a faithful top-to-bottom stack
     // (e.g. text, picture, text) instead of one picture on top of all the text.
@@ -805,9 +1027,19 @@ export async function epubToBloomMarkdown(
 
   // Every EPUB is told to Bloom — and shown in the GUI preview — as a 16:9 device page,
   // via a `<!-- book page-size=… -->` hint that parseMarkdown reads into the book's
-  // pageSize (the same channel the PDF stage uses). The orientation (portrait vs.
-  // landscape) follows the book's own artwork; see orientationFromAspects.
-  const pageSize = orientationFromAspects(aspects);
+  // pageSize (the same channel the PDF stage uses). For a FIXED-LAYOUT book the page IS
+  // the artwork, so the orientation follows the median illustration aspect. For a
+  // REFLOWABLE book (LFA/Vanuatu, novels) the interior illustrations are wide scene art
+  // dropped at the top of a portrait page — they don't reflect the page — so we orient by
+  // the cover (sized to the target device), falling back to the illustration median only
+  // when there's no readable cover (e.g. the orientation unit tests).
+  const pageSize = isFixedLayout
+    ? orientationFromAspects(aspects)
+    : coverAspect !== null
+      ? coverAspect > 1.15
+        ? "Device16x9Landscape"
+        : "Device16x9Portrait"
+      : orientationFromAspects(aspects);
   // `cover-color="white"`: an EPUB cover is a plain image + title, so Bloom should keep
   // the regenerated cover white rather than painting its random/branding color around it.
   const bookHint = [`<!-- book page-size="${pageSize}" cover-color="white" -->`, ""];

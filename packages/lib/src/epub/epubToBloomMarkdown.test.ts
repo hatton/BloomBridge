@@ -143,8 +143,11 @@ describe("epubToBloomMarkdown", () => {
     expect(markdown).toContain("Ada Author");
     // illustrator mined from the copyright page prose.
     expect(markdown).toContain("Bob Artist");
-    // CC license URL mined from the copyright page prose.
-    expect(markdown).toContain("creativecommons.org/licenses/by-nc/4.0");
+    // CC license URL mined from the copyright page prose — and ONLY the URL: the prose
+    // ends the sentence right after it ("…/4.0/."), so the trailing period must not be
+    // swallowed into the URL (or Bloom can't map it to a token and shows "Custom").
+    expect(markdown).toContain("http://creativecommons.org/licenses/by-nc/4.0/");
+    expect(markdown).not.toContain("by-nc/4.0/.");
 
     // Images actually copied into the book folder.
     expect(fs.existsSync(path.join(bookDir, "cover.jpg"))).toBe(true);
@@ -325,6 +328,114 @@ describe("epubToBloomMarkdown", () => {
     expect(md).toMatch(/<!-- book page-size="Device16x9Portrait"[^>]*-->/);
   });
 
+  // A reflowable book (named cover + story pages) whose COVER is portrait but whose
+  // interior scene illustrations are landscape — the LFA/Vanuatu shape. The wide interior
+  // art sits at the top of a portrait page, so it must NOT drive orientation; the cover
+  // (sized to the target device) does. `pre-paginated` flips this: a fixed-layout book's
+  // pages ARE the art, so the landscape illustrations win.
+  function reflowableEpub(
+    cover: { w: number; h: number },
+    content: { w: number; h: number },
+    opts: { prePaginated?: boolean } = {},
+  ): Uint8Array {
+    const rendition = opts.prePaginated
+      ? `<meta property="rendition:layout">pre-paginated</meta>`
+      : "";
+    const opf = `<?xml version="1.0"?>
+<package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:language>en</dc:language>${rendition}</metadata>
+<manifest>
+<item id="cover" href="Text/cover.xhtml" media-type="application/xhtml+xml"/>
+<item id="p1" href="Text/p1.xhtml" media-type="application/xhtml+xml"/>
+<item id="p2" href="Text/p2.xhtml" media-type="application/xhtml+xml"/>
+<item id="cimg" href="Images/cover.jpg" media-type="image/jpeg"/>
+<item id="i1" href="Images/p1.jpg" media-type="image/jpeg"/>
+<item id="i2" href="Images/p2.jpg" media-type="image/jpeg"/>
+</manifest>
+<spine><itemref idref="cover"/><itemref idref="p1"/><itemref idref="p2"/></spine></package>`;
+    const cov = `<html><body><section><img src="../Images/cover.jpg"/></section></body></html>`;
+    const pg = (n: number) =>
+      `<html><body><section><div class="container"><img src="../Images/p${n}.jpg"/></div><div class="p">Page ${n}.</div></section></body></html>`;
+    return zip([
+      file("mimetype", "application/epub+zip"),
+      file(
+        "META-INF/container.xml",
+        `<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
+      ),
+      file("OEBPS/content.opf", opf),
+      file("OEBPS/Text/cover.xhtml", cov),
+      file("OEBPS/Text/p1.xhtml", pg(1)),
+      file("OEBPS/Text/p2.xhtml", pg(2)),
+      { name: "OEBPS/Images/cover.jpg", data: jpeg(cover.w, cover.h) },
+      { name: "OEBPS/Images/p1.jpg", data: jpeg(content.w, content.h) },
+      { name: "OEBPS/Images/p2.jpg", data: jpeg(content.w, content.h) },
+    ]);
+  }
+
+  it("orients a reflowable book by its cover, not its (wide) interior illustrations", async () => {
+    const md = await convert(reflowableEpub({ w: 600, h: 900 }, { w: 1024, h: 600 }));
+    expect(md).toMatch(/<!-- book page-size="Device16x9Portrait"[^>]*-->/);
+  });
+
+  it("orients a pre-paginated (fixed-layout) book by its full-page illustrations", async () => {
+    const md = await convert(
+      reflowableEpub({ w: 600, h: 900 }, { w: 1024, h: 600 }, { prePaginated: true }),
+    );
+    expect(md).toMatch(/<!-- book page-size="Device16x9Landscape"[^>]*-->/);
+  });
+
+  // A discussion-questions page: a bold heading then a <table> of (icon | question) rows.
+  // It must become a TEXT-ONLY canvas — a positioned box per question — not a single merged
+  // origami block; a contents/index table (cells that are links) must NOT (it's navigation).
+  function epubWithTablePage(tableHtml: string): Uint8Array {
+    const opf = `<?xml version="1.0"?>
+<package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:language>en</dc:language></metadata>
+<manifest>
+<item id="q" href="Text/q.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine><itemref idref="q"/></spine></package>`;
+    const q = `<html><head><title>The Book</title></head><body><section>${tableHtml}</section></body></html>`;
+    return zip([
+      file("mimetype", "application/epub+zip"),
+      file(
+        "META-INF/container.xml",
+        `<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
+      ),
+      file("OEBPS/content.opf", opf),
+      file("OEBPS/Text/q.xhtml", q),
+    ]);
+  }
+
+  it("lays a discussion-questions table page out as a text-only canvas", async () => {
+    const md = await convert(
+      epubWithTablePage(`<h2>Talk about this book.</h2>
+<table>
+<tr><td><img src="../Images/i-1.jpg"/></td><td>Where were they going?</td></tr>
+<tr><td><img src="../Images/i-2.jpg"/></td><td>Why was it hard?</td></tr>
+<tr><td></td><td>What happened next?</td></tr>
+</table>`),
+    );
+    // A heading box + one box per question (4 boxes), and no `![]()` image — the canvas
+    // floats positioned text over the blank page.
+    const m = md.match(/canvas-text-boxes="([^"]+)"/);
+    expect(m).not.toBeNull();
+    expect(m![1].split(";")).toHaveLength(4);
+    expect(md).toContain("**Talk about this book.**");
+    expect(md).toContain("Where were they going?");
+    expect(md).toContain("What happened next?");
+    expect(md).not.toMatch(/!\[[^\]]*\]\(/); // no image line on this page
+  });
+
+  it("leaves a links-only contents/index table to origami (not a canvas)", async () => {
+    const md = await convert(
+      epubWithTablePage(`<table>
+<tr><td><a href="c1.xhtml">CHAPTER I.</a></td><td><a href="c1.xhtml">Down the Hole</a></td></tr>
+<tr><td><a href="c2.xhtml">CHAPTER II.</a></td><td><a href="c2.xhtml">The Pool</a></td></tr>
+<tr><td><a href="c3.xhtml">CHAPTER III.</a></td><td><a href="c3.xhtml">The Race</a></td></tr>
+</table>`),
+    );
+    expect(md).not.toContain("canvas-text-boxes");
+  });
+
   // A picture-book whose spine isn't named (cov/p1/p2/p3, like StoryWeaver's 1..N): the
   // first spine page is the cover, the rest absolutely-position prose over full-bleed art.
   function epubWithPositionedText(): Uint8Array {
@@ -458,5 +569,105 @@ describe("epubToBloomMarkdown", () => {
     expect(markdown).toContain('l1: "bi"');
     expect(markdown).toContain('bi: "Bislama"');
     expect(markdown).toContain('<!-- text lang="bi" -->');
+  });
+
+  // A Pratham Books / StoryWeaver EPUB: spine 1..N, the cover names contributors via
+  // `cover_attribution` paragraphs, and the last pages are end matter (`attribution-text`
+  // + a `back-cover` with the blurb). Crucially, EVERY page embeds the SAME full
+  // stylesheet in <head>, so the class names appear on every page — the importer must
+  // classify pages by their <body> only.
+  function storyWeaverEpub(): Uint8Array {
+    // The shared stylesheet StoryWeaver injects into every page's <head>. It MENTIONS the
+    // structural class names, so a naive whole-document probe would tag every page.
+    const sharedStyle = `<style type="text/css">.front-cover-page{}.cover_title{}.cover_attribution{}.attribution-text{}.attrb-full{}.back-cover-top{}.synopsis{}</style>`;
+    const doc = (body: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>${sharedStyle}</head><body><div id="story_epub"><div id="storyReader">${body}</div></div></body></html>`;
+    const opf = `<?xml version="1.0"?>
+<package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:identifier>/stories/12345-a-storyweaver-tale</dc:identifier>
+<dc:title>A StoryWeaver Tale</dc:title>
+<dc:creator>Orig Author</dc:creator>
+<dc:date>2019-01-01</dc:date>
+<meta name="cover" content="icov"/>
+</metadata>
+<manifest>
+<item id="c1" href="1.xhtml" media-type="application/xhtml+xml"/>
+<item id="c2" href="2.xhtml" media-type="application/xhtml+xml"/>
+<item id="c3" href="3.xhtml" media-type="application/xhtml+xml"/>
+<item id="c4" href="4.xhtml" media-type="application/xhtml+xml"/>
+<item id="icov" href="image_1.jpg" media-type="image/jpeg"/>
+<item id="i2" href="image_2.jpg" media-type="image/jpeg"/>
+</manifest>
+<spine><itemref idref="c1"/><itemref idref="c2"/><itemref idref="c3"/><itemref idref="c4"/></spine></package>`;
+    // 1: cover — illustration + contributor block (Author / Illustrator / Translator).
+    const cover = doc(`<div class="illustration"><img src="image_1.jpg"/></div>
+<div class="front-cover-page"><p class="cover_title"><b>A StoryWeaver Tale</b></p>
+<p class="cover_attribution">Author: <span class="contributor_attribution authors">Orig Author</span></p>
+<p class="cover_attribution">Illustrator: <span class="contributor_attribution illustrators">Art Ist</span></p>
+<p class="cover_attribution">Translator: <span class="contributor_attribution authors derivation_authors">Trans Lator</span></p></div>`);
+    // 2: story page.
+    const story = doc(`<div class="illustration"><img src="image_2.jpg"/></div>
+<div class="content" style="position:absolute; width:50%; height:40%; top:10%; left:20%;"><p>Once there was a step.</p></div>`);
+    // 3: attribution — translation copyright (newest), CC license, publisher, donor.
+    const attribution =
+      doc(`<div class="attrb-full"><div class="attrib-synopsis"><p>This book was made possible by Pratham Books' StoryWeaver platform.</p></div></div>
+<div class="attribution-text"><div class="attribution-center">
+<span class="self-attribution">This story: <span>A StoryWeaver Tale</span> is translated by <a href="https://storyweaver.org.in/users/9">Trans Lator</a>. The © for this translation lies with Pratham Books, 2022. Some rights reserved. Released under CC BY 4.0 license.</span>
+<span class="original-story-attribution">Based on Original story: '<a href="x">Steps</a>', by <a href="y">Orig Author</a>. © Pratham Books, 2019. Some rights reserved.</span>
+<span class="other-credits">'A StoryWeaver Tale' has been published on StoryWeaver by Pratham Books. www.prathambooks.org. The development of this book has been supported by the Test Donor Fund.</span></div></div>
+<div class="cc_footer"><p>Some rights reserved. This book is CC-BY-4.0 licensed. <a href="http://creativecommons.org/licenses/by/4.0/">http://creativecommons.org/licenses/by/4.0/</a></p></div>`);
+    // 4: back cover — the blurb.
+    const back =
+      doc(`<div class="back-cover-top"><p class="title"><span class="back_cover_title">A StoryWeaver Tale</span></p>
+<p class="synopsis">A short tale about a hungry creature on the steps.</p></div>
+<div class="spp_about_us_footer"><span>Pratham Books goes digital…</span></div>`);
+    return zip([
+      file("mimetype", "application/epub+zip"),
+      file(
+        "META-INF/container.xml",
+        `<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
+      ),
+      file("OEBPS/content.opf", opf),
+      file("OEBPS/1.xhtml", cover),
+      file("OEBPS/2.xhtml", story),
+      file("OEBPS/3.xhtml", attribution),
+      file("OEBPS/4.xhtml", back),
+      { name: "OEBPS/image_1.jpg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
+      { name: "OEBPS/image_2.jpg", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
+    ]);
+  }
+
+  it("mines StoryWeaver metadata and drops its end-matter pages (no duplication)", async () => {
+    const md = await convert(storyWeaverEpub());
+
+    // Contributors come from the COVER's labeled attribution block.
+    expect(md).toContain('field="bookTitle"');
+    expect(md).toContain("A StoryWeaver Tale");
+    expect(md).toContain('field="illustrator"');
+    expect(md).toContain("Art Ist");
+    // The cover credit carries all three roles, translator included.
+    expect(md).toContain("Author: Orig Author");
+    expect(md).toContain("Illustrator: Art Ist");
+    expect(md).toContain("Translator: Trans Lator");
+
+    // Credits come from the attribution page: the TRANSLATION copyright/year wins, the CC
+    // license, the named publisher and donor, and the back-cover blurb as the summary.
+    expect(md).toContain("© 2022 Pratham Books");
+    expect(md).toContain("creativecommons.org/licenses/by/4.0");
+    expect(md).toContain('field="originalPublisher"');
+    expect(md).toContain("Pratham Books");
+    expect(md).toContain('field="funding"');
+    expect(md).toContain("Test Donor Fund");
+    expect(md).toContain('field="summary"');
+    expect(md).toContain("hungry creature on the steps");
+
+    // The end-matter pages are NOT imported as content — their boilerplate is gone.
+    expect(md).not.toContain("made possible by Pratham Books");
+    expect(md).not.toContain("Some rights reserved");
+    expect(md).not.toContain("goes digital");
+    // Only the cover (front matter), the synthesized title/credits, and the ONE story
+    // page survive as pages; the story text is kept.
+    expect(md).toContain("Once there was a step.");
+    expect((md.match(/type="content"/g) || []).length).toBe(1);
   });
 });
