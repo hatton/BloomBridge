@@ -418,6 +418,7 @@ function extractCanvasLayout(
 function extractTableCanvas(
   xhtml: string,
   classStyles: Map<string, ClassStyle>,
+  aspectOf: (src: string) => number | undefined,
 ): { texts: CanvasText[]; images: CanvasImage[] } | null {
   const body = xhtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? xhtml;
   const tableMatch = body.match(/<table\b[\s\S]*?<\/table>/i);
@@ -480,11 +481,11 @@ function extractTableCanvas(
   if (blocks.length < 3 || blocks.length > 12) return null;
 
   // Synthesize positions: a leading bold heading gets the top band; the remaining rows
-  // share the rest of the page in even vertical bands. The rows form a TABLE, so every
-  // row's text shares one left edge (a column) and is left-aligned — the `tableRows`
-  // style — regardless of whether that particular row has an icon. If ANY row has an
-  // icon we reserve a left icon column for all of them, so the text stays column-aligned
-  // (an icon-less row simply leaves its icon slot empty, as in the source table).
+  // stack down the page. The rows form a TABLE, so every row's text shares one left edge
+  // (a column) and is left-aligned — the `tableRows` style — regardless of whether that
+  // particular row has an icon. If ANY row has an icon we reserve a left icon column for
+  // all of them, so the text stays column-aligned (an icon-less row simply leaves its
+  // icon slot empty, as in the source table).
   const texts: CanvasText[] = [];
   const images: CanvasImage[] = [];
   const headingCount = blocks[0].bold && !blocks[0].iconSrc ? 1 : 0;
@@ -496,27 +497,69 @@ function extractTableCanvas(
     });
   const rest = blocks.slice(headingCount);
   const anyIcon = rest.some((b) => b.iconSrc);
-  const textX = anyIcon ? 0.28 : 0.07; // shared left edge of the text column
-  const textW = anyIcon ? 0.65 : 0.86;
   const top = headingCount ? 0.19 : 0.04;
-  const band = (0.98 - top) / rest.length;
-  rest.forEach((b, i) => {
-    const y = round4(top + i * band);
-    if (b.iconSrc)
-      // A generous slot (left column, ~full band height). Stage 4 fits the icon inside it
-      // at a width common to all the icons, with its height following the figure's own
-      // aspect ratio — so the figures stay proportional to each other (the source sets
-      // them all to one width), instead of each scaling differently inside a fixed box.
-      images.push({
-        box: { x: 0.07, y: round4(y + band * 0.04), w: 0.19, h: round4(band * 0.92) },
-        src: b.iconSrc,
+  const avail = 0.98 - top;
+
+  if (!anyIcon) {
+    // No icons (vocabulary lists, plain question grids): even vertical bands suffice.
+    const textW = 0.86;
+    const band = avail / rest.length;
+    rest.forEach((b, i) => {
+      texts.push({
+        box: { x: 0.07, y: round4(top + i * band), w: textW, h: round4(band * 0.88) },
+        markdown: b.markdown,
+        align: b.align,
+        style: "tableRows",
       });
+    });
+    return { texts, images };
+  }
+
+  // The source table sizes every row icon to ONE width and lets each row's HEIGHT follow
+  // the figure's aspect (a tall standing child makes a tall row; a seated group, a short
+  // one). We reproduce that: all icons share a single column width W, and each iconned row
+  // gets a band whose height is the figure's proportional height AT that width — so the
+  // figures stay one width AND don't overlap, exactly as the source's variable-height
+  // table rows do. (The earlier even-band layout forced each figure to fit a short 1/N
+  // band, which shrank the tall ones to a fraction of the column.) Icon-less rows get one
+  // text line. W is solved so the stacked rows fill most of the page, then clamped/scaled
+  // to fit. PAGE_WH is the 16:9 portrait device's width/height ratio — what turns an icon's
+  // width fraction into its height fraction (Stage 4 re-derives the exact px from the same
+  // page geometry, so the bands and the rendered figures agree).
+  const ICON_X = 0.06;
+  const GUTTER = 0.03; // gap between the icon column and the text column
+  const ICONLESS_H = 0.09; // a single question line for a row with no icon
+  const PAGE_WH = 100 / 177.77777778;
+  const aspects = rest.map((b) => (b.iconSrc ? (aspectOf(b.iconSrc) ?? 0.6) : undefined));
+  const perW = aspects.reduce((s: number, a) => (a ? s + PAGE_WH / a : s), 0); // Σ row-h/unit W
+  const fixedH = aspects.reduce((s: number, a) => (a ? s : s + ICONLESS_H), 0); // icon-less rows
+  let W = Math.min(0.26, Math.max(0.14, (avail * 0.88 - fixedH) / perW));
+  let rowH = aspects.map((a) => (a ? W * (PAGE_WH / a) : ICONLESS_H));
+  const usedH = rowH.reduce((s, h) => s + h, 0);
+  if (usedH > avail) {
+    // Too tall to fit even at the floor width: compress every row (and W) to the page.
+    const k = avail / usedH;
+    W *= k;
+    rowH = rowH.map((h) => h * k);
+  }
+  const gap =
+    rest.length > 1
+      ? Math.max(0, (avail - rowH.reduce((s, h) => s + h, 0)) / (rest.length - 1))
+      : 0;
+  const textX = round4(ICON_X + W + GUTTER);
+  const textW = round4(0.94 - textX);
+  let y = top;
+  rest.forEach((b, i) => {
+    const h = rowH[i];
+    if (b.iconSrc)
+      images.push({ box: { x: ICON_X, y: round4(y), w: round4(W), h: round4(h) }, src: b.iconSrc });
     texts.push({
-      box: { x: textX, y, w: textW, h: round4(band * 0.88) },
+      box: { x: textX, y: round4(y), w: textW, h: round4(h) },
       markdown: b.markdown,
       align: b.align, // a source-specified alignment still wins over the style default
       style: "tableRows",
     });
+    y = round4(y + h + gap);
   });
   return { texts, images };
 }
@@ -623,7 +666,7 @@ export interface EpubExtractResult {
 export async function epubToBloomMarkdown(
   epubPath: string,
   bookFolder: string,
-  options?: { masterHashes?: Set<string> },
+  options?: { masterHashes?: Set<string>; templateHashes?: Set<string> },
 ): Promise<EpubExtractResult> {
   const { zip, read, opfDir, opf, spineHrefs } = loadEpub(epubPath);
 
@@ -632,13 +675,18 @@ export async function epubToBloomMarkdown(
   // per-page fingerprint — the analog of the PDF flow's page-render hash. It drives
   // the master-page picker (every hashed page can be mapped to a master page) and,
   // when a page's hash matches a master, the same Stage-4 substitution the PDF flow does.
+  // A page with only "decorative" images (e.g. the discussion-questions grid, whose icons
+  // are all i-N.jpg) has no main illustration — fall back to its first image so it's still
+  // hashable and mappable; that icon is stable across a publisher's books, so the page
+  // hashes the same everywhere (one master mapping serves every book).
   const pageHashes = new Map<number, string>();
   for (let s = 0; s < spineHrefs.length; s++) {
     const zp = resolveZipPath(opfDir, spineHrefs[s]);
     const xhtml = read(zp);
     if (!xhtml) continue;
     const docDir = zp.includes("/") ? zp.slice(0, zp.lastIndexOf("/")) : "";
-    const main = pickMainImage(imageSrcs(xhtml));
+    const imgs = imageSrcs(xhtml);
+    const main = pickMainImage(imgs) ?? imgs[0];
     if (!main) continue;
     const buf = zip.get(resolveZipPath(docDir, main));
     if (!buf) continue;
@@ -878,17 +926,22 @@ export async function epubToBloomMarkdown(
   let sourcePage = 0; // 1-based spine index of the page being processed
   let pendingHash: string | undefined; // main-image hash of the page being emitted
   const masterHashes = options?.masterHashes;
+  const templateHashes = options?.templateHashes;
   const emitPage = (attrs: string, lines: string[]) => {
     const hash = pendingHash;
-    // A page whose image matches a master page renders as a minimal placeholder
-    // carrying its hash; Stage 4 swaps in the master's exact HTML — exactly the PDF flow.
-    const matched =
-      !!hash && !!masterHashes && [...masterHashes].some((mh) => hashesMatch(hash, mh));
-    const body = matched ? ["_(page provided by master book)_"] : lines;
+    // A page whose image matches a master page renders as a minimal placeholder carrying
+    // its hash; Stage 4 swaps in the master's exact HTML — exactly the PDF flow. EXCEPT a
+    // page matching a *template* master (one with fill-slots, §9.7): there Stage 4 keeps
+    // the master's layout but pours THIS page's text into the slots, so we must emit the
+    // page's real content (not a placeholder) for that text to survive to Stage 4.
+    const matchesAny = (hashes?: Set<string>) =>
+      !!hash && !!hashes && [...hashes].some((mh) => hashesMatch(hash, mh));
+    const wholesale = matchesAny(masterHashes) && !matchesAny(templateHashes);
+    const body = wholesale ? ["_(page provided by master book)_"] : lines;
     if (body.length === 0) return;
     emitted += 1;
     const hashAttr = hash ? ` import-source-hash="${hash}"` : "";
-    const masterAttr = matched ? ` master-page="true"` : "";
+    const masterAttr = wholesale ? ` master-page="true"` : "";
     out.push(
       `<!-- page index=${emitted} ${attrs}${hashAttr}${masterAttr} source-pdf-page="${sourcePage}" -->`,
       ...body,
@@ -1049,7 +1102,10 @@ export async function epubToBloomMarkdown(
     // figure beside the question) is content we KEEP — positioned as its own canvas image
     // beside the text. Stage 4's generateCanvasPage lays out the positioned text + images.
     // Falls through to origami when the page has no such table.
-    const tableCanvas = extractTableCanvas(xhtml, classStyles);
+    const tableCanvas = extractTableCanvas(xhtml, classStyles, (src) => {
+      const sz = intrinsicSize(zip.get(resolveZipPath(docDir, src)) ?? Buffer.alloc(0));
+      return sz && sz.h ? sz.w / sz.h : undefined;
+    });
     if (tableCanvas) {
       const lines: string[] = [];
       // Positioned row icons first (parsed into image elements), then the text blocks.

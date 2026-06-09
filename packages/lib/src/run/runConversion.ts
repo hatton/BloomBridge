@@ -39,7 +39,12 @@ import {
   findMasterBookFolder,
   loadMasterPages,
   readMasterHashes,
+  isTemplateMasterPage,
   applyMasterPages,
+  readMasterAppearance,
+  applyMasterHeadStyles,
+  applyMasterAcknowledgments,
+  type MasterAppearance,
 } from "../master/masterPages";
 import {
   validateAndResolveCollectionPath,
@@ -605,11 +610,20 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
       // substituted in Stage 4 (the EPUB flow has no OCR to skip, but the same hashes
       // drive the GUI picker and the substitution).
       let epubMasterHashes: Set<string> | undefined;
+      let epubTemplateHashes: Set<string> | undefined;
       if (plan.masterFolderPath && !plan.emitSourceHashes) {
-        epubMasterHashes = await readMasterHashes(plan.masterFolderPath);
+        // Hashes of all master pages, plus the subset that are fill-templates: a page
+        // matching a template keeps its real content (so Stage 4 can pour it into the
+        // template's slots), whereas a wholesale match collapses to a placeholder.
+        const masterPages = await loadMasterPages(plan.masterFolderPath);
+        epubMasterHashes = new Set(masterPages.keys());
+        epubTemplateHashes = new Set(
+          [...masterPages].filter(([, p]) => isTemplateMasterPage(p.html)).map(([h]) => h),
+        );
       }
       const { markdown } = await epubToBloomMarkdown(plan.epubPath!, plan.bookFolderPath!, {
         masterHashes: epubMasterHashes,
+        templateHashes: epubTemplateHashes,
       });
       logger.info(`Writing tagged markdown to: ${plan.markdownCleanedAfterLLMPath}`);
       await fs.writeFile(plan.markdownCleanedAfterLLMPath!, markdown);
@@ -900,6 +914,19 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
       startStage("html");
       const taggedMarkdownContent = await fs.readFile(plan.markdownForBloomPath!, "utf-8");
       const book = new Parser().parseMarkdown(taggedMarkdownContent);
+
+      // When a master book exists, make the import match it: its page size/orientation
+      // drives layout (must be set BEFORE generation — canvas geometry depends on it),
+      // and its head styles + appearance (fonts, cover colour, theme) are copied in below.
+      let masterAppearance: MasterAppearance | undefined;
+      if (plan.masterFolderPath && !plan.emitSourceHashes) {
+        masterAppearance = await readMasterAppearance(plan.masterFolderPath);
+        if (masterAppearance.pageSize) {
+          logger.info(`Using master book page size: ${masterAppearance.pageSize}`);
+          book.frontMatterMetadata.pageSize = masterAppearance.pageSize;
+        }
+      }
+
       let bloomHtmlContent = HtmlGenerator.generateHtmlDocument(book);
 
       await fs.mkdir(plan.bookFolderPath!, { recursive: true });
@@ -915,6 +942,17 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
           emitSourceHashes: false,
         });
       }
+      // Copy the master's font + cover-colour <style> blocks over the generated ones.
+      if (masterAppearance?.headStyles) {
+        bloomHtmlContent = applyMasterHeadStyles(bloomHtmlContent, masterAppearance.headStyles);
+      }
+      // Prepend the master's originalAcknowledgments (publisher boilerplate) to the import's.
+      if (masterAppearance?.acknowledgments) {
+        bloomHtmlContent = applyMasterAcknowledgments(
+          bloomHtmlContent,
+          masterAppearance.acknowledgments,
+        );
+      }
       const bookHtmlPath = path.join(
         plan.bookFolderPath!,
         path.basename(plan.bookFolderPath!) + ".htm",
@@ -924,6 +962,21 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
 
       await writeMetaJson(plan.bookFolderPath!, book);
       await writeAppearanceJson(plan.bookFolderPath!, book);
+      // Adopt the master book's appearance.json wholesale, so the import matches its
+      // theme, cover colour, margins, and cover field visibility exactly.
+      if (masterAppearance?.appearance) {
+        await fs.writeFile(
+          path.join(plan.bookFolderPath!, "appearance.json"),
+          JSON.stringify(masterAppearance.appearance, null, 2),
+        );
+      }
+      // Book-level hand CSS the collection won't supply and Bloom won't regenerate.
+      if (masterAppearance?.customBookStyles !== undefined) {
+        await fs.writeFile(
+          path.join(plan.bookFolderPath!, "customBookStyles.css"),
+          masterAppearance.customBookStyles,
+        );
+      }
       await writeImageMetadata(plan.bookFolderPath!, book);
 
       logger.info(`Bloom book should be at: ${plan.bookFolderPath}`);

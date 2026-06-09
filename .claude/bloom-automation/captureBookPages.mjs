@@ -18,7 +18,7 @@
 //   --pages     which pages (0-based index into the preview's .bloom-page list).
 //               "all" (default), a single index, a "start-end" range, or a CSV list.
 //   --out       directory to write page-NN.png files into (default ./bloom-screenshots).
-//   --reload    POST external/updateBook for --book first, so Bloom re-reads it from
+//   --reload    POST external/update-book for --book first, so Bloom re-reads it from
 //               disk before we screenshot (use after re-running a conversion).
 //   --http-port Bloom HTTP port (default: scan the standard 8089+3n range).
 //
@@ -87,12 +87,12 @@ async function resolveInstance(httpPort) {
 
 async function maybeReload(httpPort, bookId) {
   if (!bookId) throw new Error("--reload needs --book to be a bookInstanceId.");
-  const r = await fetch(`http://localhost:${httpPort}/bloom/api/external/updateBook`, {
+  const r = await fetch(`http://localhost:${httpPort}/bloom/api/external/update-book`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id: bookId }),
   });
-  console.log(`external/updateBook -> HTTP ${r.status}`);
+  console.log(`external/update-book -> HTTP ${r.status}`);
 }
 
 // Turn the --pages spec into a JS array literal the dev-browser script can use, or

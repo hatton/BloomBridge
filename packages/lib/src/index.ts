@@ -63,8 +63,16 @@ export {
   appendMasterMapping,
   clearMasterMapping,
   masterMapPath,
+  readMasterAppearance,
+  applyMasterHeadStyles,
+  applyMasterAcknowledgments,
 } from "./master/masterPages";
-export type { MasterPage, MasterPageMap, MasterPageMapEntry } from "./master/masterPages";
+export type {
+  MasterPage,
+  MasterPageMap,
+  MasterPageMapEntry,
+  MasterAppearance,
+} from "./master/masterPages";
 export {
   hashPageImage,
   hashesMatch,

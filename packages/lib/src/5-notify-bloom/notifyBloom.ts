@@ -182,13 +182,13 @@ export async function reloadBloomCollection(port?: number): Promise<boolean> {
 }
 
 /** Ask the running Bloom to select (open) a book by its bookInstanceId
- *  (POST external/selectBook). Used as the final step of Preview so Bloom
+ *  (POST external/select-book). Used as the final step of Preview so Bloom
  *  actually shows the previewed book. */
 export async function selectBookInBloom(bookId: string, port?: number): Promise<boolean> {
   const ports = port ? [port] : CANDIDATE_PORTS;
   for (const p of ports) {
     try {
-      const response = await fetch(`http://localhost:${p}/bloom/api/external/selectBook`, {
+      const response = await fetch(`http://localhost:${p}/bloom/api/external/select-book`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: bookId }),
@@ -415,7 +415,7 @@ export async function notifyBloomOfBook(bookFolder: string): Promise<NotifyBloom
   }
 
   try {
-    const response = await fetch(`http://localhost:${port}/bloom/api/external/updateBook`, {
+    const response = await fetch(`http://localhost:${port}/bloom/api/external/update-book`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: bookId, folderPath: absoluteBookFolder }),

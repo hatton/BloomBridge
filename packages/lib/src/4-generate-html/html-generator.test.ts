@@ -284,7 +284,7 @@ describe("generateHtmlDocument", () => {
             { x: 0.28, y: 0.2, w: 0.65, h: 0.14 },
           ],
           elements: [
-            // heading keeps the default Bubble-style (centered); the question row uses tableRows
+            // heading keeps the default normal-style; the question row uses tableRows
             { type: "text" as const, content: { en: "You can use these questions" } },
             {
               type: "text" as const,
@@ -298,9 +298,9 @@ describe("generateHtmlDocument", () => {
 
     const result = HtmlGenerator.generateHtmlDocument(book, () => {});
 
-    // The styled box uses the named style class instead of Bubble-style.
+    // The styled box uses the named style class; unstyled canvas text defaults to normal-style.
     expect(result).toContain('class="bloom-editable tableRows-style');
-    expect(result).toContain('class="bloom-editable Bubble-style'); // heading unchanged
+    expect(result).toContain('class="bloom-editable normal-style'); // heading default
     // userModifiedStyles defines the style, left-aligned (the table-cell default, vs
     // Bloom's centered Bubble default).
     expect(result).toMatch(/\.tableRows-style\[lang="en"\] \{[^}]*text-align: left/);

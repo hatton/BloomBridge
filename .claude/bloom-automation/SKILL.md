@@ -20,7 +20,7 @@ This is for **inspecting conversion output**, not for developing Bloom itself.
 
 1. **Convert** a PDF into the Bloom collection (`pnpm cli <input> --collection recent`
    or `--collection <path>`). The pipeline writes the book folder + `meta.json` and
-   then auto-calls `notifyBloomOfBook`, which POSTs `external/updateBook` so a running
+   then auto-calls `notifyBloomOfBook`, which POSTs `external/update-book` so a running
    Bloom adds or refreshes the book and shows a toast. (Source:
    [notifyBloom.ts](../../packages/lib/src/5-notify-bloom/notifyBloom.ts).)
 2. **View** — attach to Bloom over CDP with `dev-browser` and screenshot pages from
@@ -41,8 +41,8 @@ This is for **inspecting conversion output**, not for developing Bloom itself.
 - The currently-open collection folder is the `editableCollectionFolder` field of
   `instanceInfo`. In this environment it has been
   `C:\Users\hatto\OneDrive\Documents\Bloom\PDF-Import-Tests-English`.
-- **`external/updateBook`** (POST `{"id":"<bookInstanceId>"}` to
-  `/bloom/api/external/updateBook`) makes Bloom re-read that book from disk. A new book
+- **`external/update-book`** (POST `{"id":"<bookInstanceId>"}` to
+  `/bloom/api/external/update-book`) makes Bloom re-read that book from disk. A new book
   is added to the collection; an existing one is refreshed (and if it's open in the
   Edit tab, reloaded discarding edits). Bloom hydrates CSS/xMatter, including the
   custom-cover round-trip, and shows a toast like `Updated book "<title>" (h:mm:ss)`.
@@ -150,7 +150,7 @@ Useful selectors (confirmed):
 - Screenshots from `dev-browser` can only be saved into `~/.dev-browser/tmp`; the
   helper copies them out for you. If you script `saveScreenshot` directly, Read from
   that tmp dir or copy first.
-- After `external/updateBook`, give Bloom a moment (the helper waits ~3s after
+- After `external/update-book`, give Bloom a moment (the helper waits ~3s after
   selecting a book) before screenshotting, so the preview iframe reloads.
 - `data-book-id` / `bookInstanceId` is preserved across re-conversions when a
   `meta.json` already exists, so reloads target the same book instead of duplicating it.

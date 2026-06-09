@@ -458,6 +458,48 @@ describe("epubToBloomMarkdown", () => {
     expect(md.slice(0, headingIdx)).not.toContain('style="tableRows"');
   });
 
+  it("sizes table-canvas row icons to one width with aspect-proportional, non-overlapping rows", async () => {
+    // The source table sets every icon to ONE width and lets each row's HEIGHT follow the
+    // figure's aspect. Regression guard for the bug where a tall figure was squeezed into a
+    // short even-height band (and dragged every icon's common width down): a tall standing
+    // figure (220x550) and a short seated one (304x325) must get the SAME box width but a
+    // PROPORTIONAL height (tall > short), and the stacked rows must not overlap.
+    const opf = `<?xml version="1.0"?>
+<package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:language>en</dc:language></metadata>
+<manifest><item id="q" href="Text/q.xhtml" media-type="application/xhtml+xml"/></manifest>
+<spine><itemref idref="q"/></spine></package>`;
+    const q = `<html><head><title>Qs</title></head><body><section>
+<p class="quest-h"><b>You can use these questions.</b></p>
+<table>
+<tr><td><img src="../Images/i-tall.jpg" width="140"/></td><td>Tall figure question?</td></tr>
+<tr><td><img src="../Images/i-short.jpg" width="140"/></td><td>Short figure question?</td></tr>
+<tr><td></td><td>An icon-less question?</td></tr>
+</table></section></body></html>`;
+    const md = await convert(
+      zip([
+        file("mimetype", "application/epub+zip"),
+        file(
+          "META-INF/container.xml",
+          `<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
+        ),
+        file("OEBPS/content.opf", opf),
+        file("OEBPS/Text/q.xhtml", q),
+        { name: "OEBPS/Images/i-tall.jpg", data: jpeg(220, 550) },
+        { name: "OEBPS/Images/i-short.jpg", data: jpeg(304, 325) },
+      ]),
+    );
+    const boxes = md
+      .match(/canvas-image-boxes="([^"]+)"/)![1]
+      .split(";")
+      .map((b) => b.split(",").map(Number))
+      .map(([x, y, w, h]) => ({ x, y, w, h }));
+    expect(boxes).toHaveLength(2); // the icon-less row contributes no image box
+    const [tall, short] = boxes;
+    expect(tall.w).toBeCloseTo(short.w, 6); // one common width
+    expect(tall.h).toBeGreaterThan(short.h); // height follows each figure's aspect
+    expect(tall.y + tall.h).toBeLessThanOrEqual(short.y + 1e-6); // rows stack, no overlap
+  });
+
   it("leaves a links-only contents/index table to origami (not a canvas)", async () => {
     const md = await convert(
       epubWithTablePage(`<table>

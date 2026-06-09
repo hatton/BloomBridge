@@ -334,8 +334,14 @@ left/top/width/height:%` and emits a `canvas-text-boxes="x,y,w,h;…"` page comm
 - **Discussion-questions grid (`extractTableCanvas`).** A content page whose prose lives in
   a `<table>` (an icon column beside a question column — the LFA "You can use these
   questions…" page) becomes a canvas too: a synthesized heading box at top, then one
-  text box per question in even vertical bands, AND **each row's icon kept** as a
-  positioned foreground image (`canvas-image-boxes`, §9.4) beside its question. (The
+  text box per question, AND **each row's icon kept** as a positioned foreground image
+  (`canvas-image-boxes`, §9.4) beside its question. The rows do **not** use even bands:
+  like the source table (which sizes every icon to one width and lets each row's height
+  follow the figure), each iconned row gets a band whose height is the figure's
+  proportional height at the shared icon-column width, so tall standing figures stay big
+  and don't overlap their neighbours (icon-less rows get a single text-line band; the
+  shared width is solved to fill the page, then scaled down if the stack would overflow).
+  (The
   icons are content; dropping them as "decorative" was a bug.) Because the rows are a
   **table**, every question's text shares ONE left edge (a column) and is left-aligned —
   the `tableRows` named style (§9.6) — even an icon-less row, which keeps the column and
@@ -589,13 +595,15 @@ element-based background fallback is suppressed (the background comes only from
 `canvas-background-image`, or there is none — the white questions page).
 
 These icons came from one table column where the source sized them all to a single width
-(heights following each figure's own aspect). So they are rendered at **one common
-width** with proportional heights, not each scaled to fill its own box (which made same-
-source figures look like different sizes). The common width is the largest that fits
-every icon's slot — both its width and, via the figure's aspect ratio, its height — and
-each icon is centered in its slot. The figures' intrinsic pixel sizes ride to Stage 4 on
+(heights following each figure's own aspect). The EPUB front-end (§5A) reproduces that by
+giving every icon's box the **same column width** and a band height equal to that figure's
+proportional height — so Stage 4 simply fills each box's width and takes the height from
+the figure's own aspect (`width = box width`, `height = width / aspect`): same width across
+icons, no cropping, no distortion. This replaced an earlier scheme that fitted a common
+width into fixed even-height bands, where a single tall figure dragged every icon's width
+down to a fraction of the column. The figures' intrinsic pixel sizes ride to Stage 4 on
 the image's markdown `{width=… height=…}` attributes (the EPUB front-end reads them from
-the image headers); when a size is unknown the icon just fills its slot.
+the image headers); when a size is unknown the icon just fills its box.
 
 If the page has a detected `background-color` (5.6), it is applied to the page div
 as Bloom’s `--page-background-color` custom property — the canvas art fills only
@@ -707,10 +715,44 @@ For matched pages the OCR call is also skipped in Stage 1 (cost saving), and
 `master-page="true"` forces the page to render as a splice placeholder even if it
 was classified back-matter (which `shouldRenderPage` would otherwise drop).
 
+**Hybrid "template" master pages (fill text from source).** Wholesale substitution
+fits pages that are identical across books, but some shared pages have a **constant
+layout/images yet per-book text** — the LFA "You can use these questions…" page, whose
+four reader-figure icons and positions are fixed but whose questions change per book. A
+master page is treated as a **fill-template** (`isTemplateMasterPage`) when it has at
+least one **fill-slot**: a text box whose visible text is empty or begins with `(` (e.g.
+a `(first question)` hint the author types so the slot is self-documenting in Bloom). This
+works for both layout kinds — a canvas page (`bloom-canvas-element`) and a regular origami
+page (text in a `bloom-translationGroup` inside a split-pane, e.g. an "About the author"
+page) — because slot detection iterates `bloom-translationGroup`, which wraps the editable
+in either case. For a template match, `applyMasterPages` runs `fillTemplatePage` first: it takes
+the master's text boxes and the source page's text boxes each in **reading order**
+(positioned canvas boxes by `top`; flow/origami boxes by document order, which is their
+visual order) and zips them 1:1 — a verbatim box (the heading) keeps its
+own words and ignores its partner; a slot box takes its partner's text. So the author
+mirrors the source's block structure (type the fixed boxes, leave the variable ones
+blank/parenthetical) and the questions land in order, including the icon-less row. The
+layout, images, and positions all come from the master — the source's (often
+badly-laid-out) geometry is discarded, which is the whole point. A count mismatch is
+logged and a surplus slot is **blanked** (a `(hint)` must never reach a real book).
+Mechanics: such a page must NOT collapse to a placeholder in Stage 1/the EPUB front-end
+(its text has to survive to Stage 4), so a template match keeps the page's real content;
+the EPUB front-end is told the template hashes for this (`epubToBloomMarkdown`'s
+`templateHashes`). Because an EPUB page is hashed by its main image — and a grid page's
+icons are all "decorative" (`i-N.jpg`) — such a page would otherwise get _no_ hash; the
+front-end falls back to hashing the first image so the page is still mappable, and since
+that icon is identical across a publisher's books the page hashes the same everywhere
+(**one mapping serves every book**). The fresh-`id` rewrite matches a whitespace-preceded
+` id=` (not a `\b`-boundary one) so it can't clobber `data-tool-id="canvas"` on a canvas
+master page, and `placeHolder.png` (Bloom's empty-canvas-background built-in) is left for
+Bloom to supply rather than copied.
+
 **Building a master.** Run a representative book with `--emit-source-hashes` so every
 page carries `data-import-source-hash`; open it in Bloom, perfect the complex pages,
 delete the rest, and **rename the folder to end in `master`**. Subsequent imports
-into that collection substitute automatically.
+into that collection substitute automatically. For a template page, additionally clear
+its variable text boxes to blank or a `(hint)` so they act as fill-slots (the heading
+and any other fixed text stay as typed), and map the source page to it in the GUI.
 
 **Robustness, measured this session:**
 
@@ -732,11 +774,11 @@ into that collection substitute automatically.
 
 Best-effort, never fails the conversion. Scans candidate ports (8089 + 3·n), asks
 each `/bloom/api/common/instanceInfo` whether its open collection is this book’s
-parent, and if so POSTs `/bloom/api/external/updateBook` `{id, folderPath}` so Bloom
+parent, and if so POSTs `/bloom/api/external/update-book` `{id, folderPath}` so Bloom
 adds/refreshes the book live.
 
 > **Known issue (observed in this session):** the current BloomBeta build’s
-> `instanceInfo` no longer returns `editableCollectionFolder`, and `updateBook`
+> `instanceInfo` no longer returns `editableCollectionFolder`, and `update-book`
 > returns 404 — so auto-import silently no-ops on that build. Workaround: reload the
 > collection in Bloom so it rescans the folder. This contract likely needs updating.
 

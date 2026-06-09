@@ -296,7 +296,13 @@ export function conversionApiPlugin(): Plugin {
             const mode =
               body.mode === "folder" ? "folder" : body.mode === "vscode" ? "vscode" : "file";
             const { workspace } = await getSettings();
-            if (!target || !path.resolve(target).startsWith(path.resolve(workspace))) {
+            const resolved = path.resolve(target);
+            const inWorkspace = resolved.startsWith(path.resolve(workspace));
+            // Source documents (the PDFs/EPUBs we open with the default app) live in
+            // the user's picked source folders, not the workspace — allow those too.
+            const recents = await getRecentFolders();
+            const inRecent = recents.some((r) => resolved.startsWith(path.resolve(r)));
+            if (!target || !(inWorkspace || inRecent)) {
               return send(res, 403, { error: "path is outside the workspace" });
             }
             try {

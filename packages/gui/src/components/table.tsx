@@ -28,6 +28,7 @@ interface CenterTableProps {
   selectedRunId: string | null;
   onSelectRun: (sid: string, rid: string) => void;
   onSelectPdf: (sid: string) => void;
+  onOpenSource: (s: Source) => void;
   focusPdfId: string | null;
   checkedPdfs: Set<string>;
   onCheckPdf: (sid: string, v: boolean) => void;
@@ -61,6 +62,7 @@ export function CenterTable(props: CenterTableProps) {
     selectedRunId,
     onSelectRun,
     onSelectPdf,
+    onOpenSource,
     focusPdfId,
     checkedPdfs,
     onCheckPdf,
@@ -225,6 +227,7 @@ export function CenterTable(props: CenterTableProps) {
               expanded={expanded.has(s.id)}
               onToggleExpand={() => onToggleExpand(s.id)}
               onSelectPdf={onSelectPdf}
+              onOpenSource={onOpenSource}
               pdfSelected={focusPdfId === s.id}
               pdfChecked={checkedPdfs.has(s.id)}
               onCheckPdf={onCheckPdf}
@@ -527,6 +530,7 @@ function SourceRow({
   expanded,
   onToggleExpand,
   onSelectPdf,
+  onOpenSource,
   pdfSelected,
   pdfChecked,
   onCheckPdf,
@@ -547,6 +551,7 @@ function SourceRow({
   expanded: boolean;
   onToggleExpand: () => void;
   onSelectPdf: (sid: string) => void;
+  onOpenSource: (s: Source) => void;
   pdfSelected: boolean;
   pdfChecked: boolean;
   onCheckPdf: (sid: string, v: boolean) => void;
@@ -645,6 +650,20 @@ function SourceRow({
               {source.name}
             </div>
           </div>
+          {source.path && (
+            <span style={{ marginLeft: "auto", flexShrink: 0 }}>
+              <IconBtn
+                name="external"
+                size={22}
+                iconSize={12}
+                title="Open with default app"
+                onClick={(e?: React.MouseEvent) => {
+                  e?.stopPropagation();
+                  onOpenSource(source);
+                }}
+              />
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
           <StatusPill status={bookStatus(source)} size="sm" />

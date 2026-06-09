@@ -553,6 +553,9 @@ export function App() {
             selectedRunId={focus && focus.type === "run" ? focus.runId : null}
             onSelectRun={onSelectRun}
             onSelectPdf={onSelectPdf}
+            onOpenSource={(s) => {
+              if (s.path) api.osOpen(s.path, "file");
+            }}
             focusPdfId={!batchActive && focus && focus.type === "pdf" ? focus.sourceId : null}
             checkedPdfs={checkedPdfs}
             onCheckPdf={onCheckPdf}

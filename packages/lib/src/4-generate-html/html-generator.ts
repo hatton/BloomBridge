@@ -724,8 +724,10 @@ export class HtmlGenerator {
       .map(({ content, box, style }, i) => {
         const posStyle = posStyleOf(box);
         // A block may request a named Bloom style (e.g. "tableRows" for discussion-question
-        // rows, left-aligned); otherwise canvas text uses Bubble-style.
-        const styleClass = style ? `${style}-style` : "Bubble-style";
+        // rows, left-aligned); otherwise canvas text uses normal-style. (Bloom's own
+        // default for canvas text is Bubble-style — a holdover from comic speech bubbles —
+        // which we override so imported prose reads as ordinary body text.)
+        const styleClass = style ? `${style}-style` : "normal-style";
         // bubble levels stack above the background (level 1); start text at level 2.
         const bubble = this.COVER_DATA_BUBBLE.replace("`level`:1", `\`level\`:${i + 2}`);
         const altBubble = `{\`lang\`:\`${l1}\`,\`style\`:\`${posStyle}\`,\`tails\`:[]}`;
@@ -750,42 +752,27 @@ export class HtmlGenerator {
     // an image element in order. Stacked above the text bubbles.
     //
     // The figures came from a table column where the source sized them all to one width
-    // (heights following each figure's own aspect). So we render every icon at ONE common
-    // width with a proportional height, rather than letting each scale differently inside
-    // its box — which made same-source figures look like different sizes. The common width
-    // is the largest that fits every icon's slot (both its width and, via the aspect, its
-    // height); each icon is then centered in its slot. Falls back to filling the slot when
-    // a figure's intrinsic size is unknown.
-    const icons = imageBoxes
+    // (heights following each figure's own aspect). The EPUB front-end already laid the
+    // boxes out that way — every icon's box shares one column width, and each box's HEIGHT
+    // is the figure's proportional height at that width. So we simply fill the box width and
+    // take the height from the figure's own aspect: same width across icons, no cropping, no
+    // distortion, and no shrinking the tall figures to fit a short band (the old bug, where
+    // the tallest figure dragged the common width down for everyone). Falls back to the box
+    // height when the figure's intrinsic size is unknown.
+    const imageElementsHtml = imageBoxes
       .map((box, i) => ({ box, el: imageEls[i] }))
       .filter((p): p is { box: TextBox; el: ImageElement } => !!p.el)
-      .map(({ box, el }) => {
+      .map(({ box, el }, i) => {
         const sx = box.x * canvasW;
         const sy = box.y * canvasH;
         const sw = box.w * canvasW;
         const sh = box.h * canvasH;
         const dims = el.attributes?.match(/width=(\d+(?:\.\d+)?)[\s,]+height=(\d+(?:\.\d+)?)/i);
         const aspect = dims ? Number(dims[1]) / Number(dims[2]) : undefined;
-        return { src: el.src, sx, sy, sw, sh, aspect };
-      });
-    // Largest width that fits every icon with a known aspect into its slot.
-    const fittedWidths = icons
-      .filter((c) => c.aspect)
-      .map((c) => Math.min(c.sw, c.sh * (c.aspect as number)));
-    const commonWidth = fittedWidths.length ? Math.min(...fittedWidths) : undefined;
-    const imageElementsHtml = icons
-      .map(({ src, sx, sy, sw, sh, aspect }, i) => {
-        let w = sw;
-        let h = sh;
-        let left = sx;
-        let top = sy;
-        if (aspect && commonWidth) {
-          w = commonWidth;
-          h = commonWidth / aspect;
-          left = sx + (sw - w) / 2; // share one left/center within the column
-          top = sy + (sh - h) / 2; // vertically centered in the row band
-        }
-        const posStyle = `left: ${Math.round(left)}px; top: ${Math.round(top)}px; width: ${Math.round(w)}px; height: ${Math.round(h)}px;`;
+        const src = el.src;
+        const w = sw;
+        const h = aspect ? sw / aspect : sh;
+        const posStyle = `left: ${Math.round(sx)}px; top: ${Math.round(sy)}px; width: ${Math.round(w)}px; height: ${Math.round(h)}px;`;
         const level = pairs.length + 2 + i; // above the background (1) and text (2..)
         const bubble = this.COVER_DATA_BUBBLE.replace("`level`:1", `\`level\`:${level}`);
         // No object-fit-cover: the box now matches the figure's aspect, so it isn't cropped.
