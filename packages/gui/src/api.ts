@@ -161,10 +161,30 @@ export const api = {
     `/api/epub/src/${b64url(epubPath)}/spine/${page}`,
   bookPageUrl: (runId: string, page: number, v = 0) =>
     `/api/runs/${runId}/book/__page-${page}.html${v ? `?v=${v}` : ""}`,
+  // Master-page reuse: source page → perceptual-hash map, the master book's pages,
+  // a thumbnail URL per master page, and recording (or clearing) a mapping.
+  runSourceHashes: (runId: string) =>
+    getJson<{ hashes: Record<string, string> }>(`/api/runs/${runId}/source-hashes`),
+  masterPages: (runId: string) =>
+    getJson<{ ready: boolean; masterFolder?: string; pages: { id: string; index: number }[] }>(
+      `/api/runs/${runId}/master-pages`,
+    ),
+  masterPageUrl: (runId: string, index: number, v = 0) =>
+    `/api/runs/${runId}/master-page/__page-${index}.html${v ? `?v=${v}` : ""}`,
+  saveMasterMapping: (runId: string, sourceHash: string, masterPageId: string | null) =>
+    sendJson<{ ok: boolean }>(`/api/runs/${runId}/master-mapping`, "POST", {
+      sourceHash,
+      masterPageId,
+    }),
   // Ask Bloom to fully process this run's book (writes CSS + browser fix-ups),
   // copied back into the run folder. Blocks until Bloom finishes.
   processBook: (runId: string) =>
     sendJson<{ ok: boolean; processed?: number }>(`/api/runs/${runId}/process`, "POST"),
+  // Copy this run's finished book into the matching running Bloom's collection
+  // (external/add-book). Fails if no running Bloom has a collection of the book's
+  // primary language, or if Bloom isn't on its Collection tab.
+  addToCollection: (runId: string) =>
+    sendJson<{ ok: boolean; id?: string }>(`/api/runs/${runId}/add-to-collection`, "POST"),
 };
 
 /** Map a GUI rating (mark) to the server rating vocabulary. */

@@ -123,6 +123,189 @@ describe("generateHtmlDocument", () => {
     expect(device).not.toContain("bloom-imageObjectFit-cover");
   });
 
+  it("uses the detected canvasBackgroundImage even when OCR emitted no image element", () => {
+    // The LFA "comprehension questions" page: a full-page background illustration
+    // (scattered clip-art) that a vision OCR often transcribes as text only, emitting
+    // no `![image]` ref. Stage 1 records the detected full-page image as
+    // canvasBackgroundImage so the picture is not dropped.
+    const book: Book = {
+      frontMatterMetadata: { languages: { en: "English" }, l1: "en", pageSize: "A4Portrait" },
+      pages: [
+        {
+          type: "content" as const,
+          backgroundColor: "#79d3f5",
+          canvasBackgroundImage: "image-6-1.png",
+          canvasTextBoxes: [{ x: 0.13, y: 0.07, w: 0.74, h: 0.86 }],
+          // No image element — only the transcribed questions text.
+          elements: [{ type: "text" as const, content: { en: "You can use these questions" } }],
+        },
+      ],
+    };
+
+    const result = HtmlGenerator.generateHtmlDocument(book, () => {});
+
+    expect(result).toContain('data-tool-id="canvas"');
+    // The full-page background renders from the detected filename.
+    expect(result).toContain('src="image-6-1.png"');
+    expect(result).toContain("bloom-backgroundImage");
+  });
+
+  it("prefers canvasBackgroundImage over the first image element", () => {
+    // When the OCR also captured an image, the geometrically-detected full-page
+    // background wins (the captured one may be a small decorative figure).
+    const book: Book = {
+      frontMatterMetadata: { languages: { en: "English" }, l1: "en", pageSize: "A4Portrait" },
+      pages: [
+        {
+          type: "content" as const,
+          canvasBackgroundImage: "image-6-1.png",
+          canvasTextBoxes: [{ x: 0.13, y: 0.07, w: 0.74, h: 0.86 }],
+          elements: [
+            { type: "image" as const, src: "image-6-3.png" },
+            { type: "text" as const, content: { en: "caption" } },
+          ],
+        },
+      ],
+    };
+
+    const result = HtmlGenerator.generateHtmlDocument(book, () => {});
+    expect(result).toContain('src="image-6-1.png"');
+    expect(result).not.toContain('src="image-6-3.png"');
+  });
+
+  it("positions foreground canvas images (row icons) from canvas-image-boxes", () => {
+    // EPUB discussion-questions page: a white canvas with positioned question text AND the
+    // little reader-figure icon beside each question. The image elements pair to
+    // canvas-image-boxes in order; they are foreground icons, NOT a full-page background.
+    const book: Book = {
+      frontMatterMetadata: {
+        languages: { en: "English" },
+        l1: "en",
+        pageSize: "Device16x9Portrait",
+      },
+      pages: [
+        {
+          type: "content" as const,
+          canvasTextBoxes: [
+            { x: 0.05, y: 0.03, w: 0.9, h: 0.13 },
+            { x: 0.28, y: 0.2, w: 0.65, h: 0.14 },
+          ],
+          canvasImageBoxes: [{ x: 0.07, y: 0.21, w: 0.16, h: 0.12 }],
+          elements: [
+            { type: "image" as const, src: "i-1.jpg" },
+            { type: "text" as const, content: { en: "You can use these questions" } },
+            { type: "text" as const, content: { en: "Where were they going?" } },
+          ],
+        },
+      ],
+    };
+
+    const result = HtmlGenerator.generateHtmlDocument(book, () => {});
+
+    expect(result).toContain('data-tool-id="canvas"');
+    // The icon is a positioned foreground image, not a full-bleed background.
+    expect(result).toContain('src="i-1.jpg"');
+    expect(result).not.toContain('src="i-1.jpg" class="bloom-imageObjectFit-cover"');
+    expect(result).not.toContain("bloom-backgroundImage"); // no background on this white page
+    // Both question texts still render as positioned bubbles.
+    expect(result).toContain("Where were they going?");
+  });
+
+  it("sizes row icons to a common width with proportional heights (not each scaled differently)", () => {
+    // Two figures from the same source column: the source sized them to one width, so
+    // they must render at one width with heights following each figure's aspect — not each
+    // fitted differently inside its box. Intrinsic dims ride on the image attributes.
+    const book: Book = {
+      frontMatterMetadata: {
+        languages: { en: "English" },
+        l1: "en",
+        pageSize: "Device16x9Portrait",
+      },
+      pages: [
+        {
+          type: "content" as const,
+          canvasTextBoxes: [
+            { x: 0.28, y: 0.2, w: 0.65, h: 0.14 },
+            { x: 0.28, y: 0.5, w: 0.65, h: 0.14 },
+          ],
+          canvasImageBoxes: [
+            { x: 0.07, y: 0.2, w: 0.19, h: 0.14 },
+            { x: 0.07, y: 0.5, w: 0.19, h: 0.14 },
+          ],
+          elements: [
+            // a tall figure and a short one, same source width
+            { type: "image" as const, src: "tall.jpg", attributes: "{width=220 height=550}" },
+            { type: "image" as const, src: "short.jpg", attributes: "{width=304 height=325}" },
+            { type: "text" as const, style: "tableRows", content: { en: "Q1" } },
+            { type: "text" as const, style: "tableRows", content: { en: "Q2" } },
+          ],
+        },
+      ],
+    };
+
+    const result = HtmlGenerator.generateHtmlDocument(book, () => {});
+    const widthOf = (src: string) => {
+      const m = result.match(
+        new RegExp(
+          `width: (\\d+)px;[^"]*"[^>]*>\\s*<div class="bloom-imageContainer"[^>]*>\\s*<img src="${src}"`,
+        ),
+      );
+      return m ? Number(m[1]) : null;
+    };
+    const wTall = widthOf("tall.jpg");
+    const wShort = widthOf("short.jpg");
+    expect(wTall).not.toBeNull();
+    expect(wShort).not.toBeNull();
+    expect(wTall).toBe(wShort); // one common width
+    // Heights differ in proportion to the figures' aspects (tall figure is taller).
+    const heightOf = (src: string) => {
+      const m = result.match(
+        new RegExp(
+          `height: (\\d+)px;"[^>]*>\\s*<div class="bloom-imageContainer"[^>]*>\\s*<img src="${src}"`,
+        ),
+      );
+      return m ? Number(m[1]) : null;
+    };
+    expect(heightOf("tall.jpg")!).toBeGreaterThan(heightOf("short.jpg")!);
+  });
+
+  it("applies a named block style (tableRows) to canvas text and left-aligns it via userModifiedStyles", () => {
+    const book: Book = {
+      frontMatterMetadata: {
+        languages: { en: "English" },
+        l1: "en",
+        pageSize: "Device16x9Portrait",
+      },
+      pages: [
+        {
+          type: "content" as const,
+          canvasTextBoxes: [
+            { x: 0.05, y: 0.03, w: 0.9, h: 0.13 },
+            { x: 0.28, y: 0.2, w: 0.65, h: 0.14 },
+          ],
+          elements: [
+            // heading keeps the default Bubble-style (centered); the question row uses tableRows
+            { type: "text" as const, content: { en: "You can use these questions" } },
+            {
+              type: "text" as const,
+              style: "tableRows",
+              content: { en: "Where were they going?" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = HtmlGenerator.generateHtmlDocument(book, () => {});
+
+    // The styled box uses the named style class instead of Bubble-style.
+    expect(result).toContain('class="bloom-editable tableRows-style');
+    expect(result).toContain('class="bloom-editable Bubble-style'); // heading unchanged
+    // userModifiedStyles defines the style, left-aligned (the table-cell default, vs
+    // Bloom's centered Bubble default).
+    expect(result).toMatch(/\.tableRows-style\[lang="en"\] \{[^}]*text-align: left/);
+  });
+
   it("renders a flattened (too-complex) page as a full-page image with a conversion note", () => {
     const book: Book = {
       frontMatterMetadata: { languages: { en: "English" }, l1: "en", pageSize: "A4Portrait" },
@@ -808,10 +991,12 @@ describe("generateHtmlDocument", () => {
       const isbnMatches = result.match(/data-book="ISBN"/g);
       expect(isbnMatches).toHaveLength(1);
 
-      // Check that the concatenated content includes all mapped fields with <br> separators
+      // Check that the concatenated content includes all mapped fields with <br>
+      // separators, with author/illustrator labelled by their role (the merged
+      // acknowledgments field can't otherwise distinguish them).
       expect(result).toContain('data-book="originalAcknowledgments"');
       expect(result).toContain(
-        "Written by Jane Doe<br>John Smith<br>Alice Brown<br>Test Publishing",
+        "Written by Jane Doe<br>Author: John Smith<br>Illustrator: Alice Brown<br>Test Publishing",
       );
 
       // Check that ISBN field is separate

@@ -42,6 +42,13 @@ import {
   pickFolder,
   cleanupRuns,
   processBookInBloomForRun,
+  addFinishedBookToCollectionForRun,
+  getSourcePageHashes,
+  listMasterPagesForRun,
+  resolveMasterPageId,
+  getRunMasterFolder,
+  saveMasterMappingForRun,
+  reapplyMastersForRun,
 } from "./engine";
 
 function send(res: ServerResponse, status: number, body: unknown) {
@@ -570,6 +577,13 @@ export function conversionApiPlugin(): Plugin {
                 // full-page image; grey fallback for any other Bloom page-type label.
                 `var t=lbl.textContent.trim();` +
                 `lbl.style.background=t==='Full Page Image'?'#9334e6':t==='Canvas'?'#1a73e8':'#5f6368';}` +
+                // A page substituted from the master book carries data-from-master:
+                // show a green "From master" pill in the top-left so reuse is obvious.
+                `if(el.hasAttribute('data-from-master')){var fm=document.createElement('div');` +
+                `fm.textContent='From master';fm.style.cssText='position:absolute;top:6px;left:6px;` +
+                `z-index:1000;padding:2px 9px;background:#188038;color:#fff;border-radius:999px;` +
+                `font-size:10px;font-weight:600;letter-spacing:.3px;line-height:1.4;` +
+                `box-shadow:0 1px 3px rgba(0,0,0,.3)';el.appendChild(fm);}` +
                 `});</script>`;
               html = /<\/head>/i.test(html)
                 ? html.replace(/<\/head>/i, inject + "</head>")
@@ -582,6 +596,75 @@ export function conversionApiPlugin(): Plugin {
             const full = path.resolve(root, rel);
             if (!full.startsWith(root)) {
               return send(res, 403, { error: "outside book folder" });
+            }
+            try {
+              const buf = await fs.readFile(full);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", contentTypeFor(path.extname(full)));
+              res.end(buf);
+            } catch {
+              res.statusCode = 404;
+              res.end();
+            }
+            return;
+          }
+
+          // Serve a single master-book page (or its assets) for the master-page
+          // picker, mirroring the /book/__page-N.html synthetic-doc above but rooted
+          // at the run's master book folder. Placed before the generic :action matcher.
+          const masterMatch = p.match(/^\/api\/runs\/([^/]+)\/master-page\/(.*)$/);
+          if (masterMatch && method === "GET") {
+            const runId = decodeURIComponent(masterMatch[1]);
+            const rel = decodeURIComponent(masterMatch[2]);
+            const pageDoc = rel.match(/^__page-(\d+)\.html$/);
+            if (pageDoc) {
+              const n = Number(pageDoc[1]);
+              const { masterFolder, id } = await resolveMasterPageId(runId, n);
+              if (!masterFolder || !id) {
+                res.statusCode = 404;
+                return res.end();
+              }
+              let htmName: string | undefined;
+              try {
+                htmName = (await fs.readdir(masterFolder)).find((f) => /\.html?$/i.test(f));
+              } catch {
+                /* unreadable */
+              }
+              if (!htmName) {
+                res.statusCode = 404;
+                return res.end();
+              }
+              let html = await fs.readFile(path.join(masterFolder, htmName), "utf-8");
+              // Show only the chosen page (by id, so id-less pages stay hidden), hide
+              // the data div, and style the page-type label as a small pill.
+              const inject =
+                `<style>body > .bloom-page{display:none}#bloomDataDiv{display:none!important}` +
+                `.bloom-page .pageLabel{position:absolute;top:6px;right:6px;left:auto;z-index:1000;` +
+                `display:inline-block;width:auto;min-width:0;max-width:none;margin:0;padding:2px 9px;` +
+                `background:#5f6368;color:#fff;border-radius:999px;font-size:10px;font-weight:600;` +
+                `letter-spacing:.3px;line-height:1.4;text-transform:none;box-shadow:0 1px 3px rgba(0,0,0,.3)}` +
+                `.bloom-page .pageLabel::after{content:''!important}</style>` +
+                `<script>document.addEventListener('DOMContentLoaded',function(){` +
+                `var el=document.getElementById(${JSON.stringify(id)});if(!el)return;` +
+                `el.style.display='block';var lbl=el.querySelector('.pageLabel');` +
+                `if(lbl)lbl.textContent=lbl.textContent.replace(/\\s*:\\s*$/,'');});</script>`;
+              html = /<\/head>/i.test(html)
+                ? html.replace(/<\/head>/i, inject + "</head>")
+                : inject + html;
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "text/html; charset=utf-8");
+              return res.end(html);
+            }
+            // Raw asset (CSS/image/font) from the master folder.
+            const masterFolder = await getRunMasterFolder(runId);
+            if (!masterFolder) {
+              res.statusCode = 404;
+              return res.end();
+            }
+            const root = path.resolve(masterFolder);
+            const full = path.resolve(root, rel);
+            if (!full.startsWith(root)) {
+              return send(res, 403, { error: "outside master folder" });
             }
             try {
               const buf = await fs.readFile(full);
@@ -641,6 +724,29 @@ export function conversionApiPlugin(): Plugin {
             // Extracted-metadata checklist: items (with values) + the user's marks.
             if (action === "metadata" && method === "GET") {
               return send(res, 200, await getRunMetadata(runId));
+            }
+            // Source page → perceptual-hash map (drives the master-page picker button).
+            if (action === "source-hashes" && method === "GET") {
+              return send(res, 200, { hashes: await getSourcePageHashes(runId) });
+            }
+            // The master book's pages, for the picker dialog.
+            if (action === "master-pages" && method === "GET") {
+              return send(res, 200, await listMasterPagesForRun(runId));
+            }
+            // Record (or clear, when masterPageId is null) a source-hash → master-page
+            // mapping, then re-apply masters so the preview updates immediately.
+            if (action === "master-mapping" && method === "POST") {
+              const body = await readBody(req);
+              const sourceHash = String(body.sourceHash || "");
+              const masterPageId = body.masterPageId ? String(body.masterPageId) : null;
+              if (!sourceHash) return send(res, 400, { error: "sourceHash required" });
+              try {
+                await saveMasterMappingForRun(runId, sourceHash, masterPageId);
+                await reapplyMastersForRun(runId);
+              } catch (e) {
+                return send(res, 400, { error: e instanceof Error ? e.message : String(e) });
+              }
+              return send(res, 200, { ok: true });
             }
             // Set/clear one metadata-review mark.
             if (action === "checklist" && method === "POST") {
@@ -903,6 +1009,21 @@ export function conversionApiPlugin(): Plugin {
               } catch (e: any) {
                 return send(res, e?.httpStatus || 500, {
                   error: e?.message || "Bloom couldn't process the book.",
+                });
+              }
+            }
+            // Copy this run's finished book into a running Bloom's open collection
+            // (whose L1 matches the book's L1) via external/add-book.
+            if (action === "add-to-collection" && method === "POST") {
+              const rec = await getRunRecord(runId);
+              if (!rec)
+                return send(res, 400, { error: "This run hasn't produced a Bloom book yet." });
+              try {
+                const result = await addFinishedBookToCollectionForRun(rec);
+                return send(res, 200, { ok: true, id: result.id });
+              } catch (e: any) {
+                return send(res, e?.httpStatus || 500, {
+                  error: e?.message || "Bloom couldn't add the book to its collection.",
                 });
               }
             }

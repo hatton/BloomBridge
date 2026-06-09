@@ -83,4 +83,59 @@ Hello`;
     expect(book2.pages[0].horizontalAlign).toBe("center");
     expect(book2.pages[0].backgroundColor).toBe("#222222");
   });
+
+  it("parses and round-trips canvas-background-image", () => {
+    // The detected full-page background of a Canvas page must survive the LLM stage
+    // and the parse->serialize->parse round-trips, or the picture is dropped when the
+    // OCR didn't also emit an `![image]` ref (the LFA comprehension-questions page).
+    const md = `${FRONTMATTER}<!-- page index=1 type="content" canvas-text-boxes="0.1,0.1,0.8,0.2" canvas-background-image="image-6-1.png" -->
+<!-- text lang="en" -->
+You can use these questions`;
+    const book1 = new BloomMarkdown().parseMarkdown(md);
+    expect(book1.pages[0].canvasBackgroundImage).toBe("image-6-1.png");
+
+    const serialized = getMarkdownFromBook(book1);
+    expect(serialized).toContain('canvas-background-image="image-6-1.png"');
+
+    const book2 = new BloomMarkdown().parseMarkdown(serialized);
+    expect(book2.pages[0].canvasBackgroundImage).toBe("image-6-1.png");
+  });
+
+  it("parses and round-trips canvas-image-boxes (positioned foreground icons)", () => {
+    const md = `${FRONTMATTER}<!-- page index=1 type="content" canvas-text-boxes="0.05,0.03,0.9,0.13;0.28,0.2,0.65,0.14" canvas-image-boxes="0.07,0.21,0.16,0.12" -->
+![i-1](i-1.jpg)
+<!-- text lang="en" -->
+You can use these questions
+<!-- text lang="en" -->
+Where were they going?`;
+    const book1 = new BloomMarkdown().parseMarkdown(md);
+    expect(book1.pages[0].canvasImageBoxes).toEqual([{ x: 0.07, y: 0.21, w: 0.16, h: 0.12 }]);
+
+    const serialized = getMarkdownFromBook(book1);
+    expect(serialized).toContain('canvas-image-boxes="0.07,0.21,0.16,0.12"');
+
+    const book2 = new BloomMarkdown().parseMarkdown(serialized);
+    expect(book2.pages[0].canvasImageBoxes).toEqual([{ x: 0.07, y: 0.21, w: 0.16, h: 0.12 }]);
+  });
+
+  it("parses and round-trips a text block's named style (tableRows)", () => {
+    const md = `${FRONTMATTER}<!-- page index=1 type="content" -->
+<!-- text lang="en" -->
+A heading
+<!-- text lang="en" style="tableRows" -->
+A question?`;
+    const book1 = new BloomMarkdown().parseMarkdown(md);
+    const blocks1 = book1.pages[0].elements.filter((e) => e.type === "text");
+    expect(blocks1[0].style).toBeUndefined();
+    expect(blocks1[1].style).toBe("tableRows");
+
+    const serialized = getMarkdownFromBook(book1);
+    expect(serialized).toContain('<!-- text lang="en" style="tableRows" -->');
+
+    const book2 = new BloomMarkdown().parseMarkdown(serialized);
+    const blocks2 = book2.pages[0].elements.filter((e) => e.type === "text");
+    expect(blocks2[1].style).toBe("tableRows");
+    // A style change starts a fresh block (not merged with the unstyled heading).
+    expect(blocks2).toHaveLength(2);
+  });
 });

@@ -108,6 +108,39 @@ export async function getLargestImageCoverage(
 }
 
 /**
+ * Find the page's largest embedded image (by displayed area) and return its 1-based
+ * index *as `extractImagesWithPdfImages` would name it* — i.e. counting only non-smask
+ * images in `pdfimages -list` order, so the result maps to `image-<page>-<index>.png`.
+ * Also returns that image's coverage fraction. Returns null if the page has no
+ * extractable image. Used to record the full-page background of a Canvas page so the
+ * picture survives even when the OCR/LLM didn't emit an `![image]` ref for it.
+ */
+export async function getLargestImageOnPage(
+  pdfPath: string,
+  pageNumber: number,
+  pageInfo: PdfPageInfo,
+): Promise<{ imageIndex: number; coverage: number } | null> {
+  const listOutput = await runPopplerTool("pdfimages", ["-list", pdfPath]);
+  const onPage = parsePdfImagesList(listOutput).filter((img) => img.page === pageNumber);
+
+  const pageAreaInches = (pageInfo.widthPt / 72) * (pageInfo.heightPt / 72);
+  if (pageAreaInches <= 0) return null;
+
+  let best: { imageIndex: number; coverage: number } | null = null;
+  let indexOnPage = 0; // mirrors pdfToImages: 1-based, smask entries skipped
+  for (const img of onPage) {
+    if (img.type === "smask") continue;
+    indexOnPage += 1;
+    const displayedAreaInches = (img.width / img.xppi) * (img.height / img.yppi);
+    const coverage = displayedAreaInches / pageAreaInches;
+    if (!best || coverage > best.coverage) {
+      best = { imageIndex: indexOnPage, coverage };
+    }
+  }
+  return best;
+}
+
+/**
  * Decide whether a page is "full-page art" — i.e. a single embedded image covers
  * at least `threshold` of the page area.
  */

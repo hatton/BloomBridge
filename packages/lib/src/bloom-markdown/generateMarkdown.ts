@@ -90,6 +90,13 @@ export function getMarkdownFromBook(book: Book): string {
         const boxes = page.canvasTextBoxes.map((b) => `${b.x},${b.y},${b.w},${b.h}`).join(";");
         pageComment += `canvas-text-boxes="${boxes}" `;
       }
+      if (page.canvasBackgroundImage) {
+        pageComment += `canvas-background-image="${page.canvasBackgroundImage}" `;
+      }
+      if (page.canvasImageBoxes && page.canvasImageBoxes.length) {
+        const boxes = page.canvasImageBoxes.map((b) => `${b.x},${b.y},${b.w},${b.h}`).join(";");
+        pageComment += `canvas-image-boxes="${boxes}" `;
+      }
       // The true source-PDF page number must survive verbatim (NOT be replaced by
       // `index`, which is array position) so the paired preview can align Bloom
       // pages to their source page across blank/dropped-page gaps.
@@ -128,11 +135,9 @@ export function getMarkdownFromBook(book: Book): string {
           // Generate text content for each language
           for (const [lang, content] of Object.entries(element.content)) {
             let textComment = `<!-- text lang="${lang}"`;
-            if (element.field) {
-              textComment += ` field="${element.field}" -->`;
-            } else {
-              textComment += ` -->`;
-            }
+            if (element.field) textComment += ` field="${element.field}"`;
+            if (element.style) textComment += ` style="${element.style}"`;
+            textComment += ` -->`;
             pageContent += `\n\n${textComment}\n${convertHtmlToMarkdown(content)}`;
           }
         }

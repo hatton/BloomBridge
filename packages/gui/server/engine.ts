@@ -13,11 +13,17 @@ import {
   detectArtifacts,
   startableStages,
   getRunningBloomCollection,
-  notifyBloomOfBook,
+  findBloomCollectionForLanguage,
   bringBloomToFront,
-  selectBookInBloom,
   processBookInBloom,
+  addBookToBloom,
   Parser,
+  findMasterBookFolder,
+  loadMasterPages,
+  loadMasterPagesById,
+  applyMasterPages,
+  appendMasterMapping,
+  clearMasterMapping,
   type ConversionEvent,
   type RunArgs,
 } from "@bloombridge/lib";
@@ -296,11 +302,63 @@ class BloomProcessError extends Error {
 }
 
 /**
+ * Read the book's primary language tag (L1) from its generated .htm — the
+ * `contentLanguage1` entry the HTML generator always writes into the bloomDataDiv.
+ * Used to find a Bloom collection whose own L1 matches before we process/add the
+ * book. Returns undefined when the .htm is missing or has no such tag.
+ */
+async function readBookL1(bookFolderPath: string): Promise<string | undefined> {
+  let htmName: string | undefined;
+  try {
+    htmName = (await fs.readdir(bookFolderPath)).find((f) => /\.html?$/i.test(f));
+  } catch {
+    return undefined;
+  }
+  if (!htmName) return undefined;
+  let html = "";
+  try {
+    html = await fs.readFile(path.join(bookFolderPath, htmName), "utf-8");
+  } catch {
+    return undefined;
+  }
+  const m = html.match(/data-book="contentLanguage1"[^>]*>\s*([^<\s]+)/);
+  return m ? m[1].trim() : undefined;
+}
+
+/**
+ * Find a running Bloom whose open collection's primary language (L1) matches this
+ * book's L1, so process-book / add-book land in a compatible collection. There may
+ * be several Blooms running; we scan them all (a Bloom too old to report its
+ * collection languages is skipped, since we can't confirm it's compatible). Throws
+ * BloomProcessError naming the language when none match, so the user can open the
+ * right collection and retry.
+ */
+async function findCompatibleBloomForRun(
+  rec: RunRecord,
+): Promise<{ port: number; collectionName?: string }> {
+  const l1 = (await readBookL1(rec.bookFolderPath!)) || "";
+  const match = l1 ? await findBloomCollectionForLanguage(l1) : null;
+  if (!match) {
+    const lang = l1 ? `"${l1}"` : "this book's";
+    throw new BloomProcessError(
+      `Couldn't find a running Bloom with a collection for the ${lang} language. ` +
+        `Open a Bloom collection whose primary language is ${lang} (with its Collection tab showing), then try again.`,
+      400,
+    );
+  }
+  return match;
+}
+
+/**
  * The "Process in Bloom" step, shared by the automatic final pipeline stage and the
- * manual /process endpoint. Stages a copy of the run's book in the running Bloom's
- * open collection, asks Bloom to apply its CSS + browser-only fix-ups, then copies the
- * styled result back over the run's workspace folder. Throws BloomProcessError on any
- * failure (Bloom not running, no book, processing error, copy error).
+ * manual /process endpoint. Before processing we confirm a running Bloom has a
+ * collection whose L1 matches the book's L1 (see findCompatibleBloomForRun); if none
+ * does we throw rather than process against an incompatible collection. Then we ask
+ * that Bloom to process the run's book folder in place: Bloom applies its CSS +
+ * browser-only fix-ups and writes the fixed .htm back into that same workspace
+ * folder. No collection involvement — nothing is copied into Bloom's collection.
+ * Throws BloomProcessError on any failure (no compatible Bloom, no book, processing
+ * error).
  */
 export async function processBookInBloomForRun(
   rec: RunRecord,
@@ -315,45 +373,55 @@ export async function processBookInBloomForRun(
     throw new BloomProcessError("This run has no Bloom book to process.", 400);
   }
 
-  const bloom = await getRunningBloomCollection();
-  if (!bloom)
-    throw new BloomProcessError(
-      "Bloom isn't running. Open Bloom with a collection, switch to the Collection tab, then try again.",
-      400,
-    );
+  const bloom = await findCompatibleBloomForRun(rec);
 
-  const dest = path.join(bloom.collectionFolder, "preview - " + rec.bookName);
-  log("Bloom: staging book in collection " + bloom.collectionName);
-  try {
-    await copyDir(rec.bookFolderPath, dest);
-  } catch (e: any) {
-    throw new BloomProcessError("copy failed: " + (e?.message || e), 500);
-  }
-
-  const notify = await notifyBloomOfBook(dest);
-  if (!notify.bookId)
-    throw new BloomProcessError("Could not read the book id from meta.json.", 400);
-
-  // process-book requires the Collection tab to be active; bring Bloom forward and
-  // select the book to nudge it there.
+  // Bring Bloom forward so the user can see its busy overlay while it processes.
   await bringBloomToFront(bloom.port);
-  await selectBookInBloom(notify.bookId, bloom.port);
 
   log("Bloom: processing book…");
-  const result = await processBookInBloom(notify.bookId, bloom.port);
+  const result = await processBookInBloom(rec.bookFolderPath, bloom.port);
   if (!result.ok)
     throw new BloomProcessError(result.error || "Bloom couldn't process the book.", 502);
 
-  // Copy the processed book (now with CSS + fix-ups) back over the run's workspace
-  // folder. The run's intermediate .md artifacts are left untouched.
-  try {
-    await copyDir(dest, rec.bookFolderPath);
-  } catch (e: any) {
-    throw new BloomProcessError("copy-back failed: " + (e?.message || e), 500);
+  // Bloom may rename the folder to match the book title; if so, the returned path is
+  // the new location. Track it so later artifact reads find the processed book.
+  if (result.bookFolderPath && result.bookFolderPath !== rec.bookFolderPath) {
+    rec.bookFolderPath = result.bookFolderPath;
   }
 
   log("Bloom: done");
   return { processed: result.processed };
+}
+
+/**
+ * The "Add finished product to Bloom Collection" action: copy this run's finished
+ * book into a running Bloom's open collection (POST external/add-book) and select
+ * it. Like process-book, this requires a running Bloom whose collection L1 matches
+ * the book's L1 (findCompatibleBloomForRun). Bloom only accepts add-book while its
+ * Collection tab is active, so this also fails (with Bloom's reason) when the user
+ * is mid-edit. Throws BloomProcessError on any failure.
+ */
+export async function addFinishedBookToCollectionForRun(
+  rec: RunRecord,
+): Promise<{ id?: string; bookFolderPath?: string }> {
+  if (!rec.bookFolderPath)
+    throw new BloomProcessError("This run hasn't produced a Bloom book yet.", 400);
+  try {
+    await fs.access(path.join(rec.bookFolderPath, "meta.json"));
+  } catch {
+    throw new BloomProcessError("This run has no Bloom book to add.", 400);
+  }
+
+  const bloom = await findCompatibleBloomForRun(rec);
+  await bringBloomToFront(bloom.port);
+
+  const result = await addBookToBloom(rec.bookFolderPath, bloom.port);
+  if (!result.ok)
+    throw new BloomProcessError(
+      result.error || "Bloom couldn't add the book to its collection.",
+      502,
+    );
+  return { id: result.id, bookFolderPath: result.bookFolderPath };
 }
 
 /**
@@ -496,6 +564,12 @@ async function executeRun(rec: RunRecord) {
     rec.status = result.status === "completed" ? "done" : result.status;
     if (result.error) rec.error = result.error;
     if (result.status === "failed") rec.failedStage = lastStage;
+    // A fresh conversion supersedes any prior master-splice baseline for this book.
+    if (rec.bookFolderPath) {
+      await fs
+        .rm(path.join(rec.bookFolderPath, MASTER_BASELINE_NAME), { force: true })
+        .catch(() => {});
+    }
 
     // Final pipeline stage: hand the finished book to the running Bloom to apply its
     // CSS + browser-only fix-ups. Only when the run reached the Bloom HTML target and
@@ -1098,6 +1172,175 @@ export async function readArtifactFile(runId: string, file: string): Promise<str
 export async function getRunRecord(runId: string) {
   await ensureLoaded();
   return runs.get(runId);
+}
+
+// ---- master-page reuse (GUI picker) ----
+
+/** Sidecar holding the clean (pre-master-splice) Bloom-processed .htm, so clearing
+ *  a mapping can restore the original page. Named without an .htm extension so the
+ *  preview's "find the book's .htm" scan never picks it up. */
+const MASTER_BASELINE_NAME = "master-baseline.bak";
+
+/** The live book .htm in a folder (excludes the baseline sidecar). */
+async function liveBookHtmName(folder: string): Promise<string | undefined> {
+  try {
+    return (await fs.readdir(folder)).find((f) => /\.html?$/i.test(f));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the master book folder for a run: find the collection it targets (the
+ * running Bloom's open collection when the run used the `__running__` sentinel),
+ * then the sibling `*master` folder (excluding the book itself).
+ */
+async function resolveRunMasterFolder(rec: RunRecord): Promise<string | undefined> {
+  const settings = await getSettings();
+  let collectionFolder = rec.collection || settings.defaultCollection || undefined;
+  if (!collectionFolder || collectionFolder === "__running__" || collectionFolder === "recent") {
+    const bloom = await getRunningBloomCollection();
+    collectionFolder =
+      bloom?.collectionFolder || (collectionFolder === "recent" ? undefined : collectionFolder);
+  }
+  if (!collectionFolder || collectionFolder === "recent" || collectionFolder === "__running__") {
+    return undefined;
+  }
+  return findMasterBookFolder(collectionFolder, rec.bookFolderPath);
+}
+
+/**
+ * Map each source page number to its perceptual hash, read from the run's furthest
+ * Markdown artifact (the .htm strips the hash from ordinary pages, but the markdown
+ * keeps `import-source-hash` on every page).
+ */
+export async function getSourcePageHashes(runId: string): Promise<Record<number, string>> {
+  await ensureLoaded();
+  const rec = runs.get(runId);
+  if (!rec || !rec.bookFolderPath) return {};
+  const baseName = path.parse(rec.sourcePath).name;
+  const a = await detectArtifacts(rec.bookFolderPath, baseName);
+  const mdPath = a.bloomMd || a.llmMd || a.ocrMd;
+  if (!mdPath) return {};
+  let content: string;
+  try {
+    content = await fs.readFile(mdPath, "utf-8");
+  } catch {
+    return {};
+  }
+  const out: Record<number, string> = {};
+  try {
+    const book = new Parser().parseMarkdown(content);
+    for (const page of book.pages) {
+      if (typeof page.sourcePdfPage === "number" && page.importSourceHash) {
+        out[page.sourcePdfPage] = page.importSourceHash;
+      }
+    }
+  } catch {
+    /* unparseable markdown — no hashes */
+  }
+  return out;
+}
+
+/**
+ * List the master book's pages for the picker. `index` is the 1-based document
+ * position used to render a thumbnail via `/master-page/__page-{index}.html`, which
+ * resolves the same ordering back to this `id`.
+ */
+export async function listMasterPagesForRun(
+  runId: string,
+): Promise<{ ready: boolean; masterFolder?: string; pages: { id: string; index: number }[] }> {
+  await ensureLoaded();
+  const rec = runs.get(runId);
+  if (!rec) return { ready: false, pages: [] };
+  const masterFolder = await resolveRunMasterFolder(rec);
+  if (!masterFolder) return { ready: false, pages: [] };
+  const byId = await loadMasterPagesById(masterFolder);
+  const pages = [...byId.values()].map((mp, i) => ({ id: mp.id, index: i + 1 }));
+  return { ready: true, masterFolder, pages };
+}
+
+/** The master book folder a run targets, or undefined when there is none. */
+export async function getRunMasterFolder(runId: string): Promise<string | undefined> {
+  await ensureLoaded();
+  const rec = runs.get(runId);
+  if (!rec) return undefined;
+  return resolveRunMasterFolder(rec);
+}
+
+/** Resolve a master folder + 1-based page index to that page's id (picker ordering). */
+export async function resolveMasterPageId(
+  runId: string,
+  index: number,
+): Promise<{ masterFolder?: string; id?: string }> {
+  await ensureLoaded();
+  const rec = runs.get(runId);
+  if (!rec) return {};
+  const masterFolder = await resolveRunMasterFolder(rec);
+  if (!masterFolder) return {};
+  const byId = await loadMasterPagesById(masterFolder);
+  const ids = [...byId.keys()];
+  return { masterFolder, id: ids[index - 1] };
+}
+
+/** Record (or, with a null id, clear) a source-hash → master-page mapping. */
+export async function saveMasterMappingForRun(
+  runId: string,
+  sourceHash: string,
+  masterPageId: string | null,
+): Promise<void> {
+  await ensureLoaded();
+  const rec = runs.get(runId);
+  if (!rec) throw new Error("Run not found.");
+  const masterFolder = await resolveRunMasterFolder(rec);
+  if (!masterFolder) throw new Error("No master book found in this collection.");
+  if (masterPageId) await appendMasterMapping(masterFolder, sourceHash, masterPageId);
+  else await clearMasterMapping(masterFolder, sourceHash);
+}
+
+/** Add `data-import-source-hash` to each bloom-page div by its source page number,
+ *  so the hash-driven `applyMasterPages` can match (the processed .htm omits it). */
+function injectSourceHashes(html: string, pdfPageToHash: Record<number, string>): string {
+  return html.replace(/<div\b[^>]*\bbloom-page\b[^>]*>/gi, (tag) => {
+    if (/data-import-source-hash=/i.test(tag)) return tag;
+    const m = tag.match(/data-source-pdf-page="(\d+)"/);
+    const hash = m ? pdfPageToHash[Number(m[1])] : undefined;
+    return hash ? tag.replace(/(<div\b)/i, `$1 data-import-source-hash="${hash}"`) : tag;
+  });
+}
+
+/**
+ * Re-apply master pages to a run's book for an immediate preview refresh — Stage 4
+ * only, no OCR/LLM. Works on a one-time snapshot of the Bloom-processed .htm so that
+ * non-master pages keep Bloom's layout and clearing a mapping reverts a page.
+ */
+export async function reapplyMastersForRun(runId: string): Promise<void> {
+  await ensureLoaded();
+  const rec = runs.get(runId);
+  if (!rec || !rec.bookFolderPath) return;
+  const folder = rec.bookFolderPath;
+  const htmName = await liveBookHtmName(folder);
+  if (!htmName) return;
+  const livePath = path.join(folder, htmName);
+  const baselinePath = path.join(folder, MASTER_BASELINE_NAME);
+
+  // Snapshot the clean Bloom-processed document the first time we touch this run.
+  try {
+    await fs.access(baselinePath);
+  } catch {
+    await fs.copyFile(livePath, baselinePath);
+  }
+
+  let html = await fs.readFile(baselinePath, "utf-8");
+  const masterFolder = await resolveRunMasterFolder(rec);
+  if (masterFolder) {
+    const masterPages = await loadMasterPages(masterFolder);
+    const pdfPageToHash = await getSourcePageHashes(runId);
+    html = injectSourceHashes(html, pdfPageToHash);
+    html = await applyMasterPages(html, { masterPages, bookFolder: folder, masterFolder });
+  }
+  await fs.writeFile(livePath, html, "utf-8");
+  pushRun(rec); // nudge the client to reload the preview iframe
 }
 
 function humanSize(bytes: number): string {

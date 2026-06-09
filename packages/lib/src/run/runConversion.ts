@@ -601,7 +601,16 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
           bookFolderPath: plan.bookFolderPath,
         };
       logger.info(`-> Extracting EPUB...`);
-      const { markdown } = await epubToBloomMarkdown(plan.epubPath!, plan.bookFolderPath!);
+      // Master-page reuse for EPUB: a page whose main image matches a master page is
+      // substituted in Stage 4 (the EPUB flow has no OCR to skip, but the same hashes
+      // drive the GUI picker and the substitution).
+      let epubMasterHashes: Set<string> | undefined;
+      if (plan.masterFolderPath && !plan.emitSourceHashes) {
+        epubMasterHashes = await readMasterHashes(plan.masterFolderPath);
+      }
+      const { markdown } = await epubToBloomMarkdown(plan.epubPath!, plan.bookFolderPath!, {
+        masterHashes: epubMasterHashes,
+      });
       logger.info(`Writing tagged markdown to: ${plan.markdownCleanedAfterLLMPath}`);
       await fs.writeFile(plan.markdownCleanedAfterLLMPath!, markdown);
 
@@ -735,6 +744,12 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
             let addition = ` canvas-text-boxes="${boxes}"`;
             if (info.backgroundColor && !/background-color=/.test(attrs)) {
               addition += ` background-color="${info.backgroundColor}"`;
+            }
+            // Record the detected full-page background image so Stage 4 renders it
+            // even when the OCR/LLM omitted the `![image]` ref (e.g. the LFA
+            // "comprehension questions" page, whose art is scattered clip-art).
+            if (info.backgroundImageIndex && !/canvas-background-image=/.test(attrs)) {
+              addition += ` canvas-background-image="image-${pageNum}-${info.backgroundImageIndex}.png"`;
             }
             return `${open}${attrs}${addition}${close}`;
           });

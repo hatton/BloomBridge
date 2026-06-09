@@ -635,6 +635,7 @@ export function App() {
           }
           bloomRunning={bloom.running}
           bloomCollectionName={bloom.collectionName}
+          onToast={showToast}
         />
       </div>
 

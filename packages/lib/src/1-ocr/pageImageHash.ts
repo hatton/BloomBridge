@@ -24,8 +24,11 @@ export const DEFAULT_HASH_MODE: PageHashMode = "perceptual";
  */
 export const PERCEPTUAL_MATCH_MAX_DISTANCE = 10;
 
+/** An image to hash: either a path on disk or its raw bytes (e.g. an EPUB zip entry). */
+export type ImageInput = string | Buffer;
+
 /** Compute a 64-bit difference hash (dHash) of an image, as 16 hex chars. */
-async function perceptualHash(imagePath: string): Promise<string> {
+async function perceptualHash(imagePath: ImageInput): Promise<string> {
   // 9x8 grayscale; each bit compares a pixel to its right-hand neighbor.
   const { data } = await sharp(imagePath)
     .greyscale()
@@ -43,7 +46,7 @@ async function perceptualHash(imagePath: string): Promise<string> {
 }
 
 /** SHA-256 of the decoded raw pixels (exact mode). */
-async function exactHash(imagePath: string): Promise<string> {
+async function exactHash(imagePath: ImageInput): Promise<string> {
   const { data, info } = await sharp(imagePath).raw().toBuffer({ resolveWithObject: true });
   const hash = createHash("sha256");
   hash.update(`${info.width}x${info.height}x${info.channels}|`);
@@ -56,7 +59,7 @@ async function exactHash(imagePath: string): Promise<string> {
  * master-book pages) as `data-import-source-hash` and matched with `hashesMatch`.
  */
 export async function hashPageImage(
-  imagePath: string,
+  imagePath: ImageInput,
   mode: PageHashMode = DEFAULT_HASH_MODE,
 ): Promise<string> {
   return mode === "exact" ? exactHash(imagePath) : perceptualHash(imagePath);

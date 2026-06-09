@@ -7,6 +7,7 @@ import {
   type PageElement,
   type TextBlockElement,
   type ImageElement,
+  type TextBox,
   FRONT_COVER_IMAGE_FILENAME,
   BACK_COVER_IMAGE_FILENAME,
 } from "../types.js";
@@ -122,7 +123,22 @@ export class HtmlGenerator {
   private static generateUserModifiedStyles(book: Book): string {
     const size = book.frontMatterMetadata.normalFontSizePt;
     const family = book.frontMatterMetadata.normalFontFamily;
-    if (!size && !family) return "";
+
+    // Named styles requested by text blocks (e.g. "tableRows" for discussion-question
+    // rows). Each becomes a `.<name>-style` rule so an editor can restyle the group in
+    // Bloom. Some carry an intended default beyond the body font — tableRows is left
+    // aligned (a table cell's HTML default, vs Bloom's centered Bubble-style default).
+    const STYLE_EXTRA_DECLS: Record<string, string> = { tableRows: "text-align: left !important;" };
+    const customStyles = [
+      ...new Set(
+        book.pages
+          .flatMap((p) => p.elements)
+          .filter((e): e is TextBlockElement => e.type === "text" && !!e.style)
+          .map((e) => e.style as string),
+      ),
+    ];
+
+    if (!size && !family && customStyles.length === 0) return "";
 
     const decls = [
       size ? `font-size: ${size}pt !important;` : "",
@@ -132,11 +148,19 @@ export class HtmlGenerator {
       .join(" ");
 
     const rules: string[] = [];
-    for (const styleName of ["normal-style", "Bubble-style"]) {
+    for (const styleName of [
+      "normal-style",
+      "Bubble-style",
+      ...customStyles.map((s) => `${s}-style`),
+    ]) {
       if (size) {
         rules.push(`.${styleName} { font-size: ${size}pt !important; }`);
       }
-      rules.push(`.${styleName}[lang="${book.frontMatterMetadata.l1}"] { ${decls} }`);
+      // The body font (per L1) plus any per-style extra declarations (e.g. alignment).
+      const styleKey = styleName.replace(/-style$/, "");
+      const extra = STYLE_EXTRA_DECLS[styleKey] ?? "";
+      const body = [decls, extra].filter(Boolean).join(" ");
+      if (body) rules.push(`.${styleName}[lang="${book.frontMatterMetadata.l1}"] { ${body} }`);
     }
 
     return `<style type="text/css" title="userModifiedStyles">
@@ -287,6 +311,21 @@ export class HtmlGenerator {
       illustrator: "originalAcknowledgments", // TODO
     };
 
+    // author and illustrator both collapse into the single originalAcknowledgments
+    // field (Bloom's credits acknowledgments), which can't tell them apart. Without a
+    // role label the credits page would show only bare names ("Nandini Nayar /
+    // Nirzara Verulkar"), so we prefix each with its role.
+    const roleLabelForField: Record<string, string> = {
+      author: "Author",
+      illustrator: "Illustrator",
+    };
+
+    // The license is language-neutral metadata that Bloom stores under lang="*".
+    // Emitting it under the book's L1 (e.g. "or") means Bloom's xMatter regeneration
+    // never finds the license, so it falls back to a Null license and writes
+    // "For permission to reuse, contact the copyright holder."
+    const languageNeutralFields = new Set(["licenseUrl", "license"]);
+
     // Group fields by their output field name and concatenate values
     const fields = this.fields(book);
     fixIsbn(fields);
@@ -313,13 +352,16 @@ export class HtmlGenerator {
       }
 
       // For each language in this field, add the value to the array
+      const roleLabel = roleLabelForField[element.field];
       for (const [lang, value] of Object.entries(element.content)) {
         if (!groupedFields[outputFieldName][lang]) {
           groupedFields[outputFieldName][lang] = [];
         }
-        const htmlValue = inlineMarkdownToHtml(value);
+        let htmlValue = inlineMarkdownToHtml(value);
         if (htmlValue.trim()) {
-          // Only add non-empty values
+          // Only add non-empty values, labelling author/illustrator with their role
+          // so the merged acknowledgments keeps the distinction.
+          if (roleLabel) htmlValue = `${roleLabel}: ${htmlValue}`;
           groupedFields[outputFieldName][lang].push(htmlValue);
         }
       }
@@ -327,6 +369,16 @@ export class HtmlGenerator {
 
     // Generate div elements for each grouped field
     for (const [outputFieldName, langValues] of Object.entries(groupedFields)) {
+      if (languageNeutralFields.has(outputFieldName)) {
+        // Merge whatever language the value arrived under into a single lang="*" div.
+        const valueArray = Object.values(langValues).find((a) => a.length > 0);
+        if (valueArray && valueArray.length > 0) {
+          elements.push(
+            `      <div data-book="${outputFieldName}" lang="*">${valueArray.join("<br>")}</div>`,
+          );
+        }
+        continue;
+      }
       for (const [lang, valueArray] of Object.entries(langValues)) {
         if (valueArray.length > 0) {
           const concatenatedValue = valueArray.join("<br>");
@@ -604,7 +656,21 @@ export class HtmlGenerator {
   private static generateCanvasPage(page: Page, metadata: FrontMatterMetadata): string | null {
     const boxes = page.canvasTextBoxes;
     if (!boxes || boxes.length === 0) return null;
-    const imageEl = page.elements.find((e): e is ImageElement => e.type === "image");
+    // Foreground images positioned over the canvas (e.g. the row icons of a
+    // discussion-questions grid): the page's image elements pair to canvas-image-boxes
+    // in reading order. When present, those image elements are positioned icons, NOT
+    // the background.
+    const imageEls = page.elements.filter((e): e is ImageElement => e.type === "image");
+    const imageBoxes = page.canvasImageBoxes ?? [];
+    const hasImageBoxes = imageBoxes.length > 0;
+    // The full-page background: prefer the geometrically-detected image recorded in
+    // Stage 1 (canvasBackgroundImage), which is present even when the OCR/LLM didn't
+    // emit an `![image]` ref for this page; otherwise fall back to the first image
+    // element the OCR did capture (and the EPUB front-end's emitted background) — unless
+    // the images are foreground icons (canvas-image-boxes), in which case there is no
+    // element-based background.
+    const backgroundSrc =
+      page.canvasBackgroundImage ?? (hasImageBoxes ? undefined : imageEls[0]?.src);
     const textEls = page.elements.filter(
       (e): e is TextBlockElement =>
         e.type === "text" &&
@@ -634,25 +700,32 @@ export class HtmlGenerator {
     //  3. else merge everything into the union box so nothing is dropped.
     const blockContents = textEls.map((e) => e.content);
     let units: Record<string, string>[];
+    let unitStyles: (string | undefined)[]; // Bloom style name per unit, when matched 1:1
     let useBoxes: { x: number; y: number; w: number; h: number }[];
     if (blockContents.length === boxes.length) {
       units = blockContents;
+      unitStyles = textEls.map((e) => e.style);
       useBoxes = boxes;
     } else {
       const chunks = splitIntoParagraphChunks(textEls);
       if (chunks.length === boxes.length) {
         units = chunks;
+        unitStyles = chunks.map(() => undefined);
         useBoxes = boxes;
       } else {
         units = [mergeTextBlocks(textEls).content];
+        unitStyles = [undefined];
         useBoxes = [unionBox(boxes)];
       }
     }
-    const pairs = units.map((content, i) => ({ content, box: useBoxes[i] }));
+    const pairs = units.map((content, i) => ({ content, box: useBoxes[i], style: unitStyles[i] }));
 
     const textElementsHtml = pairs
-      .map(({ content, box }, i) => {
+      .map(({ content, box, style }, i) => {
         const posStyle = posStyleOf(box);
+        // A block may request a named Bloom style (e.g. "tableRows" for discussion-question
+        // rows, left-aligned); otherwise canvas text uses Bubble-style.
+        const styleClass = style ? `${style}-style` : "Bubble-style";
         // bubble levels stack above the background (level 1); start text at level 2.
         const bubble = this.COVER_DATA_BUBBLE.replace("`level`:1", `\`level\`:${i + 2}`);
         const altBubble = `{\`lang\`:\`${l1}\`,\`style\`:\`${posStyle}\`,\`tails\`:[]}`;
@@ -662,12 +735,63 @@ export class HtmlGenerator {
             const html = blockMarkdownToHtml(content[lang]) || "<p></p>";
             const visibility =
               lang === l1 ? " bloom-visibility-code-on bloom-content1 bloom-contentNational1" : "";
-            return `<div class="bloom-editable Bubble-style${visibility}" lang="${lang}" contenteditable="true" data-bubble-alternate="${altBubble}">${html}</div>`;
+            return `<div class="bloom-editable ${styleClass}${visibility}" lang="${lang}" contenteditable="true" data-bubble-alternate="${altBubble}">${html}</div>`;
           })
           .join("\n");
         return `            <div class="bloom-canvas-element" style="${posStyle}" data-bubble="${bubble}">
               <div class="bloom-translationGroup bloom-leadingElement" data-default-languages="V" style="font-size: ${fontPx}px;">
                 ${editables}
+              </div>
+            </div>`;
+      })
+      .join("\n");
+
+    // Foreground images positioned at canvas-image-boxes (the row icons), each pairing to
+    // an image element in order. Stacked above the text bubbles.
+    //
+    // The figures came from a table column where the source sized them all to one width
+    // (heights following each figure's own aspect). So we render every icon at ONE common
+    // width with a proportional height, rather than letting each scale differently inside
+    // its box — which made same-source figures look like different sizes. The common width
+    // is the largest that fits every icon's slot (both its width and, via the aspect, its
+    // height); each icon is then centered in its slot. Falls back to filling the slot when
+    // a figure's intrinsic size is unknown.
+    const icons = imageBoxes
+      .map((box, i) => ({ box, el: imageEls[i] }))
+      .filter((p): p is { box: TextBox; el: ImageElement } => !!p.el)
+      .map(({ box, el }) => {
+        const sx = box.x * canvasW;
+        const sy = box.y * canvasH;
+        const sw = box.w * canvasW;
+        const sh = box.h * canvasH;
+        const dims = el.attributes?.match(/width=(\d+(?:\.\d+)?)[\s,]+height=(\d+(?:\.\d+)?)/i);
+        const aspect = dims ? Number(dims[1]) / Number(dims[2]) : undefined;
+        return { src: el.src, sx, sy, sw, sh, aspect };
+      });
+    // Largest width that fits every icon with a known aspect into its slot.
+    const fittedWidths = icons
+      .filter((c) => c.aspect)
+      .map((c) => Math.min(c.sw, c.sh * (c.aspect as number)));
+    const commonWidth = fittedWidths.length ? Math.min(...fittedWidths) : undefined;
+    const imageElementsHtml = icons
+      .map(({ src, sx, sy, sw, sh, aspect }, i) => {
+        let w = sw;
+        let h = sh;
+        let left = sx;
+        let top = sy;
+        if (aspect && commonWidth) {
+          w = commonWidth;
+          h = commonWidth / aspect;
+          left = sx + (sw - w) / 2; // share one left/center within the column
+          top = sy + (sh - h) / 2; // vertically centered in the row band
+        }
+        const posStyle = `left: ${Math.round(left)}px; top: ${Math.round(top)}px; width: ${Math.round(w)}px; height: ${Math.round(h)}px;`;
+        const level = pairs.length + 2 + i; // above the background (1) and text (2..)
+        const bubble = this.COVER_DATA_BUBBLE.replace("`level`:1", `\`level\`:${level}`);
+        // No object-fit-cover: the box now matches the figure's aspect, so it isn't cropped.
+        return `            <div class="bloom-canvas-element" style="${posStyle}" data-bubble="${bubble}">
+              <div class="bloom-imageContainer" data-tool-id="canvas" style="direction: ltr;">
+                <img src="${escapeHtml(src)}" class="" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
               </div>
             </div>`;
       })
@@ -688,10 +812,10 @@ export class HtmlGenerator {
 
     // The full-bleed background image — omitted entirely for a background-less (grid/table)
     // canvas, whose positioned text floats over the blank page.
-    const backgroundHtml = imageEl
+    const backgroundHtml = backgroundSrc
       ? `            <div class="bloom-canvas-element bloom-backgroundImage" style="width: ${canvasW}px; height: ${canvasH}px; top: 0px; left: 0px;" data-bubble="${bgBubble}">
               <div class="bloom-imageContainer" data-tool-id="canvas" style="direction: ltr;">
-                <img src="${escapeHtml(imageEl.src)}" class="${this.fullBleedImageClass(pageSize)}" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
+                <img src="${escapeHtml(backgroundSrc)}" class="${this.fullBleedImageClass(pageSize)}" data-copyright="" data-creator="" data-license="" onerror="this.classList.add('bloom-imageLoadError')" alt="" />
               </div>
             </div>
 `
@@ -703,7 +827,7 @@ export class HtmlGenerator {
       <div class="marginBox">
         <div class="split-pane-component-inner">
           <div class="bloom-canvas bloom-has-canvas-element" data-tool-id="canvas" data-imgsizebasedon="${canvasW},${canvasH}" title="">
-${backgroundHtml}${textElementsHtml}
+${backgroundHtml}${textElementsHtml}${imageElementsHtml ? "\n" + imageElementsHtml : ""}
           </div>
         </div>
       </div>

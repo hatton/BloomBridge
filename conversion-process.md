@@ -253,6 +253,15 @@ border-sampling used by vision-formatting, `detectBackgroundColor.ts`) and emits
 the full-bleed art doesn’t leave a white border (see 9.4). Skipped if
 vision-formatting already set a `background-color`.
 
+It also records the page’s **full-page background image** as
+`canvas-background-image="image-<page>-<n>.png"` — the page’s largest embedded image
+(`getLargestImageOnPage`, indexed to match the extracted file names). This makes the
+canvas background **independent of whether the OCR/LLM emitted an `![image]` ref**:
+on a page whose art is scattered clip-art (the Library-For-All “comprehension
+questions” page — “You can use these questions…”), a vision OCR transcribes the
+questions as text and often omits the picture entirely, which used to drop it from
+the Bloom page. Stage 4 prefers this attribute over the first image element (9.4).
+
 ### 5.7 Flatten pages to images — `--complex-becomes-image` (`flattenComplexPages` / `flattenAllPages`)
 
 Some pages are too intricate to rebuild as editable text. Rather than approximate
@@ -322,6 +331,18 @@ left/top/width/height:%` and emits a `canvas-text-boxes="x,y,w,h;…"` page comm
   emitted as `full-page-image="true"` → Stage 4 renders a background-only full-bleed page
   (§9.4). This is gated on a per-book "is any content page positioned?" check, so a generic
   reflowable EPUB keeps the document-order origami flow below.
+- **Discussion-questions grid (`extractTableCanvas`).** A content page whose prose lives in
+  a `<table>` (an icon column beside a question column — the LFA "You can use these
+  questions…" page) becomes a canvas too: a synthesized heading box at top, then one
+  text box per question in even vertical bands, AND **each row's icon kept** as a
+  positioned foreground image (`canvas-image-boxes`, §9.4) beside its question. (The
+  icons are content; dropping them as "decorative" was a bug.) Because the rows are a
+  **table**, every question's text shares ONE left edge (a column) and is left-aligned —
+  the `tableRows` named style (§9.6) — even an icon-less row, which keeps the column and
+  just leaves its icon slot empty (vs. Bloom's centered `Bubble-style` default, which is
+  wrong for table cells). The heading is a separate centered paragraph, not a `tableRows`
+  row. A links-heavy table is treated as a table-of-contents and left to origami; the
+  canvas only triggers for a short (3–12 block) grid.
 - **Document-order fallback.** A page without positioned prose is walked in document order
   (`extractContentFlow`): block-level leaves by source position, decorative images skipped,
   consecutive prose grouped, bold/centering recovered from the EPUB's own CSS — so a
@@ -448,8 +469,12 @@ normalFontSizePt: 28          # mirrored into the <!-- book --> comment
 - **`<!-- page index=N … -->`** attributes: `type`, `bilingual`, `vertical-align`,
   `horizontal-align`, `background-color`, `canvas-text-boxes` (a `;`-separated list of
   `x,y,w,h` boxes — one per floating text block; the older singular `canvas-text-box`
-  is still accepted), `import-source-hash` (the page-render hash, §5.1/§9.7), and
-  `master-page` (set on a page that matched a master and so skipped OCR).
+  is still accepted), `canvas-background-image` (the detected full-page background
+  image of a canvas page, §5.6/§9.4), `canvas-image-boxes` (a `;`-separated list of
+  `x,y,w,h` boxes for _foreground_ images positioned on a canvas — e.g. the row icons of
+  a discussion-questions grid; the page's image elements pair to these in order, §9.4),
+  `import-source-hash` (the page-render hash, §5.1/§9.7), and `master-page` (set on a
+  page that matched a master and so skipped OCR).
 - **`<!-- text lang="X" field="Y" -->`** introduces a text block; `field` is
   optional. One block per contiguous same-lang/same-field run. A block whose content
   is multiple languages is represented as one `TextBlockElement` with a
@@ -533,7 +558,10 @@ the 12 mm margin and shows a white border.
 
 ### 9.4 Canvas pages — `generateCanvasPage`
 
-For a background image + one or more floating text blocks. Emits the reference
+For a background image + one or more floating text blocks. The background image is
+taken from **`canvas-background-image`** (the Stage-1-detected full-page image,
+§5.6) when present, otherwise the page's first image element — so the picture
+survives even when the OCR/LLM emitted no `![image]` ref for it. Emits the reference
 structure: a `bloom-page numberedPage … bloom-combinedPage` with
 `data-tool-id="canvas"` and the Canvas template `data-pagelineage`; inside, a
 `bloom-backgroundImage` canvas-element filling the canvas, plus **one
@@ -549,6 +577,25 @@ question and the footer) as one block; only if that still doesn't line up does i
 merge all the text into one box so nothing is dropped. Validated on `volcano.pdf`
 (single caption) and the LFA "discussion questions" page (heading + five questions +
 footer → 7 separate positioned elements).
+
+**Foreground images (`canvas-image-boxes`).** Besides the single background, a canvas
+page can carry _positioned foreground images_: the page's image elements pair, in order,
+to the boxes in `canvas-image-boxes`, each rendered as its own `bloom-canvas-element`
+(image container, no object-fit-cover, so the figure is contained not cropped) stacked
+above the text. This is how the EPUB discussion-questions grid keeps the little
+reader-figure icon beside each question (§5A) — they are content, not decoration. When
+`canvas-image-boxes` is present the image elements are foreground icons, so the
+element-based background fallback is suppressed (the background comes only from
+`canvas-background-image`, or there is none — the white questions page).
+
+These icons came from one table column where the source sized them all to a single width
+(heights following each figure's own aspect). So they are rendered at **one common
+width** with proportional heights, not each scaled to fill its own box (which made same-
+source figures look like different sizes). The common width is the largest that fits
+every icon's slot — both its width and, via the figure's aspect ratio, its height — and
+each icon is centered in its slot. The figures' intrinsic pixel sizes ride to Stage 4 on
+the image's markdown `{width=… height=…}` attributes (the EPUB front-end reads them from
+the image headers); when a size is unknown the icon just fills its slot.
 
 If the page has a detected `background-color` (5.6), it is applied to the page div
 as Bloom’s `--page-background-color` custom property — the canvas art fills only
@@ -582,7 +629,14 @@ the thumbnail isn’t tiny before Bloom recomputes geometry on first view).
 - **`userModifiedStyles`** (`generateUserModifiedStyles`): emits the detected body
   font as `.normal-style { font-size: Npt }` + `.normal-style[lang="L1"] { …
 font-family }`, and the **same rules for `.Bubble-style`** so canvas captions match
-  the body. Editables carry the `normal-style` class.
+  the body. Editables carry the `normal-style` class. A text block may also request a
+  **named style** via `TextBlockElement.style` (round-tripped as `style="…"` on the
+  `<!-- text -->` comment); `generateCanvasPage` then puts `<name>-style` on the editable
+  instead of `Bubble-style`, and this method emits a matching `.<name>-style` rule. The
+  one in use today is **`tableRows`** (discussion-question rows, §5A), which adds
+  `text-align: left` — a table cell's HTML default — so the questions aren't centered by
+  Bloom's `Bubble-style` default; emitting it as a style (not inline) lets an editor
+  restyle all the questions together in Bloom.
 - **Page size**: every `bloom-page` (content + covers) gets the detected size class
   (e.g. `A4Portrait`), replacing the old hard-coded `A5Portrait`. `pagePx` converts a
   size class to px at 96 dpi minus a 12 mm margin (Bloom’s `--page-margin`).

@@ -394,6 +394,14 @@ describe("epubToBloomMarkdown", () => {
 </manifest>
 <spine><itemref idref="q"/></spine></package>`;
     const q = `<html><head><title>The Book</title></head><body><section>${tableHtml}</section></body></html>`;
+    // Include a stub file for every image the table references (resolved relative to
+    // OEBPS/Text/), so useImage finds them in the archive and the row icons are copied.
+    const imageEntries = [...tableHtml.matchAll(/<img\b[^>]*\bsrc=["']([^"']+)["']/gi)].map(
+      (m) => ({
+        name: `OEBPS/${m[1].replace(/^\.\.\//, "")}`,
+        data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+      }),
+    );
     return zip([
       file("mimetype", "application/epub+zip"),
       file(
@@ -402,10 +410,11 @@ describe("epubToBloomMarkdown", () => {
       ),
       file("OEBPS/content.opf", opf),
       file("OEBPS/Text/q.xhtml", q),
+      ...imageEntries,
     ]);
   }
 
-  it("lays a discussion-questions table page out as a text-only canvas", async () => {
+  it("lays a discussion-questions table page out as a canvas, keeping each row's icon", async () => {
     const md = await convert(
       epubWithTablePage(`<h2>Talk about this book.</h2>
 <table>
@@ -414,15 +423,39 @@ describe("epubToBloomMarkdown", () => {
 <tr><td></td><td>What happened next?</td></tr>
 </table>`),
     );
-    // A heading box + one box per question (4 boxes), and no `![]()` image — the canvas
-    // floats positioned text over the blank page.
+    // A heading box + one box per question (4 text boxes).
     const m = md.match(/canvas-text-boxes="([^"]+)"/);
     expect(m).not.toBeNull();
     expect(m![1].split(";")).toHaveLength(4);
     expect(md).toContain("**Talk about this book.**");
     expect(md).toContain("Where were they going?");
     expect(md).toContain("What happened next?");
-    expect(md).not.toMatch(/!\[[^\]]*\]\(/); // no image line on this page
+    // The two rows that HAVE an icon keep it: an image line + a canvas-image-boxes entry
+    // each. The icon-less third row contributes neither. (Icons are content, not noise —
+    // dropping them as "decorative" was the bug.)
+    const imgBoxes = md.match(/canvas-image-boxes="([^"]+)"/);
+    expect(imgBoxes).not.toBeNull();
+    expect(imgBoxes![1].split(";")).toHaveLength(2);
+    // The icons carry their intrinsic pixel size so Stage 4 can size them all to one
+    // common width with proportional heights (the source's equal-width intent). The stub
+    // fixture images are 4-byte JPEGs with no real dimensions, so the `{width= height=}`
+    // suffix may be absent here; the real-EPUB sizing is covered by the html-generator test.
+    expect(md).toMatch(/!\[i-1\]\(i-1\.jpg\)/);
+    expect(md).toMatch(/!\[i-2\]\(i-2\.jpg\)/);
+
+    // The questions are a table column: each row's text carries the `tableRows` style
+    // (left-aligned in Stage 4) and shares ONE left edge — including the icon-less row,
+    // which lines up with the others (it just has an empty icon slot). The heading is a
+    // separate centered paragraph, NOT a tableRows row.
+    expect(md).toContain('<!-- text lang="en" style="tableRows" -->');
+    const rowXs = m![1]
+      .split(";")
+      .slice(1) // drop the heading box
+      .map((b) => b.split(",")[0]);
+    expect(new Set(rowXs).size).toBe(1); // all questions share one left X
+    // The heading row is NOT styled tableRows (it stays centered).
+    const headingIdx = md.indexOf("**Talk about this book.**");
+    expect(md.slice(0, headingIdx)).not.toContain('style="tableRows"');
   });
 
   it("leaves a links-only contents/index table to origami (not a canvas)", async () => {

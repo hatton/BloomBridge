@@ -26,6 +26,23 @@ interface BloomInstanceInfo {
   collectionName?: string;
 }
 
+/** A running Bloom instance and the editable collection it currently has open. */
+export interface RunningBloomInstance {
+  port: number;
+  collectionFolder: string;
+  collectionName?: string;
+}
+
+/** The languages the open collection is configured for (external/collection-languages). */
+export interface CollectionLanguages {
+  /** Primary/vernacular language tag (BCP-47), always present. */
+  L1Code: string;
+  /** Second language tag, always present. */
+  L2Code: string;
+  /** Third language tag, or null when the collection has no third language. */
+  L3Code: string | null;
+}
+
 export interface NotifyBloomResult {
   /** True if a matching running Bloom was found and accepted the update. */
   notified: boolean;
@@ -72,6 +89,79 @@ export async function getRunningBloomCollection(): Promise<{
   return null;
 }
 
+/**
+ * Find every running Bloom and report the editable collection each currently has
+ * open. There can be more than one Bloom running at once (different collections),
+ * so callers that need to pick a specific collection scan them all rather than
+ * stopping at the first.
+ */
+export async function getRunningBloomInstances(): Promise<RunningBloomInstance[]> {
+  const found: RunningBloomInstance[] = [];
+  for (const port of CANDIDATE_PORTS) {
+    try {
+      const response = await fetch(`http://localhost:${port}/bloom/api/common/instanceInfo`, {
+        signal: AbortSignal.timeout(PORT_PROBE_TIMEOUT_MS),
+      });
+      if (!response.ok) continue;
+      const info = (await response.json()) as BloomInstanceInfo;
+      if (info.instanceKind === "running-bloom" && info.editableCollectionFolder) {
+        found.push({
+          port,
+          collectionFolder: info.editableCollectionFolder,
+          collectionName: info.collectionName,
+        });
+      }
+    } catch {
+      // Nothing listening on this port (or it timed out); keep scanning.
+    }
+  }
+  return found;
+}
+
+/**
+ * Ask a running Bloom which languages its open collection is configured for
+ * (GET external/collection-languages). Returns null when that Bloom is too old to
+ * have this endpoint (it answers non-2xx) or the request otherwise fails — callers
+ * must treat null as "can't determine", never as a match.
+ */
+export async function getCollectionLanguages(port: number): Promise<CollectionLanguages | null> {
+  try {
+    const response = await fetch(
+      `http://localhost:${port}/bloom/api/external/collection-languages`,
+      { signal: AbortSignal.timeout(PORT_PROBE_TIMEOUT_MS) },
+    );
+    if (!response.ok) return null; // an old Bloom without this endpoint, or an error
+    return (await response.json()) as CollectionLanguages;
+  } catch {
+    return null;
+  }
+}
+
+/** Compare two BCP-47 language tags case-insensitively (e.g. "Bo" === "bo"). */
+function sameLanguageTag(a: string | null | undefined, b: string | null | undefined): boolean {
+  return !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * Scan every running Bloom for one whose open collection's primary language (L1)
+ * matches `l1`, so a generated book is processed/added into a compatible collection.
+ * A Bloom too old to answer collection-languages is skipped — we can't confirm it's
+ * compatible, so we never use it. Returns the matching instance (with its languages)
+ * or null when none match.
+ */
+export async function findBloomCollectionForLanguage(
+  l1: string,
+): Promise<(RunningBloomInstance & { languages: CollectionLanguages }) | null> {
+  const instances = await getRunningBloomInstances();
+  for (const instance of instances) {
+    const languages = await getCollectionLanguages(instance.port);
+    if (languages && sameLanguageTag(languages.L1Code, l1)) {
+      return { ...instance, languages };
+    }
+  }
+  return null;
+}
+
 /** Ask the running Bloom to reload its open collection (POST common/reloadCollection). */
 export async function reloadBloomCollection(port?: number): Promise<boolean> {
   const ports = port ? [port] : CANDIDATE_PORTS;
@@ -113,40 +203,117 @@ export async function selectBookInBloom(bookId: string, port?: number): Promise<
 }
 
 /**
- * Ask the running Bloom to run its full "make it right" pass on a book in the open
- * collection (POST external/process-book with the book's bookInstanceId). Bloom
- * brings the book structurally up to date, processes every page off-screen in a
- * real browser (applying the browser-only fix-ups — image sizing, canvas-element
- * layout, CSS, etc. — that raw generated HTML lacks), and saves it back to disk.
+ * Ask the running Bloom to run its full "make it right" pass on a book folder
+ * (POST external/process-book with the book's absolute folder path). Bloom brings
+ * the book structurally up to date, processes every page off-screen in a real
+ * browser (applying the browser-only fix-ups — image sizing, canvas-element
+ * layout, CSS, etc. — that raw generated HTML lacks), and writes the fixed .htm
+ * back into that same folder. There is no collection involvement.
  *
- * Preconditions enforced by Bloom: the book must already be in the editable
- * collection (call notifyBloomOfBook first) and Bloom must be on the Collection
- * tab. If not, Bloom replies with an error, surfaced here as `ok: false`.
+ * Bloom may rename the folder to match the book title; in that case the returned
+ * `bookFolderPath` differs from the path passed in. Callers MUST use the returned
+ * path from then on.
+ *
+ * On success returns `{ ok: true, processed, bookFolderPath, htmPath }`. On failure
+ * (Bloom not running, or it rejected the request) returns `{ ok: false, error }`.
  *
  * The call BLOCKS until processing finishes, which can take a while, so we set no
  * request timeout.
  */
 export async function processBookInBloom(
-  bookId: string,
+  bookFolder: string,
   port?: number,
-): Promise<{ ok: boolean; processed?: number; error?: string }> {
+): Promise<{
+  ok: boolean;
+  processed?: number;
+  bookFolderPath?: string;
+  htmPath?: string;
+  error?: string;
+}> {
+  const absoluteBookFolder = path.resolve(bookFolder);
   const ports = port ? [port] : CANDIDATE_PORTS;
   for (const p of ports) {
     try {
       const response = await fetch(`http://localhost:${p}/bloom/api/external/process-book`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: bookId }),
+        body: JSON.stringify({ path: absoluteBookFolder }),
       });
       if (response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { processed?: number };
+        const data = (await response.json().catch(() => ({}))) as {
+          processed?: number;
+          bookFolderPath?: string;
+          htmPath?: string;
+        };
         logger.info(`✅ Bloom processed the book (${data?.processed ?? "?"} page(s)).`);
-        return { ok: true, processed: data?.processed };
+        return {
+          ok: true,
+          processed: data?.processed,
+          bookFolderPath: data?.bookFolderPath ?? absoluteBookFolder,
+          htmPath: data?.htmPath,
+        };
       }
-      // Bloom answered but refused (e.g. not on the Collection tab). The other
-      // candidate ports won't have a running Bloom, so stop and report this.
+      // Bloom answered but refused. The other candidate ports won't have a running
+      // Bloom, so stop and report this.
       const text = await response.text().catch(() => "");
       const error = `Bloom rejected process-book (HTTP ${response.status}): ${text || response.statusText}`;
+      logger.warn(error);
+      return { ok: false, error };
+    } catch {
+      // Nothing listening on this port; keep scanning.
+    }
+  }
+  return { ok: false, error: "No running Bloom found." };
+}
+
+/**
+ * Ask a running Bloom to copy a finished book folder into its open collection and
+ * select it (POST external/add-book with the book's absolute folder path). Bloom
+ * copies the folder in (the source is left untouched), reloads its collection list
+ * so the new book appears, and replies with the new book's id and final on-disk
+ * location.
+ *
+ * Bloom only honors this while its Collection tab is active; if the user is mid-edit
+ * it returns a failure with that reason. On success returns
+ * `{ ok: true, id, bookFolderPath, htmPath }`; on failure `{ ok: false, error }`.
+ */
+export async function addBookToBloom(
+  bookFolder: string,
+  port?: number,
+): Promise<{
+  ok: boolean;
+  id?: string;
+  bookFolderPath?: string;
+  htmPath?: string;
+  error?: string;
+}> {
+  const absoluteBookFolder = path.resolve(bookFolder);
+  const ports = port ? [port] : CANDIDATE_PORTS;
+  for (const p of ports) {
+    try {
+      const response = await fetch(`http://localhost:${p}/bloom/api/external/add-book`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: absoluteBookFolder }),
+      });
+      if (response.ok) {
+        const data = (await response.json().catch(() => ({}))) as {
+          id?: string;
+          bookFolderPath?: string;
+          htmPath?: string;
+        };
+        logger.info(`✅ Bloom added the book to its collection.`);
+        return {
+          ok: true,
+          id: data?.id,
+          bookFolderPath: data?.bookFolderPath ?? absoluteBookFolder,
+          htmPath: data?.htmPath,
+        };
+      }
+      // Bloom answered but refused (e.g. not on the Collection tab). Other candidate
+      // ports won't have this Bloom, so stop and report it.
+      const text = await response.text().catch(() => "");
+      const error = `Bloom rejected add-book (HTTP ${response.status}): ${text || response.statusText}`;
       logger.warn(error);
       return { ok: false, error };
     } catch {

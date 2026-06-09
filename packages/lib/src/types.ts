@@ -64,6 +64,12 @@ export interface TextBlockElement {
   //   | "title"
   //   | "coverImage";
   content: Record<string, string>; // lang -> text
+  // Optional Bloom style name (without the "-style" suffix) for this block's editable,
+  // e.g. "tableRows" for discussion-question rows. When unset the renderer uses the
+  // context default (normal-style in origami, Bubble-style on a canvas). A named style
+  // lets an editor restyle all such blocks together in Bloom and carries our intended
+  // defaults (e.g. tableRows = left-aligned); see generateUserModifiedStyles.
+  style?: string;
 }
 
 export type PageElement = ImageElement | TextBlockElement;
@@ -98,6 +104,20 @@ export interface Page {
   // blocks floating on top (a Bloom "Canvas" page); each box is where one text
   // block sits over the image, in reading order (top to bottom).
   canvasTextBoxes?: TextBox[];
+  // Filename of the full-page background illustration for a Canvas page, detected
+  // geometrically in Stage 1 (the page's largest embedded image) and carried in the
+  // page comment. This makes the canvas background independent of whether the OCR/LLM
+  // happened to emit an `![image]` ref — on pages where the art is scattered clip-art
+  // (e.g. the Library-For-All "comprehension questions" page) a vision OCR often omits
+  // it, which used to drop the picture entirely. Stage 4 prefers this over the first
+  // image element (see generateCanvasPage).
+  canvasBackgroundImage?: string;
+  // Boxes for foreground images positioned on a Canvas page (over the background, if any),
+  // one per box in reading order — e.g. the little reader-figure icons beside each question
+  // on the Library-For-All "comprehension questions" page. The page's image elements pair
+  // to these boxes in order; when set, those images are positioned icons rather than the
+  // full-page background. Parallel to canvasTextBoxes.
+  canvasImageBoxes?: TextBox[];
   // 1-based page number of the source PDF this page came from. Captured at OCR time
   // and preserved verbatim through the markdown round-trips (unlike the page-comment
   // `index`, which generateMarkdown re-numbers by array position). Emitted to the

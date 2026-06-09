@@ -162,18 +162,22 @@ export class BloomMarkdown {
             currentTextBlock.content[currentLang] = currentText.trim();
           }
 
-          // Extract the optional field attribute from the comment
+          // Extract the optional field and style attributes from the comment
           const fieldMatch = match[0].match(/field=["']?([^"'\s>]+)["']?/);
           const field = fieldMatch ? fieldMatch[1] : undefined;
+          const styleMatch = match[0].match(/style=["']?([^"'\s>]+)["']?/);
+          const style = styleMatch ? styleMatch[1] : undefined;
 
           // Set new language
           currentLang = match[1];
-          // If our currentTextBlock is a different field or
+          // If our currentTextBlock is a different field/style or
           // if it already has text in this language,
           // create new text block or finalize existing one.
           if (
             currentTextBlock &&
-            (currentTextBlock.field !== field || currentTextBlock.content[currentLang])
+            (currentTextBlock.field !== field ||
+              currentTextBlock.style !== style ||
+              currentTextBlock.content[currentLang])
           ) {
             elements.push(currentTextBlock);
             currentTextBlock = null;
@@ -184,6 +188,7 @@ export class BloomMarkdown {
               type: "text",
               content: {},
               field: field as TextBlockElement["field"],
+              style,
             };
           }
 
@@ -250,9 +255,11 @@ export class BloomMarkdown {
         /<!-- text lang=(?:"?([a-zA-Z0-9-]+)"?)(?:\s+[^>]*)?(?:\s*)-->/,
       );
       if (langMatch) {
-        // Extract field attribute if present
+        // Extract field and style attributes if present
         const fieldMatch = trimmedLine.match(/field=["']?([^"'\s>]+)["']?/);
         const field = fieldMatch ? fieldMatch[1] : undefined;
+        const styleMatch = trimmedLine.match(/style=["']?([^"'\s>]+)["']?/);
+        const style = styleMatch ? styleMatch[1] : undefined;
 
         // Finalize current text before switching languages
         if (currentTextBlock && currentLang && currentText.trim()) {
@@ -260,11 +267,12 @@ export class BloomMarkdown {
         }
         currentLang = langMatch[1];
 
-        // Check if we need to create a new text block due to field mismatch
+        // Check if we need to create a new text block due to a field/style mismatch
         const shouldCreateNewBlock =
           !currentTextBlock ||
           currentTextBlock.content[currentLang] ||
-          currentTextBlock.field !== field;
+          currentTextBlock.field !== field ||
+          currentTextBlock.style !== style;
 
         // Finalize current text block if needed
         if (currentTextBlock && shouldCreateNewBlock) {
@@ -278,6 +286,7 @@ export class BloomMarkdown {
             type: "text",
             content: {},
             field: field as TextBlockElement["field"],
+            style,
           };
         }
 
@@ -333,6 +342,8 @@ export class BloomMarkdown {
       horizontalAlign: pageAttributes.horizontalAlign,
       backgroundColor: pageAttributes.backgroundColor,
       canvasTextBoxes: pageAttributes.canvasTextBoxes,
+      canvasBackgroundImage: pageAttributes.canvasBackgroundImage,
+      canvasImageBoxes: pageAttributes.canvasImageBoxes,
       sourcePdfPage: pageAttributes.sourcePdfPage,
       importSourceHash: pageAttributes.importSourceHash,
       isMasterPage: pageAttributes.isMasterPage,
@@ -353,6 +364,8 @@ export class BloomMarkdown {
     horizontalAlign?: HorizontalAlign;
     backgroundColor?: string;
     canvasTextBoxes?: { x: number; y: number; w: number; h: number }[];
+    canvasBackgroundImage?: string;
+    canvasImageBoxes?: { x: number; y: number; w: number; h: number }[];
     sourcePdfPage?: number;
     importSourceHash?: string;
     isMasterPage?: boolean;
@@ -368,6 +381,8 @@ export class BloomMarkdown {
       horizontalAlign?: HorizontalAlign;
       backgroundColor?: string;
       canvasTextBoxes?: { x: number; y: number; w: number; h: number }[];
+      canvasBackgroundImage?: string;
+      canvasImageBoxes?: { x: number; y: number; w: number; h: number }[];
       sourcePdfPage?: number;
       importSourceHash?: string;
       isMasterPage?: boolean;
@@ -477,6 +492,27 @@ export class BloomMarkdown {
     } else if (singleMatch) {
       const box = parseBox(singleMatch[1]);
       if (box) attributes.canvasTextBoxes = [box];
+    }
+
+    // Boxes for foreground images positioned on a canvas page (the row icons of a
+    // discussion-questions grid); the page's image elements pair to these in order.
+    const imageBoxesMatch = pageComment.match(/canvas-image-boxes=["']([^"']+)["']/);
+    if (imageBoxesMatch) {
+      const boxes = imageBoxesMatch[1].split(";").map(parseBox).filter(Boolean) as {
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+      }[];
+      if (boxes.length) attributes.canvasImageBoxes = boxes;
+    }
+
+    // Filename of the Canvas page's full-page background image, detected
+    // geometrically in Stage 1 so the picture survives even when the OCR/LLM didn't
+    // emit an `![image]` ref for it (see Page.canvasBackgroundImage).
+    const bgImageMatch = pageComment.match(/canvas-background-image=["']?([^"'\s>]+)["']?/);
+    if (bgImageMatch) {
+      attributes.canvasBackgroundImage = bgImageMatch[1];
     }
 
     return attributes;

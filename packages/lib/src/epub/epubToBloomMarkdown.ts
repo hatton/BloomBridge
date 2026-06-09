@@ -27,6 +27,7 @@ import { FRONT_COVER_IMAGE_FILENAME, BACK_COVER_IMAGE_FILENAME } from "../types"
 import type { HorizontalAlign } from "../types";
 import { extractCcLicenseUrl } from "../4-generate-html/licenses";
 import { isStoryWeaverEpub, analyzeStoryWeaver, type StoryWeaverInfo } from "./storyweaver";
+import { hashPageImage, hashesMatch } from "../1-ocr/pageImageHash";
 
 // ---------- tiny XHTML/XML helpers (the markup is regular; regex is enough) ----------
 
@@ -322,6 +323,14 @@ interface CanvasText {
   box: { x: number; y: number; w: number; h: number };
   markdown: string;
   align?: HorizontalAlign;
+  /** Bloom style name for this block's editable (without "-style"), e.g. "tableRows". */
+  style?: string;
+}
+
+interface CanvasImage {
+  box: { x: number; y: number; w: number; h: number };
+  /** Image src, relative to the page's document directory (resolved by the caller). */
+  src: string;
 }
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
@@ -409,65 +418,76 @@ function extractCanvasLayout(
 function extractTableCanvas(
   xhtml: string,
   classStyles: Map<string, ClassStyle>,
-): { texts: CanvasText[] } | null {
+): { texts: CanvasText[]; images: CanvasImage[] } | null {
   const body = xhtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? xhtml;
-  const table = body.match(/<table\b[\s\S]*?<\/table>/i)?.[0];
-  if (!table) return null;
+  const tableMatch = body.match(/<table\b[\s\S]*?<\/table>/i);
+  if (!tableMatch) return null;
+  const table = tableMatch[0];
   // A table whose cells are mostly hyperlinks is a navigation/contents/index table (e.g. a
   // Gutenberg novel's table of contents), not a discussion grid — leave it to origami.
   const cellCount = (table.match(/<td\b/gi) || []).length;
   const linkCount = (table.match(/<a\b[^>]*\bhref=/gi) || []).length;
   if (cellCount > 0 && linkCount * 2 >= cellCount) return null;
 
-  // Individual text blocks in document order (NOT grouped): the heading paragraph(s)
-  // before the table, then each row's text cell. We reuse extractContentFlow's
-  // candidate-walk with its nesting guard, but keep each prose block separate (so each
-  // becomes its own positioned box) and drop the interleaved images (the row icons).
-  interface Candidate {
-    start: number;
-    end: number;
-    attrs: string;
-    inner: string;
-    heading: boolean;
+  // One block per discussion item, in document order: the heading paragraph(s) BEFORE the
+  // table, then each table ROW. We keep each prose block separate (so each becomes its own
+  // positioned box) and — unlike before — we KEEP each row's icon image. The row icons
+  // (little reader figures beside each question) are content, not noise: dropping them as
+  // "decorative" lost the picture entirely. Each iconned row lays out as icon-left +
+  // text-right, mirroring the source's icon/text columns.
+  interface Block {
+    markdown: string;
+    bold: boolean;
+    align?: HorizontalAlign;
+    iconSrc?: string;
   }
-  const candidates: Candidate[] = [];
-  for (const m of body.matchAll(/<(p|div|td)\b([^>]*)>([\s\S]*?)<\/\1>/gi))
-    candidates.push({
-      start: m.index!,
-      end: m.index! + m[0].length,
-      attrs: m[2],
-      inner: m[3],
-      heading: false,
-    });
-  for (const m of body.matchAll(/<(h[1-6])\b([^>]*)>([\s\S]*?)<\/\1>/gi))
-    candidates.push({
-      start: m.index!,
-      end: m.index! + m[0].length,
-      attrs: m[2],
-      inner: m[3],
-      heading: true,
-    });
-  candidates.sort((a, b) => a.start - b.start || b.end - a.end);
+  const blocks: Block[] = [];
 
-  const blocks: { markdown: string; bold: boolean; align?: HorizontalAlign }[] = [];
+  // Heading paragraph(s) before the table (p/div/h), with the same nesting guard the
+  // document-order walk uses.
+  const beforeTable = body.slice(0, tableMatch.index ?? 0);
   let consumedTo = -1;
-  for (const c of candidates) {
-    if (c.start < consumedTo) continue; // nested inside an already-emitted container
-    consumedTo = Math.max(consumedTo, c.end);
-    const text = stripTags(c.inner);
-    if (!text || isPageNumberish(text)) continue; // image-only cell / stray page number
-    const { bold, align } = resolveElementStyle(c.attrs, c.heading, classStyles);
+  for (const m of beforeTable.matchAll(/<(p|div|h[1-6])\b([^>]*)>([\s\S]*?)<\/\1>/gi)) {
+    if (m.index! < consumedTo) continue;
+    consumedTo = m.index! + m[0].length;
+    const text = stripTags(m[3]);
+    if (!text || isPageNumberish(text)) continue;
+    const { bold, align } = resolveElementStyle(m[2], /^h[1-6]$/i.test(m[1]), classStyles);
     blocks.push({ markdown: bold ? `**${text}**` : text, bold: !!bold, align });
+  }
+
+  // Each table row: its text cell (the question) plus its icon image, if any.
+  for (const tr of table.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const rowHtml = tr[1];
+    const iconSrc = rowHtml.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1];
+    let text = "";
+    let cellAttrs = "";
+    for (const cell of rowHtml.matchAll(/<td\b([^>]*)>([\s\S]*?)<\/td>/gi)) {
+      const cellText = stripTags(cell[2].replace(/<img\b[^>]*>/gi, ""));
+      if (cellText && !isPageNumberish(cellText)) {
+        text = cellText;
+        cellAttrs = cell[1];
+        break;
+      }
+    }
+    if (!text) continue; // image-only / empty row
+    const { bold, align } = resolveElementStyle(cellAttrs, false, classStyles);
+    blocks.push({ markdown: bold ? `**${text}**` : text, bold: !!bold, align, iconSrc });
   }
   // A canvas only pays off for a real, SHORT grid: a one/two-line table is better left to
   // origami (avoids canvas-ifying an incidental table), and a long table is tabular data
   // (vocabulary lists, schedules) that overflows evenly-spaced boxes — origami reads better.
   if (blocks.length < 3 || blocks.length > 12) return null;
 
-  // Synthesize positions: a leading bold heading gets the top band; the remaining blocks
-  // share the rest of the page in even vertical bands, slightly inset and gapped.
+  // Synthesize positions: a leading bold heading gets the top band; the remaining rows
+  // share the rest of the page in even vertical bands. The rows form a TABLE, so every
+  // row's text shares one left edge (a column) and is left-aligned — the `tableRows`
+  // style — regardless of whether that particular row has an icon. If ANY row has an
+  // icon we reserve a left icon column for all of them, so the text stays column-aligned
+  // (an icon-less row simply leaves its icon slot empty, as in the source table).
   const texts: CanvasText[] = [];
-  const headingCount = blocks[0].bold ? 1 : 0;
+  const images: CanvasImage[] = [];
+  const headingCount = blocks[0].bold && !blocks[0].iconSrc ? 1 : 0;
   if (headingCount)
     texts.push({
       box: { x: 0.05, y: 0.03, w: 0.9, h: 0.13 },
@@ -475,16 +495,30 @@ function extractTableCanvas(
       align: blocks[0].align ?? "center",
     });
   const rest = blocks.slice(headingCount);
+  const anyIcon = rest.some((b) => b.iconSrc);
+  const textX = anyIcon ? 0.28 : 0.07; // shared left edge of the text column
+  const textW = anyIcon ? 0.65 : 0.86;
   const top = headingCount ? 0.19 : 0.04;
   const band = (0.98 - top) / rest.length;
   rest.forEach((b, i) => {
+    const y = round4(top + i * band);
+    if (b.iconSrc)
+      // A generous slot (left column, ~full band height). Stage 4 fits the icon inside it
+      // at a width common to all the icons, with its height following the figure's own
+      // aspect ratio — so the figures stay proportional to each other (the source sets
+      // them all to one width), instead of each scaling differently inside a fixed box.
+      images.push({
+        box: { x: 0.07, y: round4(y + band * 0.04), w: 0.19, h: round4(band * 0.92) },
+        src: b.iconSrc,
+      });
     texts.push({
-      box: { x: 0.07, y: round4(top + i * band), w: 0.86, h: round4(band * 0.88) },
+      box: { x: textX, y, w: textW, h: round4(band * 0.88) },
       markdown: b.markdown,
-      align: b.align,
+      align: b.align, // a source-specified alignment still wins over the style default
+      style: "tableRows",
     });
   });
-  return { texts };
+  return { texts, images };
 }
 
 // ---------- posix path resolution inside the zip ----------
@@ -589,8 +623,31 @@ export interface EpubExtractResult {
 export async function epubToBloomMarkdown(
   epubPath: string,
   bookFolder: string,
+  options?: { masterHashes?: Set<string> },
 ): Promise<EpubExtractResult> {
   const { zip, read, opfDir, opf, spineHrefs } = loadEpub(epubPath);
+
+  // Perceptual hash of each spine page's MAIN image (its primary illustration). We
+  // have no server-side render of a whole EPUB page, so the main image is the stable
+  // per-page fingerprint — the analog of the PDF flow's page-render hash. It drives
+  // the master-page picker (every hashed page can be mapped to a master page) and,
+  // when a page's hash matches a master, the same Stage-4 substitution the PDF flow does.
+  const pageHashes = new Map<number, string>();
+  for (let s = 0; s < spineHrefs.length; s++) {
+    const zp = resolveZipPath(opfDir, spineHrefs[s]);
+    const xhtml = read(zp);
+    if (!xhtml) continue;
+    const docDir = zp.includes("/") ? zp.slice(0, zp.lastIndexOf("/")) : "";
+    const main = pickMainImage(imageSrcs(xhtml));
+    if (!main) continue;
+    const buf = zip.get(resolveZipPath(docDir, main));
+    if (!buf) continue;
+    try {
+      pageHashes.set(s + 1, await hashPageImage(buf));
+    } catch (error) {
+      logger.warn(`Could not hash EPUB page ${s + 1}: ${error}`);
+    }
+  }
 
   // The EPUB's own CSS tells us, generically, which paragraphs are bold headings and
   // how prose is aligned — no per-template class names baked in here.
@@ -819,12 +876,22 @@ export async function epubToBloomMarkdown(
 
   let emitted = 0;
   let sourcePage = 0; // 1-based spine index of the page being processed
+  let pendingHash: string | undefined; // main-image hash of the page being emitted
+  const masterHashes = options?.masterHashes;
   const emitPage = (attrs: string, lines: string[]) => {
-    if (lines.length === 0) return;
+    const hash = pendingHash;
+    // A page whose image matches a master page renders as a minimal placeholder
+    // carrying its hash; Stage 4 swaps in the master's exact HTML — exactly the PDF flow.
+    const matched =
+      !!hash && !!masterHashes && [...masterHashes].some((mh) => hashesMatch(hash, mh));
+    const body = matched ? ["_(page provided by master book)_"] : lines;
+    if (body.length === 0) return;
     emitted += 1;
+    const hashAttr = hash ? ` import-source-hash="${hash}"` : "";
+    const masterAttr = matched ? ` master-page="true"` : "";
     out.push(
-      `<!-- page index=${emitted} ${attrs} source-pdf-page="${sourcePage}" -->`,
-      ...lines,
+      `<!-- page index=${emitted} ${attrs}${hashAttr}${masterAttr} source-pdf-page="${sourcePage}" -->`,
+      ...body,
       "",
     );
   };
@@ -906,6 +973,9 @@ export async function epubToBloomMarkdown(
 
   for (let s = 0; s < spineHrefs.length; s++) {
     sourcePage = s + 1;
+    // Attach this spine page's main-image hash to whatever page we emit for it (so
+    // the picker button can map it; the synthesized cover/title/credits above get none).
+    pendingHash = pageHashes.get(sourcePage);
     const href = spineHrefs[s];
     const zpath = resolveZipPath(opfDir, href);
     const xhtml = read(zpath);
@@ -973,19 +1043,38 @@ export async function epubToBloomMarkdown(
       }
     }
 
-    // A grid/table page (discussion questions, vocabulary, …) becomes a TEXT-ONLY canvas:
-    // its rows keep a row-per-box layout instead of collapsing into one origami block. No
-    // background image (the source page is white, the row icons are decorative), so we emit
-    // the boxes with no `![]()` line — Stage 4's generateCanvasPage builds a background-less
-    // canvas of positioned text. Falls through to origami when the page has no such table.
+    // A grid/table page (discussion questions, vocabulary, …) becomes a canvas: its rows
+    // keep a row-per-box layout instead of collapsing into one origami block. The source
+    // page has no full-bleed background (it's white), but each row's icon (a little reader
+    // figure beside the question) is content we KEEP — positioned as its own canvas image
+    // beside the text. Stage 4's generateCanvasPage lays out the positioned text + images.
+    // Falls through to origami when the page has no such table.
     const tableCanvas = extractTableCanvas(xhtml, classStyles);
     if (tableCanvas) {
       const lines: string[] = [];
-      for (const t of tableCanvas.texts) lines.push(textTag(), t.markdown);
+      // Positioned row icons first (parsed into image elements), then the text blocks.
+      const imageBoxes: string[] = [];
+      for (const img of tableCanvas.images) {
+        const dest = useImage(docDir, img.src);
+        if (!dest) continue; // missing from the archive — skip its box too
+        // Carry the figure's intrinsic pixel size so Stage 4 can size all the icons to one
+        // common width with proportional heights (the source's `width=…` intent).
+        const sz = intrinsicSize(zip.get(resolveZipPath(docDir, img.src)) ?? Buffer.alloc(0));
+        const dims = sz ? `{width=${sz.w} height=${sz.h}}` : "";
+        lines.push(`![${path.basename(dest, path.extname(dest))}](${dest})${dims}`);
+        imageBoxes.push(`${img.box.x},${img.box.y},${img.box.w},${img.box.h}`);
+      }
+      for (const t of tableCanvas.texts) {
+        const tag = t.style ? `<!-- text lang="${L1}" style="${t.style}" -->` : textTag();
+        lines.push(tag, t.markdown);
+      }
       const boxesAttr = tableCanvas.texts
         .map((t) => `${t.box.x},${t.box.y},${t.box.w},${t.box.h}`)
         .join(";");
-      emitPage(`type="content" canvas-text-boxes="${boxesAttr}"`, lines);
+      const imageBoxesAttr = imageBoxes.length
+        ? ` canvas-image-boxes="${imageBoxes.join(";")}"`
+        : "";
+      emitPage(`type="content" canvas-text-boxes="${boxesAttr}"${imageBoxesAttr}`, lines);
       continue;
     }
 

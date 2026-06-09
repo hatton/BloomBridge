@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import { getDocumentProxy } from "unpdf";
 import { logger } from "../logger";
-import { getPdfPageInfo, isFullPageArtPage } from "./coverDetection";
+import { getLargestImageOnPage, getPdfPageInfo, isFullPageArtPage } from "./coverDetection";
 import { renderPdfPageToImage } from "./renderPdfPage";
 import { detectSolidBackgroundColor } from "./detectBackgroundColor";
 
@@ -22,6 +22,13 @@ export interface CanvasPageInfo extends TextBoxFraction {
    * the canvas art (which fills only the marginBox) leaves a white border.
    */
   backgroundColor?: string;
+  /**
+   * 1-based index of the page's full-page background image, named to match the
+   * extracted `image-<page>-<index>.png` file. Recorded so Stage 4 can use the
+   * picture even when the OCR/LLM omitted its `![image]` ref (common on pages whose
+   * art is scattered clip-art, e.g. the LFA "comprehension questions" page).
+   */
+  backgroundImageIndex?: number;
   /**
    * One box per visually-separated text block (clustered by vertical gaps), in
    * reading order. A canvas page can carry several text chunks (e.g. a heading plus
@@ -160,9 +167,19 @@ export async function detectCanvasPages(pdfPath: string): Promise<Map<number, Ca
           logger.warn(`Canvas page ${p}: background-color sampling failed: ${error}`);
         }
 
-        result.set(p, { ...box, backgroundColor, textBoxes });
+        // Record which extracted image is the full-page background, so Stage 4 can
+        // render it even if OCR didn't emit an `![image]` ref for this page.
+        let backgroundImageIndex: number | undefined;
+        try {
+          const largest = await getLargestImageOnPage(pdfPath, p, pageInfo);
+          if (largest) backgroundImageIndex = largest.imageIndex;
+        } catch (error) {
+          logger.warn(`Canvas page ${p}: could not identify background image: ${error}`);
+        }
+
+        result.set(p, { ...box, backgroundColor, backgroundImageIndex, textBoxes });
         logger.info(
-          `Canvas page ${p}: ${textBoxes.length} text block(s), union x=${box.x} y=${box.y} w=${box.w} h=${box.h}, bg=${backgroundColor ?? "none"}`,
+          `Canvas page ${p}: ${textBoxes.length} text block(s), union x=${box.x} y=${box.y} w=${box.w} h=${box.h}, bg=${backgroundColor ?? "none"}, bgImage=${backgroundImageIndex ?? "none"}`,
         );
       } catch (error) {
         logger.warn(`Canvas detection failed for page ${p}: ${error}`);

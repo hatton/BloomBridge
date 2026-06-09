@@ -15,6 +15,7 @@ import {
   fmt,
   STATUS_META,
 } from "./primitives";
+import { MasterPagePickerModal } from "./modals";
 import type {
   ArtifactNode,
   ChecklistMark,
@@ -2010,7 +2011,9 @@ type PagePairsInfo = {
 // Page-pairs data + the Bloom (re-)processing action. Lifted out of
 // PairedPagesView so the action button can live in the pane header (next to the
 // close button) while the page grid renders in the body below.
-function usePagePairs(runId?: string, runStatus?: string) {
+type ToastFn = (kind: "info" | "ok" | "error", msg: string, ms?: number) => void;
+
+function usePagePairs(runId?: string, runStatus?: string, onToast?: ToastFn) {
   const [info, setInfo] = React.useState<PagePairsInfo | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [processing, setProcessing] = React.useState(false);
@@ -2068,7 +2071,80 @@ function usePagePairs(runId?: string, runStatus?: string) {
       .finally(() => setProcessing(false));
   }, [runId]);
 
-  return { info, loading, processing, procError, reloadKey, processInBloom };
+  // Source page → perceptual-hash map, used to offer the master-page picker on each
+  // source page. Loaded once the run is ready (the hashes come from its markdown).
+  const [sourceHashes, setSourceHashes] = React.useState<Record<string, string>>({});
+  React.useEffect(() => {
+    if (!runId) {
+      setSourceHashes({});
+      return;
+    }
+    let alive = true;
+    api
+      .runSourceHashes(runId)
+      .then((r) => {
+        if (alive) setSourceHashes(r.hashes || {});
+      })
+      .catch(() => {
+        if (alive) setSourceHashes({});
+      });
+    return () => {
+      alive = false;
+    };
+  }, [runId, runStatus]);
+
+  // Assign (or, with a null id, clear) the master page for a source page, then
+  // reload the Bloom column so the substitution (or its removal) shows immediately.
+  const saveMasterMapping = React.useCallback(
+    (sourceHash: string, masterPageId: string | null) => {
+      if (!runId) return Promise.resolve();
+      return api
+        .saveMasterMapping(runId, sourceHash, masterPageId)
+        .then(() => setReloadKey((k) => k + 1));
+    },
+    [runId],
+  );
+
+  // "Add finished product to Bloom Collection" — copies the book into the matching
+  // running Bloom's collection. Tracked separately from processing so the two
+  // buttons spin independently; outcomes are reported via a toast (especially the
+  // "no compatible collection open" case, which isn't a per-page failure).
+  const [adding, setAdding] = React.useState(false);
+  const [added, setAdded] = React.useState(false);
+  // Reset the per-run add state when the previewed run changes.
+  React.useEffect(() => {
+    setAdding(false);
+    setAdded(false);
+  }, [runId]);
+
+  const addToCollection = React.useCallback(() => {
+    if (!runId) return;
+    setAdding(true);
+    api
+      .addToCollection(runId)
+      .then(() => {
+        setAdded(true);
+        onToast?.("ok", "Added the finished book to the Bloom collection.");
+      })
+      .catch((e) =>
+        onToast?.("error", e?.message || "Couldn't add the book to a Bloom collection.", 8000),
+      )
+      .finally(() => setAdding(false));
+  }, [runId, onToast]);
+
+  return {
+    info,
+    loading,
+    processing,
+    procError,
+    reloadKey,
+    processInBloom,
+    adding,
+    added,
+    addToCollection,
+    sourceHashes,
+    saveMasterMapping,
+  };
 }
 
 // View modes for the compare pane. "side" = source and Bloom side-by-side (the
@@ -2094,6 +2170,7 @@ export function PdfViewerPane({
   onOpenDetails,
   bloomRunning = false,
   bloomCollectionName,
+  onToast,
 }: {
   source?: Source | null;
   multiSelected: boolean;
@@ -2117,8 +2194,10 @@ export function PdfViewerPane({
   // Live Bloom connection, surfaced beside the "Convert to Bloom" action in the body.
   bloomRunning?: boolean;
   bloomCollectionName?: string;
+  // Pop a transient toast (e.g. the result of "Add finished product to Bloom Collection").
+  onToast?: ToastFn;
 }) {
-  const pairs = usePagePairs(mode === "run" ? runId : undefined, runStatus);
+  const pairs = usePagePairs(mode === "run" ? runId : undefined, runStatus, onToast);
   // The run is in its final Bloom stage — Bloom is styling the book. Surface the same
   // "Processing in Bloom…" spinner the manual re-process uses, until the run completes
   // and the re-fetch above swaps in the side-by-side comparison.
@@ -2253,6 +2332,24 @@ export function PdfViewerPane({
               {pairs.processing ? "Processing…" : "Re-process"}
             </Btn>
           )}
+          {mode === "run" && pairs.info?.ready && pairs.info.bookReady && (
+            <Btn
+              variant="ghost"
+              size="sm"
+              onClick={pairs.addToCollection}
+              disabled={pairs.adding}
+              title="Copy this finished book into the running Bloom collection whose primary language matches the book"
+            >
+              {!pairs.adding && (
+                <img src="/bloom.svg" alt="" width={14} height={14} style={{ display: "block" }} />
+              )}
+              {pairs.adding
+                ? "Adding…"
+                : pairs.added
+                  ? "Added to Collection"
+                  : "Add finished product to Bloom Collection"}
+            </Btn>
+          )}
           {showActions && (
             <IconBtn
               name="sliders"
@@ -2302,6 +2399,8 @@ export function PdfViewerPane({
           bloomCollectionName={bloomCollectionName}
           view={view}
           onCloseMetadata={() => setView((v) => ({ ...v, metadata: false }))}
+          sourceHashes={pairs.sourceHashes}
+          onSaveMasterMapping={pairs.saveMasterMapping}
         />
       ) : source?.path ? (
         // A book with no run: mirror the paired view's two columns — the source
@@ -2693,6 +2792,8 @@ function PairedPagesView({
   bloomCollectionName,
   view,
   onCloseMetadata,
+  sourceHashes,
+  onSaveMasterMapping,
 }: {
   runId: string;
   info: PagePairsInfo | null;
@@ -2713,7 +2814,13 @@ function PairedPagesView({
   view: ViewMode;
   // Turn the metadata-review panel off (its "×" button) — owned by PdfViewerPane.
   onCloseMetadata?: () => void;
+  // Master-page reuse: each source page's hash, and a save/clear callback. The
+  // per-page button opens the picker dialog (managed here).
+  sourceHashes: Record<string, string>;
+  onSaveMasterMapping: (sourceHash: string, masterPageId: string | null) => Promise<unknown>;
 }) {
+  // The source hash whose master-page picker is currently open (null = closed).
+  const [pickerHash, setPickerHash] = React.useState<string | null>(null);
   const center = (msg: string) => (
     <div
       style={{
@@ -2868,11 +2975,24 @@ function PairedPagesView({
             // The Bloom-side placeholder rides in the first row only, so it appears
             // once at the top of the Bloom column while the source pages flow below.
             bloomNotice={i === 0 ? bloomNotice : null}
+            sourceHash={row.pdfPage !== null ? sourceHashes[String(row.pdfPage)] : undefined}
+            onPickMaster={setPickerHash}
           />
         ))}
       </div>
       {/* Extracted-metadata review panel, dropped over the Bloom (right) side. */}
       {view.metadata && <MetadataOverlay runId={runId} onClose={onCloseMetadata} />}
+      {/* Master-page picker: choose which master book page serves this source page. */}
+      {pickerHash && (
+        <MasterPagePickerModal
+          runId={runId}
+          sourceHash={pickerHash}
+          onClose={() => setPickerHash(null)}
+          onChoose={(masterPageId) =>
+            onSaveMasterMapping(pickerHash, masterPageId).then(() => setPickerHash(null))
+          }
+        />
+      )}
     </div>
   );
 }
@@ -3234,6 +3354,8 @@ const PairedRow = React.memo(function PairedRow({
   reloadKey,
   view,
   bloomNotice,
+  sourceHash,
+  onPickMaster,
 }: {
   runId: string;
   // Source page rendered on the left, and the Bloom page's document index
@@ -3250,6 +3372,10 @@ const PairedRow = React.memo(function PairedRow({
   // Placeholder shown in the Bloom column when there's no Bloom page (book not
   // styled yet / run failed). Only the first row receives it; null otherwise.
   bloomNotice?: React.ReactNode;
+  // This source page's perceptual hash (when known) and the picker opener. The
+  // "use master page" button shows only when a hash is available.
+  sourceHash?: string;
+  onPickMaster?: (sourceHash: string) => void;
 }) {
   const rowRef = React.useRef<HTMLDivElement>(null);
   const colRef = React.useRef<HTMLDivElement>(null);
@@ -3412,9 +3538,39 @@ const PairedRow = React.memo(function PairedRow({
           letterSpacing: ".5px",
           color: "#9aa0a6",
           marginBottom: 4,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          minHeight: 14,
         }}
       >
-        {pdfPage !== null ? `PAGE ${pdfPage}` : " "}
+        <span>{pdfPage !== null ? `PAGE ${pdfPage}` : " "}</span>
+        {/* Unobtrusive affordance: assign a master-book page to this source page.
+            Shown only once we know the page's hash (so a mapping can be recorded). */}
+        {pdfPage !== null && sourceHash && onPickMaster && (
+          <button
+            type="button"
+            title="Use a master book page for this page"
+            onClick={() => onPickMaster(sourceHash)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 3,
+              padding: "1px 6px",
+              border: "1px solid var(--border)",
+              borderRadius: 999,
+              background: "transparent",
+              color: "#9aa0a6",
+              fontSize: 9,
+              fontWeight: 600,
+              letterSpacing: ".3px",
+              cursor: "pointer",
+              lineHeight: 1.4,
+            }}
+          >
+            ⧉ master
+          </button>
+        )}
       </div>
       {overlay ? (
         // Stacked: Bloom underneath, source blended/faded on top, in one box.

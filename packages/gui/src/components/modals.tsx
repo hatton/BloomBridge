@@ -181,6 +181,201 @@ function ModalHeader({
   );
 }
 
+// ============ MASTER-PAGE PICKER ============
+
+/** A scaled thumbnail of one master-book page, rendered in an iframe and measured
+ *  so the whole page fits the tile (mirrors the paired-preview Bloom page scaling). */
+function MasterThumb({ runId, index }: { runId: string; index: number }) {
+  const colRef = React.useRef<HTMLDivElement>(null);
+  const [colW, setColW] = React.useState(0);
+  const [m, setM] = React.useState<{ w: number; h: number; left: number; top: number } | null>(
+    null,
+  );
+  React.useEffect(() => {
+    const el = colRef.current;
+    if (!el) return;
+    const measure = () => setColW(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const onLoad = (e: React.SyntheticEvent<HTMLIFrameElement>) => {
+    try {
+      const doc = e.currentTarget.contentDocument;
+      const win = e.currentTarget.contentWindow;
+      if (!doc || !win) return;
+      const pages = Array.from(doc.querySelectorAll<HTMLElement>("body > .bloom-page"));
+      const visible = pages.find((p) => win.getComputedStyle(p).display !== "none") ?? pages[0];
+      if (!visible) return;
+      const r = visible.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) setM({ w: r.width, h: r.height, left: r.left, top: r.top });
+    } catch {
+      /* not ready / unreadable */
+    }
+  };
+  return (
+    <div
+      ref={colRef}
+      style={{
+        width: "100%",
+        aspectRatio: String(m ? m.w / m.h : 0.707),
+        overflow: "hidden",
+        borderRadius: 4,
+        border: "1px solid var(--border)",
+        background: "#fff",
+        position: "relative",
+      }}
+    >
+      {colW > 0 && (
+        <iframe
+          title={`Master page ${index}`}
+          src={api.masterPageUrl(runId, index)}
+          scrolling="no"
+          onLoad={onLoad}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: m ? m.left + m.w : 400,
+            height: m ? m.top + m.h : 560,
+            border: "none",
+            transform: m
+              ? `scale(${colW / m.w}) translate(${-m.left}px, ${-m.top}px)`
+              : `scale(${colW / 400})`,
+            transformOrigin: "top left",
+            pointerEvents: "none",
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Pick which master-book page should serve a given source page (or clear the
+ *  mapping). The choice is persisted at the collection level and re-applied
+ *  immediately to the current book's preview. */
+export function MasterPagePickerModal({
+  runId,
+  sourceHash,
+  onClose,
+  onChoose,
+}: {
+  runId: string;
+  sourceHash: string;
+  onClose: () => void;
+  onChoose: (masterPageId: string | null) => void;
+}) {
+  const [state, setState] = React.useState<{
+    ready: boolean;
+    pages: { id: string; index: number }[];
+  } | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    let alive = true;
+    api
+      .masterPages(runId)
+      .then((r) => {
+        if (alive) setState({ ready: r.ready, pages: r.pages || [] });
+      })
+      .catch(() => {
+        if (alive) setState({ ready: false, pages: [] });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [runId]);
+
+  const choose = (id: string | null) => {
+    if (busy) return;
+    setBusy(true);
+    void Promise.resolve(onChoose(id)).finally(() => setBusy(false));
+  };
+
+  const tileBtn: React.CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    padding: 8,
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    background: "var(--surface)",
+    cursor: busy ? "wait" : "pointer",
+    textAlign: "center",
+    font: "inherit",
+    color: "var(--text)",
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <ModalCard
+        width={760}
+        onClose={onClose}
+        icon="image"
+        title="Use a master book page"
+        subtitle={`Pick the master page to substitute for this source page (hash ${sourceHash.slice(0, 8)}). The choice is saved for this and future imports.`}
+      >
+        <div style={{ padding: 16, overflowY: "auto" }}>
+          {!state ? (
+            <div
+              style={{ padding: 24, textAlign: "center", color: "var(--text-3)", fontSize: 12.5 }}
+            >
+              Loading master pages…
+            </div>
+          ) : !state.ready ? (
+            <div
+              style={{ padding: 24, textAlign: "center", color: "var(--text-3)", fontSize: 12.5 }}
+            >
+              No master book found in this collection. Add a sibling book folder whose name ends in
+              “master”, then try again.
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+                gap: 12,
+              }}
+            >
+              <button type="button" disabled={busy} onClick={() => choose(null)} style={tileBtn}>
+                <div
+                  style={{
+                    width: "100%",
+                    aspectRatio: "0.707",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: 4,
+                    border: "1px dashed var(--border)",
+                    color: "var(--text-3)",
+                    fontSize: 22,
+                  }}
+                >
+                  ∅
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 600 }}>Use none / clear</span>
+              </button>
+              {state.pages.map((p) => (
+                <button
+                  type="button"
+                  key={p.id}
+                  disabled={busy}
+                  onClick={() => choose(p.id)}
+                  style={tileBtn}
+                >
+                  <MasterThumb runId={runId} index={p.index} />
+                  <span style={{ fontSize: 11, fontWeight: 600 }}>Page {p.index}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </ModalCard>
+    </Overlay>
+  );
+}
+
 // ============ RUN CONFIG ============
 export function RunConfig({
   source,

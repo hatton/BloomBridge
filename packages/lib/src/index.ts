@@ -37,20 +37,34 @@ export {
 export {
   notifyBloomOfBook,
   getRunningBloomCollection,
+  getRunningBloomInstances,
+  getCollectionLanguages,
+  findBloomCollectionForLanguage,
   bringBloomToFront,
   reloadBloomCollection,
   selectBookInBloom,
   processBookInBloom,
+  addBookToBloom,
 } from "./5-notify-bloom/notifyBloom";
-export type { NotifyBloomResult } from "./5-notify-bloom/notifyBloom";
+export type {
+  NotifyBloomResult,
+  RunningBloomInstance,
+  CollectionLanguages,
+} from "./5-notify-bloom/notifyBloom";
 
 export {
   findMasterBookFolder,
   loadMasterPages,
+  loadMasterPagesById,
   readMasterHashes,
   applyMasterPages,
+  readMasterPageMap,
+  writeMasterPageMap,
+  appendMasterMapping,
+  clearMasterMapping,
+  masterMapPath,
 } from "./master/masterPages";
-export type { MasterPage } from "./master/masterPages";
+export type { MasterPage, MasterPageMap, MasterPageMapEntry } from "./master/masterPages";
 export {
   hashPageImage,
   hashesMatch,
