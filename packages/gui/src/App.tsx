@@ -790,12 +790,8 @@ function TopBar({
         flexShrink: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-        <img src="/app.svg" alt="" width={26} height={26} style={{ borderRadius: 7 }} />
-        <div style={{ lineHeight: 1.1 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: "-.2px" }}>BloomBridge</div>
-        </div>
-      </div>
+      {/* App name/icon intentionally omitted here — the OS window title bar already
+          shows them, so repeating them in-app is redundant. */}
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
         {/* The Bloom connection indicator now lives in the preview pane, just above the
             "Convert to Bloom" action where it's most relevant. */}

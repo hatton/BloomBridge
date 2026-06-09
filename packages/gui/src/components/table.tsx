@@ -11,7 +11,6 @@ import {
   ProgressBar,
   runProgress,
   fmt,
-  STATUS_META,
   effStatus,
   ChecklistStatus,
   ElapsedTimer,
@@ -68,7 +67,6 @@ export function CenterTable(props: CenterTableProps) {
     onCheckPdf,
     checked,
     onCheck,
-    onCheckMany,
     onCheckManyPdfs,
     onMark,
     onPin,
@@ -79,12 +77,9 @@ export function CenterTable(props: CenterTableProps) {
     sort,
     sortDir,
     onSortClick,
-    onCleanup,
     onConfigRun,
     onOpenRunDetails,
     onDeleteRun,
-    onExpandAll,
-    allExpanded,
     defaults,
   } = props;
 
@@ -106,22 +101,6 @@ export function CenterTable(props: CenterTableProps) {
     return cmp * dir;
   });
 
-  // runs governed by the master checkbox
-  const RUN_STATUSES = ["running", "queued", "failed", "completed", "keeper", "disapproved"];
-  const targetRuns: string[] = [];
-  sorted.forEach((s) =>
-    s.runs.forEach((r) => {
-      if (RUN_STATUSES.includes(statusFilter)) {
-        if (effStatus(r) === statusFilter) targetRuns.push(r.id);
-      } else targetRuns.push(r.id);
-    }),
-  );
-  const allSel = targetRuns.length > 0 && targetRuns.every((id) => checked.has(id));
-  const someSel = targetRuns.some((id) => checked.has(id));
-  const masterTitle = RUN_STATUSES.includes(statusFilter)
-    ? `Select all ${targetRuns.length} ${STATUS_META[statusFilter].label.toLowerCase()} runs`
-    : `Select all ${targetRuns.length} runs`;
-
   // book (PDF) master selection — for batch runs
   const bookIds = sorted.map((s) => s.id);
   const allBooksSel = bookIds.length > 0 && bookIds.every((id) => checkedPdfs.has(id));
@@ -141,11 +120,7 @@ export function CenterTable(props: CenterTableProps) {
         {...{
           statusFilter,
           onStatusFilter,
-          onExpandAll,
-          allExpanded,
           sources,
-          count: sorted.length,
-          onCleanup,
         }}
       />
 
@@ -181,21 +156,11 @@ export function CenterTable(props: CenterTableProps) {
             />
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
               <SortHead
-                label="Book / run"
+                label="Book to Import"
                 active={sort === "name"}
                 dir={sortDir}
                 onClick={() => onSortClick("name")}
               />
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <Check
-                  checked={allSel}
-                  indeterminate={someSel && !allSel}
-                  disabled={targetRuns.length === 0}
-                  onChange={(v) => onCheckMany(targetRuns, v)}
-                  title={masterTitle}
-                />
-                <span style={{ fontSize: 9, fontWeight: 700, color: "var(--text-3)" }}>runs</span>
-              </span>
             </div>
             <SortHead
               label="Status"
@@ -323,19 +288,11 @@ interface FilterOption {
 function Toolbar({
   statusFilter,
   onStatusFilter,
-  onExpandAll,
-  allExpanded,
-  count,
   sources,
-  onCleanup,
 }: {
   statusFilter: string;
   onStatusFilter: (v: string) => void;
-  onExpandAll: () => void;
-  allExpanded: boolean;
-  count: number;
   sources: Source[];
-  onCleanup: () => void;
 }) {
   const n = (fn: (s: Source) => boolean) => sources.filter(fn).length;
   const has = (s: Source, eff: string) => s.runs.some((r) => effStatus(r) === eff);
@@ -370,6 +327,7 @@ function Toolbar({
       style={{
         display: "flex",
         alignItems: "center",
+        justifyContent: "flex-end",
         gap: 10,
         padding: "9px 14px",
         borderBottom: "1px solid var(--border)",
@@ -378,39 +336,6 @@ function Toolbar({
       }}
     >
       <FilterMenu options={options} value={statusFilter} onChange={onStatusFilter} />
-      <span style={{ fontSize: 11, color: "var(--text-3)" }} className="mono">
-        {count} of {sources.length} books
-      </span>
-
-      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-        <button
-          onClick={onCleanup}
-          title="Remove failed & disapproved runs, delete previews from the collection, and reload Bloom"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 5,
-            height: 26,
-            padding: "0 9px",
-            border: "1px solid var(--border-strong)",
-            background: "var(--surface)",
-            borderRadius: "var(--radius-sm)",
-            fontSize: 11.5,
-            fontWeight: 600,
-            color: "var(--text-2)",
-            cursor: "pointer",
-          }}
-        >
-          <Icon name="trash" size={13} />
-          Cleanup
-        </button>
-        <IconBtn
-          name="layers"
-          title={allExpanded ? "Collapse all" : "Expand all"}
-          active={allExpanded}
-          onClick={onExpandAll}
-        />
-      </div>
     </div>
   );
 }
@@ -461,7 +386,7 @@ function FilterMenu({
             style={{
               position: "absolute",
               top: "calc(100% + 4px)",
-              left: 0,
+              right: 0,
               zIndex: 31,
               minWidth: 210,
               background: "var(--surface)",
@@ -750,8 +675,6 @@ function runSummary(run: Run, defaults?: Params): string {
 // ---------- Run row ----------
 function RunRow({
   run,
-  checked,
-  onCheck,
   selected,
   onSelect,
   onPin,
@@ -799,7 +722,7 @@ function RunRow({
           if (!selected) e.currentTarget.style.background = "transparent";
         }}
       >
-        <Check checked={checked} onChange={onCheck} onClick={(e) => e.stopPropagation()} />
+        <div />
         {/* run label + indent */}
         <div
           style={{ display: "flex", alignItems: "baseline", gap: 6, paddingLeft: 30, minWidth: 0 }}
@@ -835,16 +758,29 @@ function RunRow({
           </span>
           <span style={{ marginLeft: "auto", flexShrink: 0, display: "inline-flex", gap: 2 }}>
             <PinButton pinned={!!run.pinned} onChange={onPin} size={13} />
-            <IconBtn
-              name="external"
-              size={22}
-              iconSize={12}
+            <button
               title="Run details (log, artifacts, metrics, notes)"
-              onClick={(e?: React.MouseEvent) => {
-                e?.stopPropagation();
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
                 onOpenDetails();
               }}
-            />
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 22,
+                height: 22,
+                border: "1px solid transparent",
+                borderRadius: "var(--radius-sm)",
+                background: "transparent",
+                cursor: "pointer",
+                color: "var(--text-2)",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-3)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              <img src="/details.svg" alt="" aria-hidden="true" width={13} height={13} />
+            </button>
             <IconBtn
               name="trash"
               size={22}

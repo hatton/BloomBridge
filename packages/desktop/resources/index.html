@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BloomBridge</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Splash shown while the Node backend sidecar starts up. -->
+    <div id="splash">
+      <div class="logo">BloomBridge</div>
+      <div id="status" class="status">Starting conversion engine…</div>
+      <div class="spinner" aria-hidden="true"></div>
+      <pre id="error" class="error" hidden></pre>
+    </div>
+
+    <!-- Once the sidecar is healthy, this iframe is pointed at it and revealed.
+         The GUI runs same-origin inside the iframe, so its relative /api fetches
+         and EventSource work unchanged. -->
+    <iframe id="app" title="BloomBridge" hidden></iframe>
+
+    <!-- Neutralino client (placed by `neu update`) then our boot logic. -->
+    <script src="js/neutralino.js"></script>
+    <script src="boot.js"></script>
+  </body>
+</html>

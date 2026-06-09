@@ -870,11 +870,11 @@ function CompareSection({
 // ============ SETTINGS ============
 export function SettingsModal({
   settings,
-  collections = [],
   onChange,
   onClose,
 }: {
   settings: Settings;
+  // Always present for the App's call; the collection control is commented out for now.
   collections?: { path: string; name: string }[];
   onChange: (s: Settings) => void;
   onClose: () => void;
@@ -883,20 +883,17 @@ export function SettingsModal({
   const upd = (k: keyof Settings, v: any) => onChange({ ...s, [k]: v });
   return (
     <Overlay onClose={onClose}>
-      <ModalCard
-        width={560}
-        title="Settings"
-        subtitle="Stored locally on this machine"
-        icon="settings"
-        onClose={onClose}
-      >
+      <ModalCard width={560} title="Settings" icon="settings" onClose={onClose}>
         <div style={{ padding: "16px 18px", overflowY: "auto" }}>
           <SectionLabel>API keys</SectionLabel>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
             {(
               [
-                ["openrouterKey", "OpenRouter API key", "sk-or-…"],
-                ["mistralKey", "Mistral API key (only for --ocr mistral)", "…"],
+                [
+                  "openrouterKey",
+                  "OpenRouter API key to pay for AI's doing PDF imports",
+                  "sk-or-…",
+                ],
               ] as [keyof Settings, string, string][]
             ).map(([k, label, ph]) => (
               <Field key={k} label={label}>
@@ -969,31 +966,72 @@ export function SettingsModal({
             ))}
           </div>
 
-          <SectionLabel>Defaults</SectionLabel>
           <div style={{ marginBottom: 12 }}>
             <Field label="Workspace folder (where runs are stored)">
-              <input
-                value={s.workspace}
-                onChange={(e) => upd("workspace", e.target.value)}
-                placeholder="…/.bloombridge/workspace"
-                className="mono"
-                style={{
-                  width: "100%",
-                  height: 32,
-                  padding: "0 10px",
-                  fontSize: 12,
-                  color: "var(--text)",
-                  background: "var(--surface-2)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-sm)",
-                  outline: "none",
-                }}
-              />
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const r = await api.pickFolder(s.workspace || undefined);
+                      if (r.path) upd("workspace", r.path);
+                    } catch {
+                      /* picker cancelled / unavailable */
+                    }
+                  }}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    height: 32,
+                    padding: "0 11px",
+                    flexShrink: 0,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "var(--text-2)",
+                    background: "var(--surface-2)",
+                    border: "1px solid var(--border-strong)",
+                    borderRadius: "var(--radius-sm)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <Icon name="folder" size={13} />
+                  Choose…
+                </button>
+                <span
+                  className="mono"
+                  title={s.workspace}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    height: 32,
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "0 10px",
+                    fontSize: 12,
+                    color: s.workspace ? "var(--text)" : "var(--text-3)",
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius-sm)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {s.workspace || "No folder chosen"}
+                </span>
+                <IconBtn
+                  name="folder-open"
+                  title="Open this folder in File Explorer"
+                  disabled={!s.workspace}
+                  onClick={() => s.workspace && api.osOpen(s.workspace, "folder")}
+                />
+              </div>
             </Field>
           </div>
-          <div
-            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}
-          >
+          <div style={{ marginBottom: 14 }}>
+            {/* Default Bloom collection control commented out — we always use the
+                running Bloom's open collection for now.
             <Field label="Default Bloom collection (hints + keeper)">
               <Select
                 full
@@ -1006,6 +1044,7 @@ export function SettingsModal({
                 ]}
               />
             </Field>
+            */}
             <Field label="Max parallel conversions" hint={s.parallelism + ""}>
               <input
                 type="range"

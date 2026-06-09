@@ -1,0 +1,12 @@
+{
+  "name": "@bloombridge/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BloomBridge — Neutralino desktop wrapper for the Conversion Manager GUI",
+  "scripts": {
+    "setup": "npx --yes @neutralinojs/neu@latest update",
+    "build:backend": "pnpm --filter @bloombridge/lib build && pnpm --filter @bloombridge/gui build && pnpm --filter @bloombridge/gui build:server",
+    "dev": "pnpm run build:backend && npx --yes @neutralinojs/neu@latest run",
+    "build:win": "node scripts/build-installer.mjs"
+  }
+}
