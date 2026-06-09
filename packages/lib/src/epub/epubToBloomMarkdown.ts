@@ -27,6 +27,7 @@ import { FRONT_COVER_IMAGE_FILENAME, BACK_COVER_IMAGE_FILENAME } from "../types"
 import type { HorizontalAlign } from "../types";
 import { extractCcLicenseUrl } from "../4-generate-html/licenses";
 import { isStoryWeaverEpub, analyzeStoryWeaver, type StoryWeaverInfo } from "./storyweaver";
+import { isLibraryForAllEpub, analyzeLibraryForAll, type LibraryForAllInfo } from "./libraryForAll";
 import { hashPageImage, hashesMatch } from "../1-ocr/pageImageHash";
 
 // ---------- tiny XHTML/XML helpers (the markup is regular; regex is enough) ----------
@@ -766,6 +767,12 @@ export async function epubToBloomMarkdown(
     : null;
   if (sw) logger.info(`StoryWeaver EPUB detected — ${sw.matterPages.size} end-matter page(s).`);
 
+  // Library For All books bake their blurb into the back-cover image, so the only text
+  // source for the summary is the OPF `<dc:description>` (see libraryForAll.ts).
+  const lfa: LibraryForAllInfo | null = isLibraryForAllEpub(opf) ? analyzeLibraryForAll(opf) : null;
+  if (lfa)
+    logger.info(`Library For All EPUB detected${lfa.summary ? " — summary mined from OPF" : ""}.`);
+
   // Mine contributor/license/publisher prose. The author + title come from the OPF
   // (authoritative); the illustrator, CC license and publisher are usually only in the
   // cover page's contributor block or the trailing attribution/copyright pages, so scan
@@ -986,7 +993,10 @@ export async function epubToBloomMarkdown(
     if (pub) lines.push(textTag("originalPublisher"), pub);
     if (fundingLine) lines.push(textTag("funding"), fundingLine);
     // The back-cover blurb becomes Bloom's book summary (shown on its outside back cover).
-    if (sw?.meta.summary) lines.push(textTag("summary"), sw.meta.summary);
+    // StoryWeaver reads it from the back-cover page; Library For All bakes it into the
+    // back-cover image, so it comes from the OPF description instead.
+    const summary = sw?.meta.summary || lfa?.summary;
+    if (summary) lines.push(textTag("summary"), summary);
     return lines;
   };
 
