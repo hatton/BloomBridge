@@ -37,4 +37,6 @@ jobs:
         run: pnpm build
 
       - name: Format + lint + type-check
-        run: vp check
+        # Via the npm script so it uses the repo's pinned local `vp`
+        # (node_modules/.bin), not a global vite-plus-cli that may lack `check`.
+        run: pnpm run check
