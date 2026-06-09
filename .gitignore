@@ -9,7 +9,10 @@ dist/
 
 test-inputs/**/index.html
 testme/**
-collections/
+# Anchored to the repo root so it only ignores a top-level test-output "collections"
+# dir — an un-anchored "collections/" also matched packages/lib/src/collections/ and
+# silently kept that source file out of git (broke clean-checkout builds on CI).
+/collections/
 
 bilingual-sample_bloom/
 
