@@ -433,7 +433,7 @@ const STAGE_WEIGHTS: Record<string, number> = {
   bloom: 0.15,
 };
 const TARGET_LAST_STAGE: Record<string, number> = { images: -1, ocr: 0, tagged: 2, bloom: 4 };
-export function runProgress(run: Run): number {
+export function runProgress(run: Run, now: number = Date.now()): number {
   if (run.status === "done") return 1;
   if (run.status !== "running") return 0;
   const order = ["ocr", "llm", "plan", "html", "bloom"];
@@ -449,9 +449,73 @@ export function runProgress(run: Run): number {
       frac += w; // completed segment
     else if (run.progress?.stage === s && s === "ocr" && run.progress.pages) {
       frac += w * (run.progress.page / run.progress.pages); // subdivide OCR by page
+    } else if (
+      run.progress?.stage === s &&
+      s === "bloom" &&
+      run.progress.etaMs &&
+      run.progress.startedMs
+    ) {
+      // The Bloom process-book step has no per-page progress; advance its segment by
+      // elapsed-time vs the ETA the server predicted from prior books' per-page timing.
+      const elapsed = now - run.progress.startedMs;
+      frac += w * Math.min(0.98, Math.max(0, elapsed / run.progress.etaMs));
     }
   }
   return Math.min(0.98, frac);
+}
+
+// Re-render every 500ms while a run is in a time-estimated stage (the Bloom step), so
+// runProgress(run, now) advances smoothly. Idle (no interval) otherwise.
+function useRunNow(run: Run): number {
+  const ticking =
+    run.status === "running" &&
+    run.progress?.stage === "bloom" &&
+    !!run.progress.etaMs &&
+    !!run.progress.startedMs;
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!ticking) return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [ticking]);
+  return now;
+}
+
+// Run progress bar that ticks itself during the time-estimated Bloom step.
+export function RunProgressBar({ run, height }: { run: Run; height?: number }) {
+  const now = useRunNow(run);
+  return <ProgressBar height={height} value={runProgress(run, now)} />;
+}
+
+// Run progress percentage that ticks itself during the time-estimated Bloom step.
+export function RunProgressPct({ run }: { run: Run }) {
+  const now = useRunNow(run);
+  return <span className="mono">{Math.round(runProgress(run, now) * 100)}%</span>;
+}
+
+// A standalone linear progress bar driven purely by elapsed-time vs an ETA: advances
+// from 0 toward (capped) 98% over `etaMs`, ticking every 500ms. When the ETA or start
+// time is unknown (e.g. the first book, before we've timed one), it falls back to the
+// indeterminate bar. Used for the "Processing in Bloom…" step, whose duration the
+// server predicts from prior books' per-page timing.
+export function EtaProgressBar({
+  etaMs,
+  startedMs,
+  height,
+}: {
+  etaMs?: number;
+  startedMs?: number;
+  height?: number;
+}) {
+  const active = !!etaMs && !!startedMs;
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [active]);
+  const value = active ? Math.min(0.98, Math.max(0, (now - startedMs!) / etaMs!)) : undefined;
+  return <ProgressBar height={height} value={value} />;
 }
 
 // ---------- Buttons ----------

@@ -32,12 +32,18 @@ export type OrigamiItem = TextOrigamiItem | ImageOrigamiItem;
 
 /**
  * Generates Bloom HTML for a given sequence of items and orientation.
+ *
+ * `firstPaneSharePct`, when given, sets the TOP-LEVEL split's first-pane size as an
+ * integer percentage (the "fit image panes" feature picks this so a portrait image
+ * grows past Bloom's default 50/50). It applies only to the first split; nested
+ * splits keep Bloom's CSS default. Omit it to emit byte-identical output to before.
  * @returns The generated HTML string.
  * @throws Error if the input sequence is empty.
  */
 export function generateOrigamiHtml(
   blocks: OrigamiItem[],
   orientation: Orientation = Orientation.Portrait,
+  firstPaneSharePct?: number,
 ): string {
   if (!blocks || blocks.length === 0) {
     throw new Error("Input sequence cannot be empty.");
@@ -52,16 +58,20 @@ export function generateOrigamiHtml(
 </div>`.trim();
   }
   // Multiple items: start with a split pane structure.
-  return buildSplitPane(blocks, orientation);
+  return buildSplitPane(blocks, orientation, firstPaneSharePct);
 }
 
 /**
  * Recursively builds the HTML for a split pane structure.
+ *
+ * `firstPaneSharePct` (top-level only — undefined for the recursive nested calls)
+ * sizes the first pane explicitly; see `generateOrigamiHtml`.
  * @returns HTML string for the split pane.
  */
 function buildSplitPane(
   blocks: OrigamiItem[],
   orientation: Orientation = Orientation.Portrait,
+  firstPaneSharePct?: number,
 ): string {
   const firstItem = blocks[0];
   const remainingItemsSequence = blocks.slice(1);
@@ -93,15 +103,26 @@ function buildSplitPane(
     splitOrientation === "horizontal" ? "bottom" : "right"
   }`;
 
+  // Explicit split position (top-level only). Bloom stores the split as inline styles:
+  // the second pane takes B% (`height`/`width`), and the first pane + divider are offset
+  // from the far edge by B% (`bottom`/`right`). With no override Bloom's CSS defaults to
+  // an even 50/50, so we emit nothing — preserving byte-identical output.
+  const secondShare = firstPaneSharePct === undefined ? undefined : 100 - firstPaneSharePct;
+  const sizeProp = splitOrientation === "horizontal" ? "height" : "width";
+  const offsetProp = splitOrientation === "horizontal" ? "bottom" : "right";
+  const firstStyle = secondShare === undefined ? "" : ` style="${offsetProp}: ${secondShare}%"`;
+  const dividerStyle = secondShare === undefined ? "" : ` style="${offsetProp}: ${secondShare}%"`;
+  const secondStyle = secondShare === undefined ? "" : ` style="${sizeProp}: ${secondShare}%"`;
+
   return `
 <div class="${splitPaneClass}">
-  <div class="${firstPositionClass}">
+  <div class="${firstPositionClass}"${firstStyle}>
     <div class="split-pane-component-inner">
       ${contentForFirstPane}
     </div>
   </div>
-  <div class="${dividerClass}"></div>
-  <div class="${secondPositionClass}">
+  <div class="${dividerClass}"${dividerStyle}></div>
+  <div class="${secondPositionClass}"${secondStyle}>
     <div class="split-pane-component-inner">
       ${contentForSecondPane}
     </div>

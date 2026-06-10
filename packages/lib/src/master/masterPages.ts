@@ -71,7 +71,9 @@ function bookHtmlPath(bookFolder: string): string {
  * are direct, non-nested siblings, so depth counting is reliable without a full
  * HTML parser.
  */
-function extractBloomPageDivs(html: string): Array<{ start: number; end: number; html: string }> {
+export function extractBloomPageDivs(
+  html: string,
+): Array<{ start: number; end: number; html: string }> {
   const results: Array<{ start: number; end: number; html: string }> = [];
   const tagRe = /<div\b[^>]*>|<\/div>/gi;
   let match: RegExpExecArray | null;

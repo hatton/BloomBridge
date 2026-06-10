@@ -84,6 +84,10 @@ program
     "--no-trim-whitespace",
     "Disable cropping of uniform white margins off the edges of each extracted illustration. Trimming is on by default; it skips full-bleed covers, per-page snapshots, and decorative icons.",
   )
+  .option(
+    "--no-fit-image-panes",
+    "Disable auto-sizing the origami splitter on illustration-plus-text pages. Fitting is on by default; it grows the image pane past 50% only when the image's shape benefits and the text clearly still fits, and the GUI's Bloom-processing guard reverts any page whose text overflowed.",
+  )
   .option("--verbose", "Enable verbose logging to see detailed process steps")
   .option(
     "--json-events",
@@ -114,6 +118,9 @@ program
         // Commander defaults this to true (because --no-trim-whitespace is defined);
         // --no-trim-whitespace sets it false. Trimming is on by default.
         trimWhitespace: options.trimWhitespace,
+        // Commander defaults this to true (because --no-fit-image-panes is defined);
+        // --no-fit-image-panes sets it false. Fitting is on by default.
+        fitImagePanes: options.fitImagePanes,
         jsonEvents: options.jsonEvents || false,
       };
 

@@ -24,6 +24,7 @@ const FALLBACK_PARAMS: Params = {
   coverMode: "auto",
   complexBecomesImage: "busy",
   trimWhitespace: true,
+  fitImagePanes: true,
   target: "bloom",
 };
 
@@ -35,6 +36,7 @@ const PARAM_KEYS: (keyof Params)[] = [
   "coverMode",
   "complexBecomesImage",
   "trimWhitespace",
+  "fitImagePanes",
   "target",
 ];
 
@@ -254,8 +256,11 @@ export function App() {
   // settings modal isn't clobbered by live run updates.
   const [convParams, setConvParams] = useState<Params>(defaults);
   useEffect(() => {
-    const seed = focusedSource?.runs[0]?.params || defaults;
-    setConvParams({ ...seed });
+    // Seed from the most recent run's params, but backfill any keys that run predates
+    // (e.g. trimWhitespace / fitImagePanes, added after some runs were recorded) from
+    // the current defaults — otherwise a newer option shows as an off, "changed" toggle.
+    const prior = focusedSource?.runs[0]?.params;
+    setConvParams(prior ? { ...defaults, ...prior } : { ...defaults });
     // Only when the focused book changes (not on every run update).
   }, [focus?.sourceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -651,6 +656,8 @@ export function App() {
           mode={previewMode}
           runStatus={previewRun?.status}
           runStage={previewRun?.progress?.stage}
+          runEtaMs={previewRun?.progress?.etaMs}
+          runStartedMs={previewRun?.progress?.startedMs}
           runFailedStage={previewRun?.error?.stage}
           width={pdfWidth}
           onResize={setPdfWidth}

@@ -20,6 +20,8 @@ export { BloomMarkdown as Parser } from "./bloom-markdown/parseMarkdown";
 export { BloomMetadataParser } from "./3-add-bloom-plan/bloomMetadata";
 
 export { HtmlGenerator } from "./4-generate-html/html-generator";
+export type { GenerateHtmlOptions } from "./4-generate-html/html-generator";
+export { revertOverflowingAutoSplits } from "./4-generate-html/fitImagePanesGuard";
 export { validateBloomHtml } from "./4-generate-html/validateBloomHtml";
 export {
   buildBookMetaData,

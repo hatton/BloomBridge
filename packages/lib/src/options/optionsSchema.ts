@@ -101,6 +101,15 @@ export const optionsSchema: OptionSpec[] = [
     help: "Crop uniform white margins off the edges of each illustration so the artwork fills its frame. On by default. Skips full-bleed covers, per-page snapshots, and decorative icons.",
   },
   {
+    key: "fitImagePanes",
+    cliFlag: "--fit-image-panes",
+    label: "Fit image panes",
+    type: "boolean",
+    default: true,
+    stage: "html",
+    help: "When a page is an illustration plus a text block, grow the image pane past 50% when the image's shape benefits and the text clearly still fits. Conservative; overflow detected after Bloom processing reverts the page to 50%. Turn off if it causes layout problems.",
+  },
+  {
     key: "complexBecomesImage",
     cliFlag: "--complex-becomes-image",
     label: "Translatability vs. Fidelity",

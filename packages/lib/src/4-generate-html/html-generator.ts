@@ -1,6 +1,9 @@
 import escapeHtml from "escape-html";
 import { randomUUID } from "crypto";
+import * as path from "path";
 import { getUrlFromLicense, resolveCcLicenseUrl, getLicenseFromUrl } from "./licenses.js";
+import { imageSizeFromFile } from "../util/imageSize.js";
+import { computeImagePaneSharePct } from "./fitImagePanes.js";
 import {
   type Book,
   type Page,
@@ -31,8 +34,23 @@ const GENERATOR_VERSION = "6.4";
 // this converter doesn't need to add them, and if it does, they will
 // just be overwritten.
 
+/**
+ * Options influencing HTML generation. `bookFolder` is the on-disk book folder (where
+ * the trimmed illustration files live, so their dimensions can be read); `fitImagePanes`
+ * enables the per-page origami auto-sizing (see `fitImagePanes.ts`). Both are needed for
+ * the feature to engage — when either is absent, output is byte-identical to before.
+ */
+export interface GenerateHtmlOptions {
+  bookFolder?: string;
+  fitImagePanes?: boolean;
+}
+
 export class HtmlGenerator {
-  public static generateHtmlDocument(book: Book, logCallback?: (log: LogEntry) => void): string {
+  public static generateHtmlDocument(
+    book: Book,
+    logCallback?: (log: LogEntry) => void,
+    opts?: GenerateHtmlOptions,
+  ): string {
     if (logCallback) logger.subscribe(logCallback);
 
     // use console.log to give me a bunch of info to see why this line is failing:
@@ -82,7 +100,7 @@ export class HtmlGenerator {
     ${this.generateBloomDataDiv(book)}
     ${book.pages
       .filter((page) => this.shouldRenderPage(page))
-      .map((page) => this.generatePage(page, book.frontMatterMetadata))
+      .map((page) => this.generatePage(page, book.frontMatterMetadata, opts))
       .join("\n")}
     </body>
   </html>`;
@@ -572,8 +590,17 @@ export class HtmlGenerator {
     count: number,
     canvasW: number,
     canvasH: number,
+    topShareOverride?: number,
   ): { width: number; height: number; left: number; top: number } {
-    const share = (i: number) => (i < count - 1 ? 1 / 2 ** (i + 1) : 1 / 2 ** i);
+    // "Fit image panes" sets the top-level (two-pane) split explicitly; reflect that
+    // share here so the image's preview rect matches the divider. Falls back to the
+    // default right-leaning 50/50 nesting when no override is given.
+    const share = (i: number) => {
+      if (topShareOverride !== undefined && count === 2) {
+        return i === 0 ? topShareOverride : 1 - topShareOverride;
+      }
+      return i < count - 1 ? 1 / 2 ** (i + 1) : 1 / 2 ** i;
+    };
     let top = 0;
     for (let i = 0; i < index; i++) top += share(i) * canvasH;
     return {
@@ -909,7 +936,11 @@ ${backgroundHtml}${textElementsHtml}${imageElementsHtml ? "\n" + imageElementsHt
     </div>`;
   }
 
-  private static generatePage(page: Page, metadata: FrontMatterMetadata): string {
+  private static generatePage(
+    page: Page,
+    metadata: FrontMatterMetadata,
+    opts?: GenerateHtmlOptions,
+  ): string {
     // A page matched to the master book renders as a minimal placeholder carrying
     // its source hash; master-page substitution (master/masterPages.ts) replaces
     // the whole div with the master's exact HTML. We don't bother laying out its
@@ -990,6 +1021,40 @@ ${backgroundHtml}${textElementsHtml}${imageElementsHtml ? "\n" + imageElementsHt
       layoutElements[1].type === "image" &&
       layoutElements[2].type === "text";
 
+    // "Fit image panes" (opt-in via opts): when a page is exactly one image + one text
+    // (either order), grow the image pane past 50% if the image's shape benefits and the
+    // text clearly still fits. v1 deliberately skips three-item stacks, multi-image pages,
+    // and canvas/full-bleed pages (handled above). `autoSplitImagePct` is the resulting
+    // image-pane percent (null = leave at Bloom's 50/50 default); `fitFirstPaneSharePct`
+    // is that translated to the FIRST pane's share for the given element order.
+    let autoSplitImagePct: number | null = null;
+    let fitFirstPaneSharePct: number | undefined;
+    if (
+      opts?.fitImagePanes &&
+      opts.bookFolder &&
+      layoutElements.length === 2 &&
+      layoutElements.filter((e) => e.type === "image").length === 1 &&
+      layoutElements.filter((e) => e.type === "text").length === 1
+    ) {
+      const imageEl = layoutElements.find((e): e is ImageElement => e.type === "image")!;
+      const textEl = layoutElements.find((e): e is TextBlockElement => e.type === "text")!;
+      const size = imageSizeFromFile(path.join(opts.bookFolder, imageEl.src));
+      if (size && size.w > 0 && size.h > 0) {
+        const { canvasW, canvasH } = HtmlGenerator.pagePx(metadata.pageSize || "A5Portrait");
+        autoSplitImagePct = computeImagePaneSharePct({
+          imageAspect: size.w / size.h,
+          canvasW,
+          canvasH,
+          texts: textEl.content,
+        });
+        if (autoSplitImagePct !== null) {
+          // For [image, text] the first pane is the image; for [text, image] it's the text.
+          fitFirstPaneSharePct =
+            layoutElements[0].type === "image" ? autoSplitImagePct : 100 - autoSplitImagePct;
+        }
+      }
+    }
+
     layoutElements.forEach((element: PageElement, index: number) => {
       if (element.type === "text") {
         const textElement = element as TextBlockElement;
@@ -1032,7 +1097,13 @@ ${backgroundHtml}${textElementsHtml}${imageElementsHtml ? "\n" + imageElementsHt
         // illustration fills its pane. Bloom recomputes this on first view, so an
         // approximate pane rect only affects the preview, never the edited page.
         const { canvasW, canvasH } = HtmlGenerator.pagePx(metadata.pageSize || "A5Portrait");
-        const rect = HtmlGenerator.origamiPaneRect(index, layoutElements.length, canvasW, canvasH);
+        const rect = HtmlGenerator.origamiPaneRect(
+          index,
+          layoutElements.length,
+          canvasW,
+          canvasH,
+          fitFirstPaneSharePct === undefined ? undefined : fitFirstPaneSharePct / 100,
+        );
         const canvasElementStyle = `width: ${rect.width}px; height: ${rect.height}px; left: ${rect.left}px; top: ${rect.top}px;`;
         origamiItems.push({ type: "image", src: imageElement.src, canvasElementStyle });
       }
@@ -1048,7 +1119,7 @@ ${backgroundHtml}${textElementsHtml}${imageElementsHtml ? "\n" + imageElementsHt
     // which means the splits are horizontal.
     // In origami.ts, Orientation.Portrait leads to horizontal splits.
     const orientation = Orientation.Portrait;
-    const origamiContent = generateOrigamiHtml(origamiItems, orientation);
+    const origamiContent = generateOrigamiHtml(origamiItems, orientation, fitFirstPaneSharePct);
 
     // The page-size class (e.g. A4Portrait) matches the source PDF; Bloom keys the
     // book's paper size off this class. Defaults to A5Portrait.
@@ -1071,6 +1142,13 @@ ${backgroundHtml}${textElementsHtml}${imageElementsHtml ? "\n" + imageElementsHt
       ? ` data-import-source-hash="${page.importSourceHash}"`
       : "";
 
+    // Marker for the post-process overflow guard (GUI path): records that we moved this
+    // page's splitter off 50/50, and to what image-pane percent. The guard reverts the
+    // page to 50/50 if Bloom's overflow check fires on it. Pages without this attribute
+    // are never touched by the guard.
+    const autoSplitAttr =
+      autoSplitImagePct !== null ? ` data-auto-split="${autoSplitImagePct}"` : "";
+
     // Only content/empty pages reach here (front/back-matter are filtered by
     // shouldRenderPage; covers/canvas/master pages returned above). They MUST carry
     // the `numberedPage` class.
@@ -1086,7 +1164,7 @@ ${backgroundHtml}${textElementsHtml}${imageElementsHtml ? "\n" + imageElementsHt
     // we just emit `numberedPage` so the page lays out correctly. We deliberately do
     // NOT emit the other things Bloom's "repair" adds (data-pagelineage, pageLabel,
     // pageDescription) — they don't affect layout and Bloom regenerates them.
-    return `    <div class="bloom-page numberedPage customPage ${pageSize}" id="${pageId}"${pageStyleAttr}${sourceHashAttr}${this.sourcePageAttr(page)}>
+    return `    <div class="bloom-page numberedPage customPage ${pageSize}" id="${pageId}"${pageStyleAttr}${sourceHashAttr}${autoSplitAttr}${this.sourcePageAttr(page)}>
       <div class="marginBox">
         ${origamiContent}
       </div>

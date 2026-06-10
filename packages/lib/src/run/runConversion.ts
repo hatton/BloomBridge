@@ -102,6 +102,7 @@ export interface RunArgs {
   emitSourceHashes?: boolean;
   complexBecomesImage?: string;
   trimWhitespace?: boolean;
+  fitImagePanes?: boolean;
 }
 
 /** A fully-resolved plan: every path, key, and mode the stage loop needs. */
@@ -131,6 +132,7 @@ export interface RunPlan {
   masterFolderPath?: string;
   complexBecomesImage: string;
   trimWhitespace: boolean;
+  fitImagePanes: boolean;
   /** Settings keyed by `optionsSchema` key, recorded in the provenance sidecar. */
   optionsRecord: Record<string, unknown>;
 }
@@ -157,6 +159,7 @@ export function runOptionsRecord(a: RunArgs): Record<string, unknown> {
     parserEngine: a.parserEngine ?? "native",
     emitSourceHashes: a.emitSourceHashes ?? false,
     trimWhitespace: a.trimWhitespace ?? true,
+    fitImagePanes: a.fitImagePanes !== false,
   };
 }
 
@@ -550,6 +553,7 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
     masterFolderPath,
     complexBecomesImage: args.complexBecomesImage ?? "busy",
     trimWhitespace: args.trimWhitespace ?? true,
+    fitImagePanes: args.fitImagePanes ?? true,
     optionsRecord: runOptionsRecord(args),
   };
 }
@@ -944,7 +948,10 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
         }
       }
 
-      let bloomHtmlContent = HtmlGenerator.generateHtmlDocument(book);
+      let bloomHtmlContent = HtmlGenerator.generateHtmlDocument(book, undefined, {
+        bookFolder: plan.bookFolderPath!,
+        fitImagePanes: plan.fitImagePanes,
+      });
 
       await fs.mkdir(plan.bookFolderPath!, { recursive: true });
 

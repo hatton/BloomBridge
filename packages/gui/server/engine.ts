@@ -16,6 +16,7 @@ import {
   findBloomCollectionForLanguage,
   bringBloomToFront,
   processBookInBloom,
+  revertOverflowingAutoSplits,
   addBookToBloom,
   notifyBloomOfBook,
   selectBookInBloom,
@@ -31,6 +32,7 @@ import {
   type RunArgs,
 } from "@bloombridge/lib";
 import { getSettings } from "./settings";
+import { getBloomMsPerPage, recordBloomTiming } from "./bloomTiming";
 
 export type RunStatus = "queued" | "running" | "failed" | "done" | "cancelled";
 export type Rating = "none" | "keeper" | "disapproved";
@@ -64,7 +66,15 @@ export interface RunRecord {
   /** The pipeline stage that was running when the run failed (for the UI banner). */
   failedStage?: string;
   stages: Record<string, StageMetric>;
-  progress?: { stage: string; page: number; pageCount: number };
+  progress?: {
+    stage: string;
+    page: number;
+    pageCount: number;
+    /** Estimated duration (ms) of the current stage, when we can predict it (Bloom step). */
+    etaMs?: number;
+    /** Epoch ms when the current stage actually began (Bloom step) — drives the linear bar. */
+    startedMs?: number;
+  };
   notes: string;
   /** User review of the extracted metadata: item key → thumbs up/down. Absent keys
    *  are unreviewed. The set of items is fixed (CHECKLIST_ITEMS), so this only
@@ -359,11 +369,12 @@ async function findCompatibleBloomForRun(
 /** Read selected fields from a book folder's meta.json (empty object if unreadable). */
 async function readBookMeta(
   bookFolder: string,
-): Promise<{ title?: string; bookInstanceId?: string }> {
+): Promise<{ title?: string; bookInstanceId?: string; pageCount?: number }> {
   try {
     return JSON.parse(await fs.readFile(path.join(bookFolder, "meta.json"), "utf-8")) as {
       title?: string;
       bookInstanceId?: string;
+      pageCount?: number;
     };
   } catch {
     return {};
@@ -445,8 +456,15 @@ export async function processBookInBloomForRun(
   // Bring Bloom forward so the user can see its busy overlay while it processes.
   await bringBloomToFront(bloom.port);
 
+  // When "fit image panes" is on, ask Bloom to auto-size the origami splitter on
+  // illustration-plus-text pages while it processes them. Bloom has the real rendered
+  // layout, so it fits the image to the text exactly (no estimation, no overflow). A
+  // Bloom that predates this flag ignores it, in which case our Stage-4 guess stands and
+  // the guard below is the safety net.
+  const fitImageTextSplits = rec.params.fitImagePanes !== false;
+
   log("Bloom: processing book…");
-  const result = await processBookInBloom(rec.bookFolderPath, bloom.port);
+  const result = await processBookInBloom(rec.bookFolderPath, bloom.port, { fitImageTextSplits });
   if (!result.ok)
     throw new BloomProcessError(result.error || "Bloom couldn't process the book.", 502);
 
@@ -454,6 +472,28 @@ export async function processBookInBloomForRun(
   // the new location. Track it so later artifact reads find the processed book.
   if (result.bookFolderPath && result.bookFolderPath !== rec.bookFolderPath) {
     rec.bookFolderPath = result.bookFolderPath;
+  }
+
+  // Fallback guard for a Bloom that didn't fit the splits itself (older Bloom, or the
+  // setting off): if any page WE auto-split off 50/50 (data-auto-split) is still flagged
+  // as overflowing in the saved .htm, revert just those pages to 50/50 and reprocess once
+  // WITHOUT re-fitting (the 50% fallback is today's known-safe behavior). When Bloom did
+  // fit the splits, those pages won't overflow, so this is a no-op.
+  const htmPath =
+    result.htmPath ?? path.join(rec.bookFolderPath, path.basename(rec.bookFolderPath) + ".htm");
+  try {
+    const reverted = await revertOverflowingAutoSplits(htmPath);
+    if (reverted > 0) {
+      log(`Fit image panes: reverted ${reverted} page(s) whose text overflowed.`);
+      const reprocessed = await processBookInBloom(rec.bookFolderPath, bloom.port, {
+        fitImageTextSplits: false,
+      });
+      if (reprocessed.bookFolderPath && reprocessed.bookFolderPath !== rec.bookFolderPath) {
+        rec.bookFolderPath = reprocessed.bookFolderPath;
+      }
+    }
+  } catch (err) {
+    log(`Fit image panes guard skipped: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   log("Bloom: done");
@@ -645,6 +685,7 @@ async function executeRun(rec: RunRecord) {
     visionModelName: rec.params.visionModel,
     complexBecomesImage: rec.params.complexBecomesImage,
     trimWhitespace: rec.params.trimWhitespace,
+    fitImagePanes: rec.params.fitImagePanes,
   };
 
   try {
@@ -670,6 +711,14 @@ async function executeRun(rec: RunRecord) {
     // (running) and waits its turn here.
     if (rec.status === "done" && rec.target === "bloom" && rec.bookFolderPath) {
       const stamp = () => new Date().toTimeString().slice(0, 8);
+      // The Bloom process-book step emits no per-page progress, but its duration scales
+      // with page count, so estimate it as pageCount × the global per-page average from
+      // prior books. The client uses startedMs + etaMs to advance a linear bar (when we
+      // have no prior timing yet, etaMs stays undefined and the bar just doesn't tick).
+      const { pageCount = 0 } = await readBookMeta(rec.bookFolderPath);
+      const msPerPage = await getBloomMsPerPage();
+      const etaMs = msPerPage && pageCount ? msPerPage * pageCount : undefined;
+
       // Keep the run "running" (in the Bloom stage) until Bloom actually finishes —
       // otherwise the row reads "done" while the book is still being styled, and the
       // compare pane has nothing to show yet.
@@ -682,6 +731,10 @@ async function executeRun(rec: RunRecord) {
         // waiting for the lock (queued behind another book).
         const durationMs = await withBloomLock(async () => {
           const startedMs = Date.now();
+          // Real processing is starting now (we hold the lock, not just queued), so
+          // publish the start time + ETA — that's what makes the GUI bar tick linearly.
+          rec.progress = { stage: "bloom", page: 0, pageCount, startedMs, etaMs };
+          pushRun(rec);
           await processBookInBloomForRun(rec, {
             onLog: (l) => appendLog(rec.id, `[${stamp()}]    ${l}`),
           });
@@ -689,6 +742,9 @@ async function executeRun(rec: RunRecord) {
         });
         rec.stages.bloom = { durationMs };
         rec.status = "done";
+        // Fold this book's timing into the global per-page average so the next book's
+        // bar is calibrated. Skipped when we couldn't read a page count.
+        if (pageCount) await recordBloomTiming(durationMs, pageCount);
         appendLog(rec.id, `[${stamp()}] ✓ Bloom — done (${Math.round(durationMs / 1000)}s)`);
       } catch (err) {
         rec.status = "failed";
@@ -851,7 +907,7 @@ export interface GuiRun {
     tout: number;
     cost: number;
   }[];
-  progress?: { stage: string; page: number; pages: number };
+  progress?: { stage: string; page: number; pages: number; etaMs?: number; startedMs?: number };
   error?: { stage?: string; code: string; message: string };
   /** Stages a re-run could start from given the artifacts on disk (resume). */
   resumeStage?: string;
@@ -936,7 +992,13 @@ function toGuiRun(rec: RunRecord): GuiRun {
     params: rec.params,
     breakdown,
     progress: rec.progress
-      ? { stage: rec.progress.stage, page: rec.progress.page, pages: rec.progress.pageCount }
+      ? {
+          stage: rec.progress.stage,
+          page: rec.progress.page,
+          pages: rec.progress.pageCount,
+          etaMs: rec.progress.etaMs,
+          startedMs: rec.progress.startedMs,
+        }
       : undefined,
     error:
       rec.status === "failed" && rec.error

@@ -8,8 +8,7 @@ import {
   Chip,
   IconBtn,
   Check,
-  ProgressBar,
-  runProgress,
+  RunProgressBar,
   fmt,
   effStatus,
   ChecklistStatus,
@@ -801,6 +800,7 @@ function runSummary(run: Run, defaults?: Params): string {
       )[p.complexBecomesImage] || p.complexBecomesImage,
     );
   if (differs("trimWhitespace")) parts.push(p.trimWhitespace ? "trim-whitespace" : "no-trim");
+  if (differs("fitImagePanes")) parts.push(p.fitImagePanes ? "fit-panes" : "no-fit-panes");
   if (differs("target")) parts.push("→ " + (BLOOM.targets[p.target] || p.target));
   return parts.join(" · ") || "Using defaults";
 }
@@ -971,7 +971,7 @@ function RunRow({
             {run.progress.pages ? ` · page ${run.progress.page}/${run.progress.pages}` : ""}
           </span>
           <div style={{ flex: 1, maxWidth: 320 }}>
-            <ProgressBar value={runProgress(run)} />
+            <RunProgressBar run={run} />
           </div>
           <ElapsedTimer
             startedAt={run.startedAt}

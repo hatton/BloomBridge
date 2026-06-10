@@ -355,4 +355,53 @@ describe("generateBloomHTML", () => {
     expect(html).not.toContain("text-align");
     expect(html).not.toContain("bloom-vertical-align");
   });
+
+  // --- Explicit first-pane share (fit image panes) ---
+  it("emits no inline split styles when firstPaneSharePct is omitted", () => {
+    const seq: OrigamiItem[] = [
+      { type: "image", src: "test.png" },
+      { type: "text", content: { en: "test" } },
+    ];
+    const html = generateOrigamiHtml(seq, Orientation.Portrait);
+    expect(html).not.toContain("style=");
+  });
+
+  it("emits bottom/height percentages for a horizontal (portrait) split", () => {
+    // Image first taking 70% → second (text) pane is 30%.
+    const seq: OrigamiItem[] = [
+      { type: "image", src: "test.png" },
+      { type: "text", content: { en: "test" } },
+    ];
+    const html = generateOrigamiHtml(seq, Orientation.Portrait, 70);
+    expect(html).toContain('<div class="split-pane-component position-top" style="bottom: 30%">');
+    expect(html).toContain(
+      '<div class="split-pane-divider horizontal-divider" style="bottom: 30%">',
+    );
+    expect(html).toContain(
+      '<div class="split-pane-component position-bottom" style="height: 30%">',
+    );
+  });
+
+  it("emits right/width percentages for a vertical (landscape) split", () => {
+    const seq: OrigamiItem[] = [
+      { type: "image", src: "test.png" },
+      { type: "text", content: { en: "test" } },
+    ];
+    const html = generateOrigamiHtml(seq, Orientation.Landscape, 60);
+    expect(html).toContain('<div class="split-pane-component position-left" style="right: 40%">');
+    expect(html).toContain('<div class="split-pane-divider vertical-divider" style="right: 40%">');
+    expect(html).toContain('<div class="split-pane-component position-right" style="width: 40%">');
+  });
+
+  it("applies the explicit share only to the top-level split (nested stays default)", () => {
+    const seq: OrigamiItem[] = [
+      { type: "image", src: "a.png" },
+      { type: "text", content: { en: "t" } },
+      { type: "image", src: "b.png" },
+    ];
+    const html = generateOrigamiHtml(seq, Orientation.Portrait, 70);
+    // Only one inline-styled top component; the nested split has no styles.
+    const topMatches = html.match(/position-top" style="bottom: 30%"/g) || [];
+    expect(topMatches.length).toBe(1);
+  });
 });

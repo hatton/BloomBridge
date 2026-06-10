@@ -26,6 +26,7 @@ import { readZip } from "./zipReader";
 import { FRONT_COVER_IMAGE_FILENAME, BACK_COVER_IMAGE_FILENAME } from "../types";
 import type { HorizontalAlign } from "../types";
 import { extractCcLicenseUrl } from "../4-generate-html/licenses";
+import { intrinsicSize } from "../util/imageSize";
 import { isStoryWeaverEpub, analyzeStoryWeaver, type StoryWeaverInfo } from "./storyweaver";
 import { isLibraryForAllEpub, analyzeLibraryForAll, type LibraryForAllInfo } from "./libraryForAll";
 import { hashPageImage, hashesMatch } from "../1-ocr/pageImageHash";
@@ -103,32 +104,6 @@ const isDecorativeImage = (src: string): boolean =>
 /** The page's primary illustration src, skipping decorative icons / logos. */
 const pickMainImage = (imgs: string[]): string | undefined =>
   imgs.find((i) => !isDecorativeImage(i));
-
-/**
- * Intrinsic pixel size of a JPEG or PNG from its header (no decode, no dependency).
- * Returns null for unrecognised data. Used to read illustration aspect ratios so we can
- * pick the book's page orientation.
- */
-function intrinsicSize(buf: Buffer): { w: number; h: number } | null {
-  if (buf.length > 24 && buf[0] === 0x89 && buf[1] === 0x50)
-    // PNG: IHDR width/height
-    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
-  if (buf.length > 4 && buf[0] === 0xff && buf[1] === 0xd8) {
-    // JPEG: scan segments for a Start-Of-Frame marker, which carries height/width.
-    let o = 2;
-    while (o < buf.length - 8) {
-      if (buf[o] !== 0xff) {
-        o++;
-        continue;
-      }
-      const m = buf[o + 1];
-      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc)
-        return { h: buf.readUInt16BE(o + 5), w: buf.readUInt16BE(o + 7) };
-      o += 2 + buf.readUInt16BE(o + 2);
-    }
-  }
-  return null;
-}
 
 /**
  * Decide a Bloom page-size token from the illustrations' dominant aspect. EPUBs are

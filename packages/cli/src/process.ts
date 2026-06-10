@@ -26,6 +26,7 @@ export type Arguments = {
   emitSourceHashes?: boolean;
   complexBecomesImage?: string;
   trimWhitespace?: boolean;
+  fitImagePanes?: boolean;
   jsonEvents?: boolean;
 };
 
@@ -67,6 +68,7 @@ export async function processConversion(inputPath: string, options: Arguments) {
     emitSourceHashes: options.emitSourceHashes,
     complexBecomesImage: options.complexBecomesImage,
     trimWhitespace: options.trimWhitespace,
+    fitImagePanes: options.fitImagePanes,
   };
 
   try {

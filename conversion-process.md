@@ -91,6 +91,7 @@ Entry point: `packages/cli/src/index.ts` (Commander) → `Arguments` → `makeTh
 | `--complex-becomes-image <which>`                | `busy`                          | Stage 1 (+ Stage 4 render)  | Which pages to snapshot as full-page images instead of reconstructing text (translatability↔fidelity). `covers` never flattens interior pages; `busy` (default) flattens canvas pages with ≥`BUSY_THRESHOLD` text blocks; `anyCanvas` flattens every canvas page; `all` imports **every** page as an image with only minimal OCR/LLM for metadata. Legacy `off`/`0`–`5`/`always` still accepted (see §5.7). |
 | `--emit-source-hashes`                           | off                             | Stage 4                     | **Master-creation mode** (see §9.7). Keeps the `data-import-source-hash` on every page and **skips** master substitution. Use it once to build a master book; off (the default) for normal imports.                                                                                                                                                                                                         |
 | `--trim-whitespace` / `--no-trim-whitespace`     | on                              | Stage 1 / EPUB extraction   | Crop uniform white margins off the edges of each extracted illustration so the artwork fills its frame (see §5.8). On by default; pass `--no-trim-whitespace` to disable. Skips full-bleed covers, per-page flatten snapshots, and decorative icons.                                                                                                                                                        |
+| `--fit-image-panes` / `--no-fit-image-panes`     | on                              | Stage 4 (+ GUI Bloom guard) | On illustration-plus-text pages, grow the image pane past Bloom's default 50/50 when the image's shape benefits and the text clearly still fits (see §9.8). On by default; pass `--no-fit-image-panes` to keep every page at 50/50. The GUI's post-Bloom guard reverts any adjusted page whose text overflowed.                                                                                             |
 | `--verbose`                                      | off                             | all                         | Verbose logging via the log callback.                                                                                                                                                                                                                                                                                                                                                                       |
 
 **API-key gating** (`makeThePlan`): Mistral OCR needs the Mistral key; OpenRouter
@@ -798,6 +799,46 @@ and any other fixed text stay as typed), and map the source page to it in the GU
   10 bits of each other. Masters only tag the specific boilerplate pages, and the
   closest match wins, so this hasn't caused a wrong substitution — but don't tag a
   blank/near-empty page in a master.
+
+### 9.8 Fit image panes — `fitImagePanes.ts` + the overflow guard
+
+On a page that is exactly **one illustration + one text block**, Bloom's default
+origami split is an even 50/50. For a portrait illustration with only a few lines of
+text that wastes a large empty band below the text while the artwork stays small.
+`--fit-image-panes` (on by default; §5 option table) picks a better **initial** split.
+
+- **Heuristic** (`computeImagePaneSharePct`, a pure function): from the trimmed image's
+  aspect (read off the book-folder file via `util/imageSize.ts` — post-trim, so it
+  matches what renders), the page's marginBox px (`HtmlGenerator.pagePx`), and the text
+  block's per-language Markdown, it returns the integer percent the image pane should
+  take, or **null** to leave it at 50/50. It grows the image pane only up to where a
+  full-width image touches both page edges (a wide image gains nothing), never past
+  `MAX_IMAGE_FRAC`, and never far enough to risk text overflow — the text height is
+  **over-estimated** (a SAFETY multiplier + padding, summing every language present,
+  since we can't know at conversion time whether the book will be shown bilingually).
+  The governing rule is _overflow is a process failure, wasted space is only a quality
+  ding_: when in doubt, return null. `generatePage` passes the chosen share to
+  `generateOrigamiHtml` (which emits the `bottom`/`height` inline percentages on the
+  top-level split) and stamps `data-auto-split="<pct>"` on the page div.
+- **v1 scope**: only the two-item image+text case (either order), only when the image
+  file's size is readable. Three-item (bilingual T-I-T) stacks, multi-image pages, and
+  canvas/full-bleed pages are left at the default and are explicitly out of scope.
+- **Bloom does the authoritative fit (GUI path).** When the setting is on, the GUI passes
+  `fitImageTextSplits: true` to `external/process-book` (`processBookInBloom` in
+  `notifyBloom.ts`, wired from `engine.ts` `processBookInBloomForRun`). Bloom has the real
+  rendered layout, so it grows the image pane to just fit the text with no overflow — no
+  estimation. This supersedes the Stage-4 guess, which on the GUI path is only a starting
+  value. The CLI path never runs process-book, so there the heuristic is the final word
+  (hence its conservative bias).
+- **Overflow guard fallback** (`fitImagePanesGuard.ts`, GUI path): for a Bloom that
+  predates `fitImageTextSplits` (or with the setting off), `revertOverflowingAutoSplits`
+  reads the saved `.htm` after processing and, for any page carrying `data-auto-split`
+  **and** one of Bloom's editable-level overflow classes (`overflow` /
+  `thisOverflowingParent` / `childOverflowingThis` — _not_ `pageOverflows`, which Bloom
+  suppresses on Device16x9), resets that page's split to 50/50, drops the markers, renames
+  the attribute to `data-auto-split-reverted`, and reprocesses **once** (without re-fitting).
+  When Bloom did the fit, those pages don't overflow, so this is a no-op. Pages we didn't
+  adjust are never touched; master-substituted pages (§9.7) carry no `data-auto-split`.
 
 ---
 

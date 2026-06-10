@@ -394,7 +394,12 @@ export function RunConfig({
   onClose: () => void;
   onConfirm: (v: { params: Params; start: Stage }) => void;
 }) {
-  const base = run ? run.params : BLOOM.DEFAULT_PARAMS;
+  // When cloning/resuming a prior run, start from its params but backfill any options
+  // that run predates (e.g. trimWhitespace / fitImagePanes) from the defaults — so a
+  // newer option isn't shown as off / "changed" just because the old run never stored it.
+  const base = run
+    ? { ...(defaults || BLOOM.DEFAULT_PARAMS), ...run.params }
+    : BLOOM.DEFAULT_PARAMS;
   const [p, setP] = React.useState<Params>({ ...base });
   const [start, setStart] = React.useState<Stage>("ocr");
   const set = (k: keyof Params, v: any) => setP((o) => ({ ...o, [k]: v }));
@@ -712,6 +717,7 @@ function previewCmd(source: Source, p: Params, start: Stage) {
       ? " \\\n  --complex-becomes-image " + p.complexBecomesImage
       : "") +
     (p.trimWhitespace ? " \\\n  --trim-whitespace" : "") +
+    (p.fitImagePanes === false ? " \\\n  --no-fit-image-panes" : "") +
     " \\\n  --target " +
     p.target
   );
@@ -745,6 +751,7 @@ export function CompareModal({
     ["Cover handling", (r) => BLOOM.coverModes[r.params.coverMode]],
     ["Flatten complex", (r) => BLOOM.complexLevels[r.params.complexBecomesImage]],
     ["Trim whitespace", (r) => (r.params.trimWhitespace ? "On" : "Off")],
+    ["Fit image panes", (r) => (r.params.fitImagePanes ? "On" : "Off")],
     ["Target", (r) => BLOOM.targets[r.params.target]],
   ];
   const outcomes: [string, (r: Run) => React.ReactNode][] = [

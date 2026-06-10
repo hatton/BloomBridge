@@ -72,6 +72,7 @@ const DEFAULT_PARAMS: Params = {
   coverMode: "auto",
   complexBecomesImage: "busy",
   trimWhitespace: true,
+  fitImagePanes: true,
   target: "bloom",
 };
 

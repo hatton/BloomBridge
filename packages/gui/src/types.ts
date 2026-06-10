@@ -44,6 +44,7 @@ export interface Params {
   coverMode: string; // --cover (auto | render | none)
   complexBecomesImage: string; // --complex-becomes-image (covers | busy | anyCanvas | all)
   trimWhitespace: boolean; // --trim-whitespace (crop white margins off illustrations)
+  fitImagePanes: boolean; // --fit-image-panes (auto-size the origami splitter on image+text pages)
   target: string; // --target (images | ocr | tagged | bloom)
 }
 
@@ -66,6 +67,10 @@ export interface RunProgress {
   stage: Stage;
   page: number;
   pages: number;
+  /** Estimated duration (ms) of the current stage, when predictable (the Bloom step). */
+  etaMs?: number;
+  /** Epoch ms when the current stage began (the Bloom step); with etaMs drives a linear bar. */
+  startedMs?: number;
 }
 
 export interface Run {

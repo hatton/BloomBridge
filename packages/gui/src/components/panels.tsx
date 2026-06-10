@@ -10,8 +10,9 @@ import {
   Toggle,
   InfoDot,
   StageBadges,
-  ProgressBar,
-  runProgress,
+  RunProgressBar,
+  RunProgressPct,
+  EtaProgressBar,
   fmt,
   STATUS_META,
 } from "./primitives";
@@ -399,10 +400,10 @@ export function DetailsTab({ run, source }: { run: Run; source: Source }) {
                   page {run.progress.page}/{run.progress.pages}
                 </span>
               ) : (
-                <span className="mono">{Math.round(runProgress(run) * 100)}%</span>
+                <RunProgressPct run={run} />
               )}
             </div>
-            <ProgressBar value={runProgress(run)} />
+            <RunProgressBar run={run} />
           </div>
         )}
       </div>
@@ -430,6 +431,7 @@ export function DetailsTab({ run, source }: { run: Run; source: Source }) {
           {BLOOM.complexLevels[p.complexBecomesImage]}
         </DetailRow>
         <DetailRow label="Trim whitespace">{p.trimWhitespace ? "On" : "Off"}</DetailRow>
+        <DetailRow label="Fit image panes">{p.fitImagePanes ? "On" : "Off"}</DetailRow>
         <DetailRow label="Target output">{BLOOM.targets[p.target]}</DetailRow>
         <DetailRow label="Started">{fmt.date(run.ts)}</DetailRow>
       </div>
@@ -1233,6 +1235,7 @@ export function cmdString(source: Source, run: Run) {
       ? " \\\n  --complex-becomes-image " + p.complexBecomesImage
       : "") +
     (p.trimWhitespace ? " \\\n  --trim-whitespace" : "") +
+    (p.fitImagePanes === false ? " \\\n  --no-fit-image-panes" : "") +
     " \\\n  --target " +
     p.target
   );
@@ -1268,6 +1271,7 @@ function buildRunReport(source: Source, run: Run) {
   L.push(`- Cover handling: ${BLOOM.coverModes[p.coverMode]}`);
   L.push(`- Flatten complex pages as image: ${BLOOM.complexLevels[p.complexBecomesImage]}`);
   L.push(`- Trim whitespace: ${p.trimWhitespace ? "on" : "off"}`);
+  L.push(`- Fit image panes: ${p.fitImagePanes ? "on" : "off"}`);
   L.push(`- Target output: ${BLOOM.targets[p.target]}`);
   L.push("");
   L.push("Command:");
@@ -1515,6 +1519,47 @@ export function ParamControls({
         </Field>
       </Changed>
 
+      {/* ---- Common toggles (not advanced): both on by default ---- */}
+      <Changed on={chg("trimWhitespace")}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "14px 0 10px",
+            marginTop: 14,
+            borderTop: "1px solid var(--border)",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Trim whitespace</div>
+            <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+              Crop white margins off illustration edges so the artwork fills its frame
+            </div>
+          </div>
+          <Toggle value={p.trimWhitespace} onChange={(v) => set("trimWhitespace", v)} />
+        </div>
+      </Changed>
+      <Changed on={chg("fitImagePanes")}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "12px 0 10px",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Fit image panes</div>
+            <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+              On illustration-plus-text pages, grow the image pane past 50% when the image&apos;s
+              shape benefits and the text still fits
+            </div>
+          </div>
+          <Toggle value={p.fitImagePanes} onChange={(v) => set("fitImagePanes", v)} />
+        </div>
+      </Changed>
+
       {/* ---- Everything else, collapsed under "Advanced" ---- */}
       <button
         type="button"
@@ -1622,25 +1667,6 @@ export function ParamControls({
                 </Field>
               </Changed>
             </div>
-            <Changed on={chg("trimWhitespace")}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "12px 0 10px",
-                  marginTop: 4,
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 12.5, fontWeight: 600 }}>Trim whitespace</div>
-                  <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
-                    Crop white margins off illustration edges so the artwork fills its frame
-                  </div>
-                </div>
-                <Toggle value={p.trimWhitespace} onChange={(v) => set("trimWhitespace", v)} />
-              </div>
-            </Changed>
           </StageGroup>
 
           {/* ---- Think (LLM) stage ---- */}
@@ -2209,6 +2235,8 @@ export function PreviewPane({
   mode = "pdf",
   runStatus,
   runStage,
+  runEtaMs,
+  runStartedMs,
   runFailedStage,
   showActions,
   hasRun,
@@ -2230,6 +2258,10 @@ export function PreviewPane({
   // when the run finishes and show a "processing" state during the final Bloom stage.
   runStatus?: string;
   runStage?: string;
+  // ETA for the current stage (the Bloom process-book step) and when it started, so
+  // the "Processing in Bloom…" overlay can show a linear time-based bar.
+  runEtaMs?: number;
+  runStartedMs?: number;
   // The stage a failed run died on, so the Bloom-side placeholder can name it.
   runFailedStage?: Stage;
   // Whether a single source is in focus, so the Run-conversion / settings / details
@@ -2443,6 +2475,8 @@ export function PreviewPane({
           onProcess={pairs.processInBloom}
           runStatus={runStatus}
           runStage={runStage}
+          runEtaMs={runEtaMs}
+          runStartedMs={runStartedMs}
           runFailedStage={runFailedStage}
           onOpenDetails={onOpenDetails}
           bloomRunning={bloomRunning}
@@ -2836,6 +2870,8 @@ function PairedPagesView({
   onProcess,
   runStatus,
   runStage,
+  runEtaMs,
+  runStartedMs,
   runFailedStage,
   onOpenDetails,
   bloomRunning,
@@ -2856,6 +2892,9 @@ function PairedPagesView({
   // page yet (converting / failed-on-step / not-yet-rendered) when bookReady is false.
   runStatus?: string;
   runStage?: string;
+  // ETA + start time of the Bloom step, driving the "Processing in Bloom…" linear bar.
+  runEtaMs?: number;
+  runStartedMs?: number;
   runFailedStage?: Stage;
   onOpenDetails?: () => void;
   // Live Bloom connection, shown above the "Convert to Bloom" placeholder action.
@@ -2888,9 +2927,12 @@ function PairedPagesView({
     </div>
   );
 
-  // Bloom is restyling the book — show a spinner over the dark backdrop until it
-  // finishes (the pages then reload via reloadKey).
-  if (processing)
+  // Bloom is restyling the book — show progress over the dark backdrop until it
+  // finishes (the pages then reload via reloadKey). When the server predicted an ETA
+  // (from prior books' per-page timing) we show a linear, time-driven bar; otherwise
+  // — the first book, or a manual re-process with no run timing — fall back to a spinner.
+  if (processing) {
+    const haveEta = !!runEtaMs && !!runStartedMs;
     return (
       <div
         style={{
@@ -2905,10 +2947,17 @@ function PairedPagesView({
           fontSize: 12.5,
         }}
       >
-        <div className="spinner" style={{ width: 34, height: 34, borderWidth: 3 }} />
+        {haveEta ? (
+          <div style={{ width: 220 }}>
+            <EtaProgressBar etaMs={runEtaMs} startedMs={runStartedMs} height={6} />
+          </div>
+        ) : (
+          <div className="spinner" style={{ width: 34, height: 34, borderWidth: 3 }} />
+        )}
         Processing in Bloom…
       </div>
     );
+  }
 
   if (loading) return center("Loading pages…");
   if (!info || !info.ready) return center(info?.reason || "No pages to show.");

@@ -217,12 +217,19 @@ export async function selectBookInBloom(bookId: string, port?: number): Promise<
  * On success returns `{ ok: true, processed, bookFolderPath, htmPath }`. On failure
  * (Bloom not running, or it rejected the request) returns `{ ok: false, error }`.
  *
+ * `options.fitImageTextSplits` (the "fit image panes" feature) asks Bloom to auto-size
+ * the origami splitter on illustration-plus-text pages while it processes them — Bloom
+ * has the real rendered layout, so it grows the image pane to just fit the text without
+ * overflow (no estimation needed on our side). Bloom defaults it to false; an older Bloom
+ * that predates the flag simply ignores it.
+ *
  * The call BLOCKS until processing finishes, which can take a while, so we set no
  * request timeout.
  */
 export async function processBookInBloom(
   bookFolder: string,
   port?: number,
+  options?: { fitImageTextSplits?: boolean },
 ): Promise<{
   ok: boolean;
   processed?: number;
@@ -237,7 +244,10 @@ export async function processBookInBloom(
       const response = await fetch(`http://localhost:${p}/bloom/api/external/process-book`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: absoluteBookFolder }),
+        body: JSON.stringify({
+          path: absoluteBookFolder,
+          fitImageTextSplits: options?.fitImageTextSplits ?? false,
+        }),
       });
       if (response.ok) {
         const data = (await response.json().catch(() => ({}))) as {
