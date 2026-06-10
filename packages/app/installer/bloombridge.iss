@@ -34,7 +34,13 @@ AppVersion={#AppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 DefaultDirName={localappdata}\BloomBridge
+; Fixed per-user location — never prompt for it. DisableDirPage also suppresses the
+; "folder already exists, install anyway?" confirmation when upgrading in place.
+DisableDirPage=yes
+DisableWelcomePage=yes
+DisableReadyPage=yes
 DisableProgramGroupPage=yes
+DisableFinishedPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ; Auto-update path: the running app launches this installer over itself. Use the

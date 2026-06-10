@@ -156,7 +156,7 @@ export function runOptionsRecord(a: RunArgs): Record<string, unknown> {
     imager: a.imager ?? "poppler",
     parserEngine: a.parserEngine ?? "native",
     emitSourceHashes: a.emitSourceHashes ?? false,
-    trimWhitespace: a.trimWhitespace ?? false,
+    trimWhitespace: a.trimWhitespace ?? true,
   };
 }
 
@@ -549,7 +549,7 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
     emitSourceHashes,
     masterFolderPath,
     complexBecomesImage: args.complexBecomesImage ?? "busy",
-    trimWhitespace: args.trimWhitespace ?? false,
+    trimWhitespace: args.trimWhitespace ?? true,
     optionsRecord: runOptionsRecord(args),
   };
 }

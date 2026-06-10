@@ -35,8 +35,19 @@ export const fmt = {
       r = s % 60;
     return m + ":" + String(r).padStart(2, "0");
   },
+  // Run timestamp → short local-timezone date + time. The backend timestamp
+  // may be UTC (ISO with a trailing Z); `new Date` parses it and the
+  // toLocale* calls render it in the viewer's own time zone.
   date(ts?: string) {
-    return ts ? ts.replace(/^2026-/, "").replace(/-/, "/") : "—";
+    if (!ts) return "—";
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
   },
 };
 

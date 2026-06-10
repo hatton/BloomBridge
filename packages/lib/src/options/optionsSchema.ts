@@ -96,9 +96,9 @@ export const optionsSchema: OptionSpec[] = [
     cliFlag: "--trim-whitespace",
     label: "Trim whitespace",
     type: "boolean",
-    default: false,
+    default: true,
     stage: "ocr",
-    help: "Crop uniform white margins off the edges of each illustration so the artwork fills its frame. Off by default. Skips full-bleed covers, per-page snapshots, and decorative icons.",
+    help: "Crop uniform white margins off the edges of each illustration so the artwork fills its frame. On by default. Skips full-bleed covers, per-page snapshots, and decorative icons.",
   },
   {
     key: "complexBecomesImage",

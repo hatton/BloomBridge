@@ -71,7 +71,7 @@ const DEFAULT_PARAMS: Params = {
   visionModel: "gpt-4o-mini",
   coverMode: "auto",
   complexBecomesImage: "busy",
-  trimWhitespace: false,
+  trimWhitespace: true,
   target: "bloom",
 };
 

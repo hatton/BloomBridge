@@ -23,7 +23,7 @@ const FALLBACK_PARAMS: Params = {
   visionModel: "google/gemini-3.1-pro-preview",
   coverMode: "auto",
   complexBecomesImage: "busy",
-  trimWhitespace: false,
+  trimWhitespace: true,
   target: "bloom",
 };
 

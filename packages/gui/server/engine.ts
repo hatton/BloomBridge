@@ -924,7 +924,10 @@ function toGuiRun(rec: RunRecord): GuiRun {
     tokensOut,
     cost,
     time: Math.round(time),
-    ts: rec.createdAt.replace("T", " ").slice(0, 16),
+    // Full ISO timestamp (UTC, with the trailing Z); the GUI renders it in the
+    // viewer's local time zone. Slicing off the timezone here made the client
+    // misread a UTC instant as local wall-clock time.
+    ts: rec.createdAt,
     startedAt: rec.startedAt ? Date.parse(rec.startedAt) : undefined,
     finishedAt: rec.finishedAt ? Date.parse(rec.finishedAt) : undefined,
     notes: rec.notes,

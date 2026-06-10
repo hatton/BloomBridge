@@ -431,7 +431,7 @@ export function DetailsTab({ run, source }: { run: Run; source: Source }) {
         </DetailRow>
         <DetailRow label="Trim whitespace">{p.trimWhitespace ? "On" : "Off"}</DetailRow>
         <DetailRow label="Target output">{BLOOM.targets[p.target]}</DetailRow>
-        <DetailRow label="Started">{run.ts}</DetailRow>
+        <DetailRow label="Started">{fmt.date(run.ts)}</DetailRow>
       </div>
 
       {/* command summary */}
@@ -1254,7 +1254,7 @@ function buildRunReport(source: Source, run: Run) {
   L.push(`- Run ID: ${run.id}`);
   L.push(`- Status: ${(STATUS_META[run.status] || {}).label || run.status}`);
   L.push(`- Quality mark: ${run.mark}`);
-  L.push(`- Started: ${run.ts}`);
+  L.push(`- Started: ${fmt.date(run.ts)}`);
   if (run.notes) L.push(`- Notes: ${run.notes}`);
   L.push("");
   L.push("## Inputs — conversion settings");
@@ -2464,7 +2464,7 @@ export function PreviewPane({
           bloomCollectionName={bloomCollectionName}
         />
       ) : (
-        empty("Select a PDF to preview it here.")
+        empty("Select a document to preview it here.")
       )}
     </aside>
   );

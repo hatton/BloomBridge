@@ -81,8 +81,8 @@ program
     "busy",
   )
   .option(
-    "--trim-whitespace",
-    "Crop uniform white margins off the edges of each extracted illustration so the artwork fills its frame. Off by default. Skips full-bleed covers, per-page snapshots, and decorative icons.",
+    "--no-trim-whitespace",
+    "Disable cropping of uniform white margins off the edges of each extracted illustration. Trimming is on by default; it skips full-bleed covers, per-page snapshots, and decorative icons.",
   )
   .option("--verbose", "Enable verbose logging to see detailed process steps")
   .option(
@@ -111,7 +111,9 @@ program
         visionModelName: options.visionModel,
         emitSourceHashes: options.emitSourceHashes || false,
         complexBecomesImage: options.complexBecomesImage || "busy",
-        trimWhitespace: options.trimWhitespace || false,
+        // Commander defaults this to true (because --no-trim-whitespace is defined);
+        // --no-trim-whitespace sets it false. Trimming is on by default.
+        trimWhitespace: options.trimWhitespace,
         jsonEvents: options.jsonEvents || false,
       };
 

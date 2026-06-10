@@ -18,7 +18,96 @@ import {
 } from "./primitives";
 import type { Mark, Params, Run, Source } from "../types";
 
-const COLS = "30px minmax(170px,1fr) 124px 186px 92px";
+// Column order: checkbox · name · status · date · stages.
+// `check` is a fixed gutter; `name`, `status` and `date` are user-resizable
+// fixed-width columns, each with a drag divider on its right edge. `stages` is
+// the trailing flexible column that absorbs slack (so it has no divider). With
+// the flex column last, every divider grows the column on its left and tracks
+// the cursor naturally. Widths persist in localStorage.
+const COL_DEFAULTS = { name: 260, status: 124, date: 116 };
+const COL_MINS = { name: 140, status: 90, date: 84 };
+type ColKey = keyof typeof COL_DEFAULTS;
+const COL_STORAGE_KEY = "bb.tableColWidths.v2";
+
+function colTemplate(w: Record<ColKey, number>) {
+  return `30px ${w.name}px ${w.status}px ${w.date}px minmax(110px,1fr)`;
+}
+
+function useColumnWidths() {
+  const [widths, setWidths] = React.useState<Record<ColKey, number>>(() => {
+    try {
+      const raw = localStorage.getItem(COL_STORAGE_KEY);
+      if (raw) return { ...COL_DEFAULTS, ...JSON.parse(raw) };
+    } catch {
+      /* ignore malformed storage */
+    }
+    return { ...COL_DEFAULTS };
+  });
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(widths));
+    } catch {
+      /* ignore quota/availability errors */
+    }
+  }, [widths]);
+  const resize = React.useCallback((key: ColKey, delta: number) => {
+    setWidths((w) => ({ ...w, [key]: Math.max(COL_MINS[key], w[key] + delta) }));
+  }, []);
+  return { widths, resize };
+}
+
+// Drag handle that sits on the right edge of a resizable header cell.
+function ColResizer({ onResize }: { onResize: (delta: number) => void }) {
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    let lastX = e.clientX;
+    const move = (ev: MouseEvent) => {
+      onResize(ev.clientX - lastX);
+      lastX = ev.clientX;
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+  const [hot, setHot] = React.useState(false);
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      onClick={(e) => e.stopPropagation()}
+      onMouseEnter={() => setHot(true)}
+      onMouseLeave={() => setHot(false)}
+      title="Drag to resize column"
+      style={{
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        right: -8,
+        width: 11,
+        display: "flex",
+        justifyContent: "center",
+        cursor: "col-resize",
+        zIndex: 6,
+      }}
+    >
+      {/* visible divider line; widens + tints on hover/drag */}
+      <span
+        style={{
+          width: hot ? 2 : 1,
+          background: hot ? "var(--accent)" : "var(--border-strong)",
+          transition: "background .1s, width .1s",
+        }}
+      />
+    </div>
+  );
+}
 
 interface CenterTableProps {
   sources: Source[];
@@ -83,6 +172,9 @@ export function CenterTable(props: CenterTableProps) {
     defaults,
   } = props;
 
+  const { widths, resize } = useColumnWidths();
+  const template = colTemplate(widths);
+
   // flatten + filter (book-level, on unified status)
   const visibleSources = sources.filter((s) => {
     if (statusFilter === "all") return true;
@@ -130,7 +222,7 @@ export function CenterTable(props: CenterTableProps) {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: COLS,
+              gridTemplateColumns: template,
               alignItems: "center",
               gap: 8,
               padding: "0 14px",
@@ -154,28 +246,61 @@ export function CenterTable(props: CenterTableProps) {
               onChange={(v) => onCheckManyPdfs(bookIds, v)}
               title={`Select all ${bookIds.length} books for batch`}
             />
-            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <div
+              style={{
+                position: "relative",
+                minWidth: 0,
+                alignSelf: "stretch",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
               <SortHead
                 label="Book to Import"
                 active={sort === "name"}
                 dir={sortDir}
                 onClick={() => onSortClick("name")}
               />
+              <ColResizer onResize={(d) => resize("name", d)} />
             </div>
-            <SortHead
-              label="Status"
-              active={sort === "status"}
-              dir={sortDir}
-              onClick={() => onSortClick("status")}
-            />
-            <span>Stages</span>
-            <SortHead
-              label="Date"
-              active={sort === "date"}
-              dir={sortDir}
-              onClick={() => onSortClick("date")}
-              align="right"
-            />
+            <div
+              style={{
+                position: "relative",
+                minWidth: 0,
+                alignSelf: "stretch",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <SortHead
+                label="Status"
+                active={sort === "status"}
+                dir={sortDir}
+                onClick={() => onSortClick("status")}
+              />
+              <ColResizer onResize={(d) => resize("status", d)} />
+            </div>
+            <div
+              style={{
+                position: "relative",
+                minWidth: 0,
+                alignSelf: "stretch",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <SortHead
+                label="Run date"
+                active={sort === "date"}
+                dir={sortDir}
+                onClick={() => onSortClick("date")}
+              />
+              <ColResizer onResize={(d) => resize("date", d)} />
+            </div>
+            {/* Stages: flexible trailing column. Label intentionally omitted —
+                stages apply to runs, not books — and it has no divider since it
+                just absorbs the remaining width. */}
+            <span />
           </div>
 
           {sorted.length === 0 && (
@@ -188,6 +313,7 @@ export function CenterTable(props: CenterTableProps) {
           {sorted.map((s) => (
             <SourceRow
               key={s.id}
+              template={template}
               source={s}
               expanded={expanded.has(s.id)}
               onToggleExpand={() => onToggleExpand(s.id)}
@@ -451,6 +577,7 @@ function FilterMenu({
 
 // ---------- Source (PDF/book) row ----------
 function SourceRow({
+  template,
   source,
   expanded,
   onToggleExpand,
@@ -472,6 +599,7 @@ function SourceRow({
   onDeleteRun,
   defaults,
 }: {
+  template: string;
   source: Source;
   expanded: boolean;
   onToggleExpand: () => void;
@@ -507,7 +635,7 @@ function SourceRow({
         onClick={() => onSelectPdf(source.id)}
         style={{
           display: "grid",
-          gridTemplateColumns: COLS,
+          gridTemplateColumns: template,
           alignItems: "center",
           gap: 8,
           padding: "0 14px",
@@ -595,7 +723,10 @@ function SourceRow({
           {/* Echo the most recent existing run's metadata-review status. */}
           <ChecklistStatus run={source.runs[0]} />
         </div>
-        <div></div>
+        {/* Date column: show the most recent run's date even when collapsed. */}
+        <div className="metric" style={{ fontSize: 10.5, color: "var(--text-3)", minWidth: 0 }}>
+          {source.runs[0] ? fmt.date(source.runs[0].ts) : ""}
+        </div>
         <div></div>
       </div>
 
@@ -604,6 +735,7 @@ function SourceRow({
         runs.map((r) => (
           <RunRow
             key={r.id}
+            template={template}
             run={r}
             checked={checked.has(r.id)}
             onCheck={(v) => onCheck(r.id, v)}
@@ -675,6 +807,7 @@ function runSummary(run: Run, defaults?: Params): string {
 
 // ---------- Run row ----------
 function RunRow({
+  template,
   run,
   selected,
   onSelect,
@@ -683,6 +816,7 @@ function RunRow({
   onDelete,
   defaults,
 }: {
+  template: string;
   run: Run;
   checked: boolean;
   onCheck: (v: boolean) => void;
@@ -707,7 +841,7 @@ function RunRow({
         onClick={onSelect}
         style={{
           display: "grid",
-          gridTemplateColumns: COLS,
+          gridTemplateColumns: template,
           alignItems: "center",
           gap: 8,
           padding: "0 14px 0 12px",
@@ -771,16 +905,24 @@ function RunRow({
                 justifyContent: "center",
                 width: 22,
                 height: 22,
+                borderRadius: 5,
                 border: "1px solid transparent",
-                borderRadius: "var(--radius-sm)",
                 background: "transparent",
+                color: "var(--text-3)",
+                opacity: 0.6,
                 cursor: "pointer",
-                color: "var(--text-2)",
+                transition: "all .12s",
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-3)")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = "1";
+                e.currentTarget.style.background = "var(--surface-2)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = "0.6";
+                e.currentTarget.style.background = "transparent";
+              }}
             >
-              <img src="/details.svg" alt="" aria-hidden="true" width={13} height={13} />
+              <Icon name="sliders" size={14} strokeWidth={1.6} />
             </button>
             <IconBtn
               name="trash"
@@ -802,6 +944,9 @@ function RunRow({
           <StatusPill status={effStatus(run)} size="sm" />
           <ChecklistStatus run={run} />
         </div>
+        <div className="metric" style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+          {fmt.date(run.ts)}
+        </div>
         <div>
           <StageBadges
             stages={run.stages}
@@ -809,12 +954,6 @@ function RunRow({
             failedStage={failed && run.error ? run.error.stage : null}
             compact
           />
-        </div>
-        <div
-          className="metric"
-          style={{ textAlign: "right", fontSize: 10.5, color: "var(--text-3)" }}
-        >
-          {fmt.date(run.ts)}
         </div>
       </div>
       {/* live progress sub-row */}
