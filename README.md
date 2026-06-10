@@ -23,7 +23,7 @@ A [Neutralino](https://neutralino.js.org) desktop wrapper around the GUI, packag
 ## Requirements
 
 - Node.js 22 or higher
-- `OPENROUTER_KEY` in your environment (used for OCR, LLM enrichment, and vision formatting)
+- For PDF conversion, an openrouter api key is needed.
 - This project uses the [Vite+](https://viteplus.dev) toolchain (`vp`) with
   [pnpm](https://pnpm.io) as the package manager. Install the Vite+ CLI once,
   globally:
