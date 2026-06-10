@@ -113,8 +113,11 @@
 
   /** Download the installer to the temp dir via PowerShell. Returns the local path. */
   async function downloadInstaller(rel) {
+    // getPath("temp") returns a forward-slash path on Windows; keep separators
+    // consistent (PowerShell accepts forward slashes) rather than mixing in a
+    // backslash, which produced an odd path in the launch step.
     const tempDir = await Neutralino.os.getPath("temp");
-    const dest = `${tempDir}\\${rel.name}`;
+    const dest = `${tempDir}/${rel.name}`;
     const cmd =
       `powershell -NoProfile -NonInteractive -Command ` +
       `"$ProgressPreference='SilentlyContinue'; ` +
@@ -130,11 +133,19 @@
   /** Launch the installer detached and quit so it can replace files. */
   async function runInstallerAndExit(installerPath) {
     ulog(`launching installer: ${installerPath}`);
-    // `cmd /c start` fully detaches the installer from our process tree so it survives
-    // app.exit(). The empty "" is start's window-title argument.
-    await Neutralino.os.execCommand(`cmd /c start "" ${psQuote(installerPath)}`, {
-      background: true,
-    });
+    // Use PowerShell's Start-Process (not `cmd start`): cmd's `start` doesn't understand
+    // the single-quoted, forward-slash path PowerShell produces and treats the quotes as
+    // part of the filename. Start-Process launches the installer as an independent
+    // process and returns immediately, so it survives app.exit().
+    const cmd =
+      `powershell -NoProfile -NonInteractive -Command ` +
+      `"Start-Process -FilePath ${psQuote(installerPath)}"`;
+    const out = await Neutralino.os.execCommand(cmd);
+    if (out.exitCode !== 0) {
+      throw new Error(
+        `could not launch installer (exit ${out.exitCode}): ${out.stdErr || out.stdOut}`,
+      );
+    }
     await Neutralino.app.exit();
   }
 
@@ -191,7 +202,20 @@
       }
 
       toast(`Starting installer…`);
-      await runInstallerAndExit(installerPath);
+      try {
+        await runInstallerAndExit(installerPath);
+      } catch (e) {
+        clearToast();
+        ulog(`launch error: ${(e && e.message) || e}`);
+        await Neutralino.os.showMessageBox(
+          "Update failed",
+          `The update was downloaded but couldn't be started.\n\n${(e && e.message) || e}\n\n` +
+            `You can run it manually:\n${installerPath}`,
+          "OK",
+          "ERROR",
+        );
+        return;
+      }
     } catch (e) {
       clearToast();
       ulog(`check error: ${(e && (e.message || e.code)) || e}`);

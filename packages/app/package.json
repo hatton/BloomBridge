@@ -1,6 +1,6 @@
 {
   "name": "@bloombridge/app",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "BloomBridge — Neutralino desktop app wrapping the Conversion Manager GUI",
   "scripts": {
