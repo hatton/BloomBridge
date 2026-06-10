@@ -1,23 +1,29 @@
 # BloomBridge
 
-A monorepo containing tools for converting PDF documents to Bloom-compatible HTML format through intelligent markdown processing.
+A monorepo containing tools for converting PDF and ePUB documents to Bloom-compatible HTML through OCR, LLM processing, and HTML generation. Produces bilingual educational content.
 
 ## Packages
 
-This monorepo contains two packages:
-
 ### [@bloombridge/lib](./packages/lib)
 
-The core Node.js library that provides the BloomBridge document-to-Bloom conversion functionality.
+The core Node.js library that provides the BloomBridge document-to-Bloom conversion pipeline (OCR → LLM enrichment → Bloom plan → HTML).
 
 ### [@bloombridge/cli](./packages/cli)
 
-A command-line interface for converting PDFs to Bloom format.
+A command-line interface for converting PDFs and markdown to Bloom format. See [its README](./packages/cli/README.md) for full usage — collections, targets, vision formatting, master pages, and more.
+
+### [@bloombridge/gui](./packages/gui)
+
+A local web app — the **Conversion Manager** — for browsing source documents, configuring conversions, running them, and live-watching progress. It's a React + Vite front end; the backend API and live (SSE) updates are served by Vite itself and drive the lib in-process (no separate server in dev).
+
+### [@bloombridge/desktop](./packages/desktop)
+
+A [Neutralino](https://neutralino.js.org) desktop wrapper around the GUI, packaged as a self-contained Windows installer. It runs the GUI's Node backend as a sidecar process. See [its README](./packages/desktop/README.md) for setup, running, and building the installer.
 
 ## Requirements
 
 - Node.js 22 or higher
-- OpenRouter API key
+- `OPENROUTER_KEY` in your environment (used for OCR, LLM enrichment, and vision formatting)
 - This project uses the [Vite+](https://viteplus.dev) toolchain (`vp`) with
   [pnpm](https://pnpm.io) as the package manager. Install the Vite+ CLI once,
   globally:
@@ -28,62 +34,34 @@ A command-line interface for converting PDFs to Bloom format.
 
 ## Development
 
-### Setup
-
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd pdf-to-bloom
-
-# Install dependencies (also sets up the formatting pre-commit hook)
+# Install dependencies (and set up the pre-commit hook)
 vp install
-```
 
-### Developing
+# Run the full GUI dev stack (gui + lib + cli in parallel watch mode).
+# GUI Vite/React HMR on http://localhost:5180; lib and cli rebuild on change.
+./go.sh          # or: vp run dev
 
-```bash
+# Watch a subset in parallel watch mode
+pnpm dev:lib
+pnpm dev:cli
 
-# Watch both lib and cli in parallel
-vp run dev
+# Run the desktop app (rebuilds lib + gui + sidecar, then launches the window)
+pnpm app-setup   # first time only — downloads the Neutralino binaries
+pnpm app-dev
 
-# Run all tests once
+# Build everything (lib before cli, dependency order)
+pnpm build
+
+# Run all tests once / in watch mode
 vp test run
-
-# Run tests in watch mode
 vp test watch
 
-
-# convert a pdf. When --collection is used, the languages specified in the .bloomCollection will be fed to the llm as a hint of what languages to expect
-pnpm cli input.pdf # defaults to most recently opened Bloom collection for better language detection
-pnpm cli input.pdf --collection recent # explicitly use the most recently opened Bloom collection (release, alpha, beta, or betainternal)
-pnpm cli input.pdf --collection path/to/bloom/collection # output to a particular collection
-pnpm cli input.pdf --output path/to/output/directory # output to a specific directory instead of a collection
-
-
-# Extract only images from a PDF
-pnpm cli input.pdf --target images
-
-# Extract markdown and images from PDF
-pnpm cli input.pdf --target ocr
-pnpm cli input.pdf --target ocr --ocr google/gemini-2.5-pro # specify an llm to do the ocr
+# Format + lint + type-check (run before committing)
+vp check
 ```
 
-See [./packages/cli/README.md](./packages/cli/README.md) for details
-
-### Code formatting
-
-Formatting is handled by Vite+'s built-in [oxfmt](https://viteplus.dev)
-formatter, configured in [vite.config.ts](./vite.config.ts) under the `fmt`
-field (defaults). A pre-commit hook (`.vite-hooks/pre-commit` → `vp staged`)
-runs `vp check --fix` on staged files, so commits are auto-formatted. Install
-the recommended `VoidZero.vite-plus-extension-pack` extension for matching
-format-on-save in VS Code.
-
-### Building
-
-```bash
-pnpm build
-```
+To convert a document from the command line, see the [CLI README](./packages/cli/README.md).
 
 ## License
 

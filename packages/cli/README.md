@@ -2,6 +2,11 @@
 
 Command-line interface for converting PDF and markdown documents to Bloom books.
 
+> For how the conversion pipeline actually works — OCR, LLM enrichment, vision
+> formatting, image metadata, master pages, the complex-page tradeoff — see the
+> [`@bloombridge/lib` README](../lib/README.md). This README covers only how to drive
+> that pipeline from the command line.
+
 ## Normal Usage
 
 ### Environment Variables
@@ -9,6 +14,7 @@ Command-line interface for converting PDF and markdown documents to Bloom books.
 First, create these accounts and put their keys in your Environment Variables. On Microsoft Windows, you will need to restart any terminals in or for them to see changes to Environment Variables.
 
 - `OPENROUTER_KEY`
+- `MISTRAL_API_KEY` — only needed for `--ocr mistral`
 
 ### Run
 
@@ -40,29 +46,26 @@ Alternatively, you can use the `--output` option to specify a custom output dire
 bloombridge Ebida.pdf --output "path/to/create/the/output/folder"
 ```
 
-## About Language Detection and Bloom Collections
+## The `--collection` option
 
-When processing files, the tool can automatically detect expected languages by looking for Bloom Collection settings. This provides several benefits:
-
-- **More accurate language detection**: The LLM knows what languages to expect when processing the content
-- **Consistent language codes**: Uses the same BCP 47 language tags as configured in your Bloom Collection
-- **Better metadata extraction**: Language-specific content is properly identified and tagged
-
-### Using the --collection Option (Recommended)
-
-The `--collection` option is the preferred way to specify where to create your book because it automatically finds and uses the Bloom Collection settings. You can specify the collection in two ways:
+Pointing the tool at a Bloom Collection lets it pick up that collection's language
+settings as hints for the LLM (see [Language hints in the lib
+README](../lib/README.md#language-hints-from-bloom-collections)). You can specify the
+collection in two ways:
 
 1. **Simple collection name** - Just provide the collection name, and it will automatically expand to `~/Documents/Bloom/CollectionName`
 2. **Full path** - Provide the complete path to either:
    - A Bloom collection folder (containing a `.bloomCollection` file)
    - A `.bloomCollection` file directly
 
+`--collection recent` uses your most recently opened Bloom collection.
+
 ### Example Bloom Collection Structure
 
 For example, if we have:
 
 ```
-C:\Users\MudMan\Documents\Bloom\Edolo Books\
+C:\Users\Diadi\Documents\Bloom\Edolo Books\
 ├── EdoloBooks.bloomCollection  # Contains language settings
 └── nulu/
 ```
@@ -89,14 +92,15 @@ Edolo Books/
 
 ## Setting the starting stage
 
-The conversion from PDF to Bloom HTML is a four stage process. If you want, you can start at any of those stages, and end at three of them.
+The conversion is a [four stage process](../lib/README.md#the-conversion-pipeline). If
+you want, you can start at any of those stages, and end at three of them.
 
 This tool determines the starting stage by looking at the file name you give it:
 
 - `*.PDF` Start with PDF
 - `*.md` or `*.ocr.md` Start with raw markdown
 - `*.llm.md` Start with the markdown that has been tagged by an LLM
-- `*.bloom.md` Start with markdown that is ready for the last stage of conversion to Bloom HTML:
+- `*.bloom.md` Start with markdown that is ready for the last stage of conversion to Bloom HTML
 
 ## Setting the ending stage
 
@@ -115,60 +119,31 @@ To extract only images from a PDF:
 
 `bloombridge mybook.pdf --target=images`
 
-## Vision formatting (on by default)
+## Choosing the OCR engine and model
 
-A vision model looks at each rendered page and detects its text alignment (vertical:
-top/center/bottom, horizontal: left/center/right) and background color. These are baked
-into the `.ocr.md` page comments and carried through to the Bloom HTML (e.g.
-`bloom-vertical-align-center`, an inline `text-align`, and a page `background-color`).
-
-**This is on by default.** It needs a PDF input and `OPENROUTER_KEY`; if either is
-missing it is skipped with a warning (the conversion still completes). Disable it with
-`--no-vision-formatting`:
+The [default OCR path](../lib/README.md#ocr) renders each page and reads it with a
+capable LLM. Use `--ocr` to pick a different engine or model:
 
 ```bash
-bloombridge mybook.pdf --collection recent          # vision-formatting runs
+bloombridge mybook.pdf --ocr google/gemini-2.5-pro   # use a specific LLM for OCR
+bloombridge mybook.pdf --ocr mistral                 # use Mistral OCR (needs MISTRAL_API_KEY)
+```
+
+## Vision-formatting options
+
+[Vision formatting](../lib/README.md#vision-formatting) is **on by default**. Disable it
+with `--no-vision-formatting`, and override the model it uses (independently of the
+`--model` used for LLM enrichment) with `--vision-model`:
+
+```bash
+bloombridge mybook.pdf --collection recent                          # vision-formatting runs
 bloombridge mybook.pdf --collection recent --no-vision-formatting   # skip it
+bloombridge mybook.pdf --vision-model "openai/gpt-5.4"              # use a specific vision model
 ```
 
-Results are cached in the `.ocr.md`, so re-running later stages does not re-pay for the
-vision calls. To regenerate, re-run starting from the PDF.
+## Building a master book (`--emit-source-hashes`)
 
-By default the vision pass uses a capable Google Gemini model. Override it independently
-of the `--model` (LLM enrichment) option with `--vision-model`:
-
-```bash
-bloombridge mybook.pdf --vision-formatting --vision-model "openai/gpt-5.4"
-```
-
-## Image metadata (illustrator, copyright, license)
-
-When converting to Bloom HTML, the tool copies the book's intellectual-property
-metadata into the **XMP of every image** in the book folder, using the same tags
-Bloom reads. In particular the **illustrator** becomes each image's _Creator_, so Bloom
-attributes the artist and can build image credits. It also writes the copyright,
-license notes, and — for Creative Commons licenses — the license URL. The CC license
-is recognized even when the book only carries it as prose (e.g. a "This work is
-licensed under… visit http://creativecommons.org/licenses/by-nc-nd/4.0/" description),
-and the same resolution feeds `meta.json` and the book's license fields.
-
-This is automatic; there's no option to set. It's best-effort: if metadata can't be
-written to an image, that image is skipped and the conversion still completes. One
-book-level illustrator is applied to all images.
-
-## Master-page substitution (shared boilerplate pages)
-
-When a whole set of books from one publisher share the same complex, hand-built pages
-(license/credits, "You're reading Level 4", "Did you enjoy this book?", etc.), you can
-build **one "master" book** with those pages perfected in Bloom and have every other
-import drop them in automatically.
-
-How it works: every source page is fingerprinted with a perceptual hash. If a page
-matches one held by a master book, OCR is skipped for it and the master's exact page
-HTML + images are spliced into the result. Matching is perceptual, so a master built
-from full-resolution PDFs still matches the same page in a re-compressed copy.
-
-**To build a master:**
+To set up [master-page substitution](../lib/README.md#master-page-substitution-shared-boilerplate-pages):
 
 1. Convert a representative book with `--emit-source-hashes`. This tags every page in
    the output HTML with a `data-import-source-hash` (and skips substitution).
@@ -181,28 +156,13 @@ from full-resolution PDFs still matches the same page in a re-compressed copy.
    book's folder so it ends in `master`** (e.g. `LFA Vanuatu Master`).
 
 **Then just convert normally.** Any book sent to a collection that contains a `*master`
-folder will have its matching pages substituted automatically — the log shows
-`matched master, skipping OCR` and `Substituted master page …`. No extra flag needed.
-
-Notes:
-
-- Only the default OCR path (which renders each page) produces the hashes, so this works
-  with `--ocr gpt`/`gemini`, not `--ocr mistral`/`unpdf`.
-- Don't keep blank/near-empty pages in a master — perceptually they look alike and could
-  match the wrong page.
+folder will have its matching pages substituted automatically. No extra flag needed.
 
 ## Importing complex pages as images (`--complex-becomes-image`)
 
-Some pages are too intricate to rebuild as editable text — e.g. a "discussion
-questions" page with a heading, several differently-aligned questions interleaved with
-little figures, and a footer. Rather than approximate them, you can have the importer
-render such a page to a **single full-page image** (the same way it handles full-bleed
-covers), so it looks exactly like the original. The trade-off: that page's text is then
-a picture — not editable, translatable, or searchable in Bloom.
-
-This is the translatability-vs-fidelity tradeoff. The option picks which pages to
-snapshot, framed as four additive choices (each snapshots strictly more than the one
-above):
+Selects which pages are snapshotted to full-page images rather than rebuilt as editable
+text — the [translatability-vs-fidelity tradeoff](../lib/README.md#importing-complex-pages-as-images).
+The values are additive (each snapshots strictly more than the one above):
 
 ```bash
 bloombridge mybook.pdf --collection recent --complex-becomes-image anyCanvas
@@ -216,28 +176,11 @@ bloombridge mybook.pdf --collection recent --complex-becomes-image anyCanvas
 | `all`            | snapshot **every** page (maximum fidelity; nothing editable/translatable)            |
 
 Legacy values are still accepted: `off` → `covers`, `0` → `anyCanvas`, `1`–`5` map to
-the old numeric thresholds, `always` → `all`. The common canvas page (a picture with one
-block of text on it) stays editable at `covers`/`busy` and only snapshots at `anyCanvas`.
-Each snapshotted page carries a `data-conversion-note` recording why and how to change
-it. Requires a PDF input (the page is rendered from the PDF), so it runs on the
-`--ocr gpt`/`gemini` path.
-
-### `all` — the whole book as page images
+the old numeric thresholds, `always` → `all`.
 
 ```bash
 bloombridge mybook.pdf --collection recent --complex-becomes-image all
 ```
 
-`all` is a different mode from the per-page choices. Instead of judging each page, it
-imports **every** PDF page as a full-page image, producing a Bloom book that looks
-exactly like the source with no per-page reconstruction. To still fill in the book's
-metadata (title, author, license) and detect its languages for Bloom, it OCRs just a
-handful of pages — the **first 4 and the last 2** — and runs the LLM on those. It
-**skips** all per-page layout analysis: cover detection, vision-formatting (text
-alignment / background color), and canvas-page detection are all turned off.
-
-Use it for books that are too richly designed to rebuild as editable text and where a
-faithful picture of each page is good enough. The trade-off is the whole book is
-pictures: not editable, translatable, or searchable in Bloom. (On the `--ocr mistral`
-and `--ocr unpdf` paths the OCR can't be limited to a few pages, so the savings apply
-only to the default `gpt` path; every page is still imported as an image.)
+`all` imports every page as a full-page image (see the lib README for what it skips and
+why it's a distinct mode).
