@@ -43,9 +43,33 @@ body {
   color: transparent;
 }
 
+#splash .version {
+  margin-top: -10px;
+  font-size: 13px;
+  letter-spacing: 0.3px;
+  opacity: 0.6;
+}
+
 #splash .status {
   font-size: 14px;
   opacity: 0.8;
+}
+
+/* Small non-blocking toast for update progress, shown over the running app. */
+#updateToast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1000;
+  max-width: 320px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #e8eaed;
+  background: rgba(27, 28, 31, 0.95);
+  border: 1px solid rgba(138, 180, 248, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 #splash .spinner {

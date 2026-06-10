@@ -89,6 +89,11 @@ async function buildPackages() {
   runShim("pnpm", ["--filter", "@bloombridge/gui", "build:server"]);
 }
 
+function syncVersion() {
+  log("Syncing version into neutralino.config.json");
+  run("node", [path.join(DESKTOP, "scripts", "sync-version.mjs")]);
+}
+
 function neuBuild() {
   log("Neutralino: ensure binaries + build --release");
   const haveBins = fs.existsSync(path.join(DESKTOP, "bin"));
@@ -258,6 +263,7 @@ async function main() {
     );
   }
   await buildPackages();
+  syncVersion();
   neuBuild();
   const nodeExe = await ensurePortableNode();
   const { appExe } = await assembleStage(nodeExe);

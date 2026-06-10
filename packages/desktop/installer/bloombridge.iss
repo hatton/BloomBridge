@@ -37,6 +37,11 @@ DefaultDirName={localappdata}\BloomBridge
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
+; Auto-update path: the running app launches this installer over itself. Use the
+; Restart Manager to close BloomBridge (which holds node.exe + the neu exe) before
+; copying files, then relaunch it when done — so updates are seamless.
+CloseApplications=yes
+RestartApplications=yes
 OutputDir={#OutDir}
 OutputBaseFilename=BloomBridge-Setup-{#AppVersion}
 SetupIconFile={#StageDir}\appIcon.ico

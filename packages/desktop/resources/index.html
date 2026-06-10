@@ -10,6 +10,7 @@
     <!-- Splash shown while the Node backend sidecar starts up. -->
     <div id="splash">
       <div class="logo">BloomBridge</div>
+      <div id="appVersion" class="version"></div>
       <div id="status" class="status">Starting conversion engine…</div>
       <div class="spinner" aria-hidden="true"></div>
       <pre id="error" class="error" hidden></pre>
@@ -20,8 +21,10 @@
          and EventSource work unchanged. -->
     <iframe id="app" title="BloomBridge" hidden></iframe>
 
-    <!-- Neutralino client (placed by `neu update`) then our boot logic. -->
+    <!-- Neutralino client (placed by `neu update`), the auto-updater, then boot logic.
+         updater.js loads first so boot.js can call window.BloomBridgeUpdater.check(). -->
     <script src="js/neutralino.js"></script>
+    <script src="updater.js"></script>
     <script src="boot.js"></script>
   </body>
 </html>

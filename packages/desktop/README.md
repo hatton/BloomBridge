@@ -55,6 +55,36 @@ push to `master`, and [.github/workflows/release.yml](../../.github/workflows/re
 builds the installer on a Windows runner and publishes a GitHub Release (tagged
 `desktop-v<version>`). See [RELEASING.md](../../RELEASING.md) for the full process.
 
+## Auto-update
+
+On startup (release builds only), the app checks GitHub Releases for a newer
+`desktop-v*` release and, if found, offers to download and install it.
+
+```
+boot.js (app shown)
+ └─ updater.js: window.BloomBridgeUpdater.check()
+      ├─ GET api.github.com/repos/<RELEASE_REPO>/releases → newest desktop-v* with an installer
+      ├─ compare to NL_APPVERSION (from neutralino.config.json, synced from package.json)
+      ├─ if newer: prompt → download BloomBridge-Setup-<v>.exe to %TEMP% (PowerShell)
+      └─ launch the installer detached, then exit. Inno Setup upgrades in place
+         (stable AppId) and relaunches the app (CloseApplications/RestartApplications).
+```
+
+Notes:
+
+- **Why not Neutralino's built-in updater?** `Neutralino.updater` only swaps the small
+  `resources.neu` web bundle — it can't update the bundled `node.exe` sidecar or the
+  `app/` directory (the GUI + lib), which is the bulk of the app. Re-running the
+  installer is the only way to update the whole thing.
+- The release repo is the `RELEASE_REPO` global in
+  [neutralino.config.json](neutralino.config.json) (`hatton/BloomBridge`). Change it if
+  releases move.
+- The check no-ops in `neu run` dev mode and swallows all errors — it can never block
+  the app.
+- The version shown after the app name (window title + splash) comes from
+  `NL_APPVERSION`, kept in sync with `package.json` by
+  [scripts/sync-version.mjs](scripts/sync-version.mjs) (run by `dev` and the installer build).
+
 ## Scope
 
 Windows x64 only for now

@@ -5,8 +5,9 @@
   "description": "BloomBridge — Neutralino desktop wrapper for the Conversion Manager GUI",
   "scripts": {
     "setup": "npx --yes @neutralinojs/neu@latest update",
+    "sync-version": "node scripts/sync-version.mjs",
     "build:backend": "pnpm --filter @bloombridge/lib build && pnpm --filter @bloombridge/gui build && pnpm --filter @bloombridge/gui build:server",
-    "dev": "pnpm run build:backend && npx --yes @neutralinojs/neu@latest run",
+    "dev": "pnpm run sync-version && pnpm run build:backend && npx --yes @neutralinojs/neu@latest run",
     "build:win": "node scripts/build-installer.mjs"
   }
 }

@@ -141,6 +141,27 @@ function showApp() {
   iframe.hidden = false;
   const splash = document.getElementById("splash");
   if (splash) splash.style.display = "none";
+  // Check for a newer release in the background (no-op in dev). Never blocks the UI.
+  if (window.BloomBridgeUpdater) window.BloomBridgeUpdater.check();
+}
+
+/** The app version Neutralino injects from neutralino.config.json (kept in sync with
+ *  package.json by scripts/sync-version.mjs). Empty if somehow unavailable. */
+function appVersion() {
+  return typeof NL_APPVERSION === "string" ? NL_APPVERSION : "";
+}
+
+/** Show the version after the app name — in the window title bar and on the splash. */
+function showVersion() {
+  const v = appVersion();
+  const title = v ? `BloomBridge - ${v}` : "BloomBridge";
+  try {
+    void Neutralino.window.setTitle(title);
+  } catch {
+    /* window API not ready / not allowed */
+  }
+  const el = document.getElementById("appVersion");
+  if (el && v) el.textContent = `v${v}`;
 }
 
 async function shutdown() {
@@ -201,6 +222,7 @@ async function main() {
 Neutralino.init();
 Neutralino.events.on("ready", () => {
   log("ready event fired");
+  showVersion();
   void main();
 });
 // Fallback: if the `ready` event never arrives, still try after a short delay so a

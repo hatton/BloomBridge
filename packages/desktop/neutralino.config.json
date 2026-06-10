@@ -15,7 +15,8 @@
   },
   "nativeAllowList": ["app.*", "os.*", "events.*", "window.*", "computer.*", "debug.log"],
   "globalVariables": {
-    "BACKEND_PORT": 5181
+    "BACKEND_PORT": 5181,
+    "RELEASE_REPO": "hatton/BloomBridge"
   },
   "modes": {
     "window": {
