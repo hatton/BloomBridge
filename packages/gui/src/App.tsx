@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import { Icon } from "./lib/icons";
 import { IconBtn } from "./components/primitives";
 import { CenterTable } from "./components/table";
-import { SourcePanel, BatchPane, RunSelectionPane, PdfViewerPane } from "./components/panels";
+import { SourcePanel, BatchPane, RunSelectionPane, PreviewPane } from "./components/panels";
 import {
   RunConfig,
   CompareModal,
@@ -23,6 +23,7 @@ const FALLBACK_PARAMS: Params = {
   visionModel: "google/gemini-3.1-pro-preview",
   coverMode: "auto",
   complexBecomesImage: "busy",
+  trimWhitespace: false,
   target: "bloom",
 };
 
@@ -33,6 +34,7 @@ const PARAM_KEYS: (keyof Params)[] = [
   "visionModel",
   "coverMode",
   "complexBecomesImage",
+  "trimWhitespace",
   "target",
 ];
 
@@ -426,7 +428,7 @@ export function App() {
       type: "confirm",
       title: "Clean up?",
       message:
-        "This removes all failed and disapproved runs (and their folders), deletes 'preview - …' books from the Bloom collection, and asks Bloom to reload. Keepers and good runs are kept.",
+        "This removes all failed and disapproved runs (and their folders), deletes 'Check - …' books from the Bloom collection, and asks Bloom to reload. Keepers and good runs are kept.",
       confirmLabel: "Clean up",
       danger: true,
       onConfirm: async () => {
@@ -445,14 +447,36 @@ export function App() {
     });
 
   // ---- preview: copy into the open Bloom collection + bring Bloom to front ----
-  const onPreview = async (run: Run) => {
+  // `mode` is undefined on the first attempt; if the book is already in the
+  // collection the server says so and we ask the user how to proceed, then
+  // re-send with "replace" (overwrite it, keep its Bloom id) or "new" (a copy).
+  const sendToBloom = async (run: Run, mode?: "replace" | "new") => {
     showToast("info", "Sending to Bloom…", 0);
     try {
-      const r = await api.preview(run.id);
+      const r = await api.preview(run.id, mode);
+      if (r.needsChoice) {
+        setToast(null); // drop the "Sending…" toast while we ask
+        setModal({
+          type: "confirm",
+          title: "This book is already in the collection",
+          message: `“${r.bookName}” is already in your Bloom collection. Replace it (keeping its Bloom ID, so a later upload to Bloom Library updates the same book), or add this conversion as a new copy?`,
+          confirmLabel: "Replace it",
+          secondaryLabel: "Add this as a new copy",
+          onConfirm: () => {
+            setModal(null);
+            void sendToBloom(run, "replace");
+          },
+          onSecondary: () => {
+            setModal(null);
+            void sendToBloom(run, "new");
+          },
+        });
+        return;
+      }
       if (r.bloomRunning) {
         showToast(
           "ok",
-          `Opened in Bloom${r.collectionName ? ` (${r.collectionName})` : ""}${r.broughtToFront ? " — brought to front" : ""}.`,
+          `${r.replaced ? "Replaced in" : "Opened in"} Bloom${r.collectionName ? ` (${r.collectionName})` : ""}${r.broughtToFront ? " — brought to front" : ""}.`,
         );
       } else {
         showToast("ok", "Copied into your collection. Start Bloom to view it (it isn't running).");
@@ -461,6 +485,7 @@ export function App() {
       showToast("error", e?.message || String(e), 8000);
     }
   };
+  const onPreview = (run: Run) => void sendToBloom(run);
 
   // ---- settings ----
   const openSettings = () => {
@@ -619,7 +644,7 @@ export function App() {
 
         {/* The preview pane is always open. It hosts Run conversion + settings +
             run-details, and compares the source against the most-recent run. */}
-        <PdfViewerPane
+        <PreviewPane
           source={multiSelected ? null : focusedSource}
           multiSelected={multiSelected}
           runId={previewRunId}
@@ -639,6 +664,23 @@ export function App() {
           bloomRunning={bloom.running}
           bloomCollectionName={bloom.collectionName}
           onToast={showToast}
+          onAskReplace={(bookName, onReplace, onNewCopy) =>
+            setModal({
+              type: "confirm",
+              title: "This book is already in the collection",
+              message: `“${bookName}” is already in your Bloom collection. Replace it (keeping its Bloom ID, so a later upload to Bloom Library updates the same book), or add this conversion as a new copy?`,
+              confirmLabel: "Replace it",
+              secondaryLabel: "Add this as a new copy",
+              onConfirm: () => {
+                setModal(null);
+                onReplace();
+              },
+              onSecondary: () => {
+                setModal(null);
+                onNewCopy();
+              },
+            })
+          }
         />
       </div>
 

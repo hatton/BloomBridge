@@ -90,6 +90,7 @@ Entry point: `packages/cli/src/index.ts` (Commander) → `Arguments` → `makeTh
 | `--prompt <path>`                                | (built-in)                      | Stage 1 (GPT OCR) + Stage 2 | Override prompt file. Used as the per-page OCR prompt on the GPT path and/or the enrichment prompt.                                                                                                                                                                                                                                                                                                         |
 | `--complex-becomes-image <which>`                | `busy`                          | Stage 1 (+ Stage 4 render)  | Which pages to snapshot as full-page images instead of reconstructing text (translatability↔fidelity). `covers` never flattens interior pages; `busy` (default) flattens canvas pages with ≥`BUSY_THRESHOLD` text blocks; `anyCanvas` flattens every canvas page; `all` imports **every** page as an image with only minimal OCR/LLM for metadata. Legacy `off`/`0`–`5`/`always` still accepted (see §5.7). |
 | `--emit-source-hashes`                           | off                             | Stage 4                     | **Master-creation mode** (see §9.7). Keeps the `data-import-source-hash` on every page and **skips** master substitution. Use it once to build a master book; off (the default) for normal imports.                                                                                                                                                                                                         |
+| `--trim-whitespace`                              | off                             | Stage 1 / EPUB extraction   | Crop uniform white margins off the edges of each extracted illustration so the artwork fills its frame (see §5.8). Off by default. Skips full-bleed covers, per-page flatten snapshots, and decorative icons.                                                                                                                                                                                               |
 | `--verbose`                                      | off                             | all                         | Verbose logging via the log callback.                                                                                                                                                                                                                                                                                                                                                                       |
 
 **API-key gating** (`makeThePlan`): Mistral OCR needs the Mistral key; OpenRouter
@@ -296,8 +297,32 @@ told to preserve them.
 > Stage 1 ordering in `process.ts`: OCR → `prepareCovers` → (optional)
 > `addVisionFormatting` → `detectNormalStyle` (prepends the book comment) →
 > `detectCanvasPages` (injects `canvas-text-boxes`) → flatten (`flattenComplexPages`,
-> or `flattenAllPages` when `all`) → write `.ocr.md`. In `all` mode only OCR,
-> `detectNormalStyle`, and `flattenAllPages` run.
+> or `flattenAllPages` when `all`) → (optional) trim whitespace → write `.ocr.md`. In
+> `all` mode only OCR, `detectNormalStyle`, and `flattenAllPages` run.
+
+### 5.8 Trim whitespace off illustrations — `--trim-whitespace` (`trimImageWhitespace.ts`)
+
+Opt-in. Picture-book illustrations are often exported with a generous white margin
+around the actual artwork, which makes the content look tiny once dropped onto a
+Bloom page. When enabled, `trimWhitespaceInBookFolder` crops the uniform near-white
+border off every illustration **in the book folder, in place**, using `sharp`'s
+`.trim()` (background white, threshold 15). It runs **after** all per-page analysis
+(which reads the PDF / rendered pages, not the extracted PNGs, so order doesn't
+matter) and is **skipped in `--complex-becomes-image all`** mode (every page is
+already a full-bleed snapshot). The same call also runs in the **EPUB front-end**,
+right after `epubToBloomMarkdown` copies the illustrations.
+
+It deliberately leaves alone: full-bleed `cover.jpg`/`back-cover.jpg`, per-page
+flatten/cover renders (`page-<N>.jpg`), Bloom's own assets
+(`placeHolder.png`/`thumbnail.*`/`license.png`/branding), and **decorative icons**
+(`i-<n>`, `logo`, `sc.`) — the last because the discussion-questions grid sizes those
+foreground icons from the Markdown's `{width= height=}` (§9.4), so trimming would
+distort that aspect-driven layout. (This is the same "decorative" vocabulary the EPUB
+front-end uses.) Stage 4 derives illustration layout from the page size and Markdown
+attributes — not from re-reading the trimmed pixels — so cropping after extraction is
+safe. Best-effort: a per-image failure or a degenerate (near-blank) trim is logged and
+skipped. Because it only affects image files (not the Markdown), it's attributed to the
+`ocr` stage for provenance, so toggling it re-extracts a PDF.
 
 ---
 
@@ -614,8 +639,14 @@ the marginBox, so without this the 12 mm page margin shows an ugly white border.
 Recursive split-panes (`split-pane` / `split-pane-component` / `split-pane-divider`).
 `generateTextBlock` emits a `bloom-translationGroup` with one `bloom-editable
 normal-style` per language; `generateImageBlock` emits a `bloom-canvas` background
-image (with optional precomputed canvas-element px for single full-page images, so
-the thumbnail isn’t tiny before Bloom recomputes geometry on first view).
+image with **precomputed canvas-element px** (`origamiPaneRect`) sizing the image to
+the pane it will occupy — full width × its height share of the vertical stack (panes
+nest right-leaning 50/50, so item _i_ gets `1/2^(i+1)`, the last the same as its
+predecessor). Without this the canvas-element has no dimensions and the image renders
+as a tiny box in any static preview/thumbnail (so even a tightly-trimmed illustration
+— see §5.8 — still looked small); with it, `object-fit:contain` fills the pane. Bloom
+recomputes this geometry on first view, so the rect only affects the preview, never the
+edited page.
 
 - **Vertical alignment** → `bloom-vertical-align-{top|center|bottom}` class on the
   translationGroup. **Horizontal** → inline `text-align` on the editable.
@@ -870,7 +901,8 @@ adds/refreshes the book live.
 - Stage 1: `packages/lib/src/1-ocr/` — `pdfToMarkdown.ts`,
   `pdfToMarkdownAndImageFiles-Mistral.ts`, `pdfToMarkdownWithUnpdf.ts`,
   `pdfToImages.ts`, `coverDetection.ts`, `prepareCovers.ts`, `renderPdfPage.ts`,
-  `visionFormatting.ts`, `detectNormalStyle.ts`, `detectCanvasPages.ts`, `poppler.ts`
+  `visionFormatting.ts`, `detectNormalStyle.ts`, `detectCanvasPages.ts`,
+  `trimImageWhitespace.ts` (§5.8), `poppler.ts`
 - Stage 2: `packages/lib/src/2-llm/` — `llmMarkdown.ts`, `llmPrompt.txt`,
   `post-llm-cleanup.ts`
 - Stage 3: `packages/lib/src/3-add-bloom-plan/` — `addBloomPlan.ts`, `bloomMetadata.ts`

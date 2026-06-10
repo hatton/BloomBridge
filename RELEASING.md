@@ -21,7 +21,7 @@ One version for the desktop app, semver-ish `MAJOR.MINOR.PATCH`, currently start
 
 - **PATCH** for fixes, **MINOR** for features. Don't worry about MAJOR for now.
 - The single source of truth is the `version` field in
-  [`packages/desktop/package.json`](packages/desktop/package.json). The installer
+  [`packages/app/package.json`](packages/app/package.json). The installer
   filename, the in-app version, and the release tag are all derived from it.
 
 ## Continuous integration
@@ -40,12 +40,12 @@ Two GitHub Actions workflows:
 
 The version bump _is_ the release signal — no manual tagging:
 
-1. Bump `version` in [`packages/desktop/package.json`](packages/desktop/package.json)
+1. Bump `version` in [`packages/app/package.json`](packages/app/package.json)
    (e.g. `0.1.0` → `0.2.0`).
 2. Commit and push to `master`.
 3. `release.yml` sees a version with no existing release, builds
    `BloomBridge-Setup-<version>.exe` on a Windows runner, and publishes a GitHub
-   Release tagged **`desktop-v<version>`** with the installer attached and auto-generated
+   Release tagged **`app-v<version>`** with the installer attached and auto-generated
    notes.
 4. Share the Release page link. Users download and run the installer (per-user install,
    no admin; unsigned, so SmartScreen shows an "unknown publisher" prompt on first run).
@@ -61,10 +61,10 @@ does **not** publish a Release.
 
 ## Notes
 
-- The `desktop-v*` tag prefix is intentional — it keeps app releases separate from the
+- The `app-v*` tag prefix is intentional — it keeps app releases separate from the
   existing [`publish.yml`](.github/workflows/publish.yml), which npm-publishes the lib/CLI
   on `v*` tags. The two don't collide.
 - Building locally: `vp run app-build` (Windows + Inno Setup).
-  See [`packages/desktop/README.md`](packages/desktop/README.md).
+  See [`packages/app/README.md`](packages/app/README.md).
 - Code signing is not set up yet; `release.yml` is structured so a `signtool` step can be
   slotted in later.

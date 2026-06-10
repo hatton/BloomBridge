@@ -1,4 +1,4 @@
-# @bloombridge/desktop
+# @bloombridge/app
 
 A desktop app for converting PDFs and ePUBs to Bloom format (`@bloombridge/gui`).
 
@@ -14,6 +14,16 @@ Neutralino window
       ├─ shows:   <iframe src="http://127.0.0.1:5181/">  (the GUI, same-origin inside)
       └─ on windowClose: kills the sidecar, then exits
 ```
+
+### Remembered window state
+
+The window's position, size, and maximized state are persisted across sessions.
+`resources/boot.js` polls the geometry and writes it to
+`<OS data dir>/BloomBridge/window-state.json` (the install dir can be read-only, so a
+user-writable location is used), restoring it before the app is revealed on next launch.
+
+Pane-split positions (e.g. the PDF pane width) are GUI state, persisted separately by the
+GUI via `localStorage` on the backend origin — see `packages/gui/src/App.tsx`.
 
 ## First-time setup (downloads the Neutralino framework binaries — needs network)
 
@@ -53,17 +63,17 @@ Requirements to build locally: Inno Setup 6 (`winget install JRSoftware.InnoSetu
 Releasing is driven by the version in [package.json](package.json): bump it, commit, and
 push to `master`, and [.github/workflows/release.yml](../../.github/workflows/release.yml)
 builds the installer on a Windows runner and publishes a GitHub Release (tagged
-`desktop-v<version>`). See [RELEASING.md](../../RELEASING.md) for the full process.
+`app-v<version>`). See [RELEASING.md](../../RELEASING.md) for the full process.
 
 ## Auto-update
 
 On startup (release builds only), the app checks GitHub Releases for a newer
-`desktop-v*` release and, if found, offers to download and install it.
+`app-v*` release and, if found, offers to download and install it.
 
 ```
 boot.js (app shown)
  └─ updater.js: window.BloomBridgeUpdater.check()
-      ├─ GET api.github.com/repos/<RELEASE_REPO>/releases → newest desktop-v* with an installer
+      ├─ GET api.github.com/repos/<RELEASE_REPO>/releases → newest app-v* with an installer
       ├─ compare to NL_APPVERSION (from neutralino.config.json, synced from package.json)
       ├─ if newer: prompt → download BloomBridge-Setup-<v>.exe to %TEMP% (PowerShell)
       └─ launch the installer detached, then exit. Inno Setup upgrades in place

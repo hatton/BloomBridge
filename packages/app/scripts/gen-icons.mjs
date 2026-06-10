@@ -5,7 +5,7 @@
  *   resources/icons/appIcon.ico   — multi-size ICO, used by the Inno Setup installer
  *                                    (Setup.exe icon + Start-menu/desktop shortcut icon).
  *
- * Run once after changing app.svg:  node packages/desktop/scripts/gen-icons.mjs
+ * Run once after changing app.svg:  node packages/app/scripts/gen-icons.mjs
  * (The produced PNG/ICO are checked in; the installer build just copies them.)
  */
 import sharp from "sharp";
@@ -14,10 +14,10 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DESKTOP = path.resolve(__dirname, "..");
-const REPO = path.resolve(DESKTOP, "..", "..");
+const APP_DIR = path.resolve(__dirname, "..");
+const REPO = path.resolve(APP_DIR, "..", "..");
 const SVG = path.join(REPO, "packages", "gui", "public", "app.svg");
-const ICONS_DIR = path.join(DESKTOP, "resources", "icons");
+const ICONS_DIR = path.join(APP_DIR, "resources", "icons");
 
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
 

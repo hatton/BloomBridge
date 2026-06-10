@@ -1,5 +1,5 @@
 /*
- * Build a self-contained Windows-x64 installer for the BloomBridge desktop app.
+ * Build a self-contained Windows-x64 installer for the BloomBridge app.
  *
  * Pipeline:
  *   1. Build lib + gui frontend + gui sidecar bundle.
@@ -9,7 +9,7 @@
  *   5. Compile installer/bloombridge.iss with Inno Setup (ISCC) → installer-out/.
  *
  * Windows-only (the bundled poppler binaries in @bloombridge/lib are win32-x64).
- * Run via:  pnpm --filter @bloombridge/desktop build:win
+ * Run via:  pnpm --filter @bloombridge/app build:win
  */
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -19,14 +19,14 @@ import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DESKTOP = path.resolve(__dirname, ".."); // packages/desktop
-const REPO = path.resolve(DESKTOP, "..", ".."); // repo root
+const APP_DIR = path.resolve(__dirname, ".."); // packages/app
+const REPO = path.resolve(APP_DIR, "..", ".."); // repo root
 const GUI = path.join(REPO, "packages", "gui");
 const LIB = path.join(REPO, "packages", "lib");
 
-const STAGE = path.join(DESKTOP, "stage");
-const CACHE = path.join(DESKTOP, ".cache");
-const OUT = path.join(DESKTOP, "installer-out");
+const STAGE = path.join(APP_DIR, "stage");
+const CACHE = path.join(APP_DIR, ".cache");
+const OUT = path.join(APP_DIR, "installer-out");
 
 // Pinned portable Node for the bundled sidecar runtime.
 const NODE_VERSION = "22.11.0";
@@ -91,17 +91,17 @@ async function buildPackages() {
 
 function syncVersion() {
   log("Syncing version into neutralino.config.json");
-  run("node", [path.join(DESKTOP, "scripts", "sync-version.mjs")]);
+  run("node", [path.join(APP_DIR, "scripts", "sync-version.mjs")]);
 }
 
 function neuBuild() {
   log("Neutralino: ensure binaries + build --release");
-  const haveBins = fs.existsSync(path.join(DESKTOP, "bin"));
-  const haveClient = fs.existsSync(path.join(DESKTOP, "resources", "js", "neutralino.js"));
+  const haveBins = fs.existsSync(path.join(APP_DIR, "bin"));
+  const haveClient = fs.existsSync(path.join(APP_DIR, "resources", "js", "neutralino.js"));
   if (!haveBins || !haveClient) {
-    runShim("npx", ["--yes", "@neutralinojs/neu@latest", "update"], { cwd: DESKTOP });
+    runShim("npx", ["--yes", "@neutralinojs/neu@latest", "update"], { cwd: APP_DIR });
   }
-  runShim("npx", ["--yes", "@neutralinojs/neu@latest", "build", "--release"], { cwd: DESKTOP });
+  runShim("npx", ["--yes", "@neutralinojs/neu@latest", "build", "--release"], { cwd: APP_DIR });
 }
 
 async function ensurePortableNode() {
@@ -128,7 +128,7 @@ async function ensurePortableNode() {
 
 /** Find the neu build output for win_x64: the exe + resources.neu (+ WebView2Loader.dll). */
 function findNeuArtifacts() {
-  const distRoot = path.join(DESKTOP, "dist");
+  const distRoot = path.join(APP_DIR, "dist");
   // neu build writes dist/<binaryName>/...
   const candidates = fs.existsSync(distRoot)
     ? fs
@@ -174,7 +174,7 @@ async function assembleStage(nodeExe) {
 
   // (b2) App icon (.ico) for the installer + shortcuts (the .iss references {app}\appIcon.ico).
   await fsp.copyFile(
-    path.join(DESKTOP, "resources", "icons", "appIcon.ico"),
+    path.join(APP_DIR, "resources", "icons", "appIcon.ico"),
     path.join(STAGE, "appIcon.ico"),
   );
 
@@ -241,9 +241,9 @@ function findIscc() {
 
 function compileInstaller(appExe) {
   log("Compiling installer (Inno Setup)");
-  const pkg = readJson(path.join(DESKTOP, "package.json"));
+  const pkg = readJson(path.join(APP_DIR, "package.json"));
   const version = pkg.version;
-  const iss = path.join(DESKTOP, "installer", "bloombridge.iss");
+  const iss = path.join(APP_DIR, "installer", "bloombridge.iss");
   const iscc = findIscc();
   run(iscc, [
     `/DAppVersion=${version}`,

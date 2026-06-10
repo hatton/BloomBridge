@@ -668,6 +668,7 @@ function runSummary(run: Run, defaults?: Params): string {
         } as Record<string, string>
       )[p.complexBecomesImage] || p.complexBecomesImage,
     );
+  if (differs("trimWhitespace")) parts.push(p.trimWhitespace ? "trim-whitespace" : "no-trim");
   if (differs("target")) parts.push("→ " + (BLOOM.targets[p.target] || p.target));
   return parts.join(" · ") || "Using defaults";
 }

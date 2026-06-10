@@ -121,7 +121,10 @@ export const api = {
     ),
   keeper: (runId: string) =>
     sendJson<{ ok: boolean; dest?: string }>(`/api/runs/${runId}/keeper`, "POST"),
-  preview: (runId: string) =>
+  // mode omitted = probe: if the book is already in the collection the server
+  // replies { needsChoice: true } without copying. "replace" overwrites that
+  // book (reusing its Bloom id); "new" adds a separate "Check - …" copy.
+  preview: (runId: string, mode?: "replace" | "new") =>
     sendJson<{
       ok: boolean;
       dest?: string;
@@ -130,7 +133,10 @@ export const api = {
       notified?: boolean;
       broughtToFront?: boolean;
       selected?: boolean;
-    }>(`/api/runs/${runId}/preview`, "POST"),
+      needsChoice?: boolean;
+      bookName?: string;
+      replaced?: boolean;
+    }>(`/api/runs/${runId}/preview${mode ? `?mode=${mode}` : ""}`, "POST"),
   // Paired run preview: counts + page geometry, plus URL builders for the
   // per-page source-PDF image and the isolated single Bloom page.
   pagePairs: (runId: string) =>
@@ -183,8 +189,17 @@ export const api = {
   // Copy this run's finished book into the matching running Bloom's collection
   // (external/add-book). Fails if no running Bloom has a collection of the book's
   // primary language, or if Bloom isn't on its Collection tab.
-  addToCollection: (runId: string) =>
-    sendJson<{ ok: boolean; id?: string }>(`/api/runs/${runId}/add-to-collection`, "POST"),
+  // mode omitted = probe: if the book is already in the collection the server
+  // replies { needsChoice: true } without adding. "replace" overwrites that book
+  // (reusing its Bloom id); "new" adds it as a separate copy.
+  addToCollection: (runId: string, mode?: "replace" | "new") =>
+    sendJson<{
+      ok: boolean;
+      id?: string;
+      needsChoice?: boolean;
+      bookName?: string;
+      replaced?: boolean;
+    }>(`/api/runs/${runId}/add-to-collection${mode ? `?mode=${mode}` : ""}`, "POST"),
 };
 
 /** Map a GUI rating (mark) to the server rating vocabulary. */

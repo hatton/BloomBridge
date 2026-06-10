@@ -164,6 +164,112 @@ function showVersion() {
   if (el && v) el.textContent = `v${v}`;
 }
 
+// ---------------------------------------------------------------------------
+// Window state persistence — remember the window's position, size, and maximized
+// state across sessions. (Pane-split positions are GUI state and persist via
+// localStorage on the backend origin; see packages/gui/src/App.tsx.)
+//
+// Neutralino emits no move/resize events, so we poll the bounds on an interval,
+// remember the last *un-maximized* bounds (so un-maximizing returns to a sensible
+// size), and write a JSON file under the OS data dir. That dir is the only
+// reliably writable spot once installed: the install dir can be read-only, and
+// Neutralino's random http port makes localStorage on this origin useless across
+// runs.
+// ---------------------------------------------------------------------------
+
+const WINDOW_STATE_DIR_NAME = "BloomBridge";
+const WINDOW_STATE_FILE_NAME = "window-state.json";
+const WINDOW_STATE_POLL_MS = 800;
+
+// Mirror neutralino.config.json's modes.window minimums so a restored size can
+// never shrink the window below what the layout needs.
+const MIN_WIN_WIDTH = 900;
+const MIN_WIN_HEIGHT = 600;
+
+let windowStateDir = null;
+// Most recent un-maximized bounds observed (what we persist as the restore size).
+let lastBounds = null;
+let lastMaximized = false;
+// JSON of what we last wrote, so the poll loop only writes when something changed.
+let lastWrittenJson = "";
+
+async function windowStateFilePath() {
+  if (!windowStateDir) {
+    const dataDir = await Neutralino.os.getPath("data");
+    windowStateDir = `${dataDir}/${WINDOW_STATE_DIR_NAME}`;
+    try {
+      await Neutralino.filesystem.createDirectory(windowStateDir);
+    } catch {
+      /* already exists */
+    }
+  }
+  return `${windowStateDir}/${WINDOW_STATE_FILE_NAME}`;
+}
+
+/** Restore the saved bounds/maximize before the app is revealed. Best-effort:
+ *  any failure (no file yet, bad JSON, API error) just leaves the config defaults. */
+async function restoreWindowState() {
+  try {
+    const path = await windowStateFilePath();
+    const raw = await Neutralino.filesystem.readFile(path);
+    const s = JSON.parse(raw);
+    const w = Number(s.width);
+    const h = Number(s.height);
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+      await Neutralino.window.setSize({
+        width: Math.max(MIN_WIN_WIDTH, Math.round(w)),
+        height: Math.max(MIN_WIN_HEIGHT, Math.round(h)),
+      });
+    }
+    const x = Number(s.x);
+    const y = Number(s.y);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      await Neutralino.window.move(Math.round(x), Math.round(y));
+    }
+    if (s.maximize) {
+      await Neutralino.window.maximize();
+      lastMaximized = true;
+    }
+    log(`restored window state from ${path}`);
+  } catch (e) {
+    log(`no saved window state (${(e && (e.message || e.code)) || e})`);
+  }
+}
+
+/** Snapshot the current window geometry. While maximized we keep the previously
+ *  recorded un-maximized bounds (getSize would report the maximized dimensions). */
+async function captureWindowState() {
+  const maximized = await Neutralino.window.isMaximized();
+  if (!maximized) {
+    const size = await Neutralino.window.getSize();
+    const pos = await Neutralino.window.getPosition();
+    lastBounds = { width: size.width, height: size.height, x: pos.x, y: pos.y };
+  }
+  lastMaximized = maximized;
+  return { ...lastBounds, maximize: lastMaximized };
+}
+
+/** Persist the current geometry, skipping the write when nothing changed. */
+async function saveWindowState() {
+  try {
+    const state = await captureWindowState();
+    if (state.width == null || state.height == null) return; // nothing observed yet
+    const json = JSON.stringify(state);
+    if (json === lastWrittenJson) return;
+    const path = await windowStateFilePath();
+    await Neutralino.filesystem.writeFile(path, json);
+    lastWrittenJson = json;
+  } catch (e) {
+    log(`saveWindowState failed: ${(e && (e.message || e.code)) || e}`);
+  }
+}
+
+/** Poll the window geometry so resizes/moves are persisted even if the app is
+ *  killed without a clean windowClose. */
+function trackWindowState() {
+  setInterval(() => void saveWindowState(), WINDOW_STATE_POLL_MS);
+}
+
 async function shutdown() {
   try {
     if (spawnedId !== null) {
@@ -181,10 +287,14 @@ async function main() {
   started = true;
   log("main() started");
   watchBackendOutput();
-  // Clean up the sidecar when the window closes (we own the process lifecycle
-  // because exitProcessOnClose is false in the config).
+  // Restore the saved window bounds before the splash hands off to the app, then
+  // start tracking geometry changes so they're remembered next launch.
+  await restoreWindowState();
+  trackWindowState();
+  // Persist the final geometry, then clean up the sidecar, when the window closes
+  // (we own the process lifecycle because exitProcessOnClose is false in config).
   Neutralino.events.on("windowClose", () => {
-    void shutdown();
+    void saveWindowState().finally(() => shutdown());
   });
 
   try {

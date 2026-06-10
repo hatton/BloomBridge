@@ -429,6 +429,7 @@ export function DetailsTab({ run, source }: { run: Run; source: Source }) {
         <DetailRow label="Flatten complex pages">
           {BLOOM.complexLevels[p.complexBecomesImage]}
         </DetailRow>
+        <DetailRow label="Trim whitespace">{p.trimWhitespace ? "On" : "Off"}</DetailRow>
         <DetailRow label="Target output">{BLOOM.targets[p.target]}</DetailRow>
         <DetailRow label="Started">{run.ts}</DetailRow>
       </div>
@@ -1231,6 +1232,7 @@ export function cmdString(source: Source, run: Run) {
     (p.complexBecomesImage !== "busy"
       ? " \\\n  --complex-becomes-image " + p.complexBecomesImage
       : "") +
+    (p.trimWhitespace ? " \\\n  --trim-whitespace" : "") +
     " \\\n  --target " +
     p.target
   );
@@ -1265,6 +1267,7 @@ function buildRunReport(source: Source, run: Run) {
     );
   L.push(`- Cover handling: ${BLOOM.coverModes[p.coverMode]}`);
   L.push(`- Flatten complex pages as image: ${BLOOM.complexLevels[p.complexBecomesImage]}`);
+  L.push(`- Trim whitespace: ${p.trimWhitespace ? "on" : "off"}`);
   L.push(`- Target output: ${BLOOM.targets[p.target]}`);
   L.push("");
   L.push("Command:");
@@ -1619,6 +1622,25 @@ export function ParamControls({
                 </Field>
               </Changed>
             </div>
+            <Changed on={chg("trimWhitespace")}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "12px 0 10px",
+                  marginTop: 4,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600 }}>Trim whitespace</div>
+                  <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+                    Crop white margins off illustration edges so the artwork fills its frame
+                  </div>
+                </div>
+                <Toggle value={p.trimWhitespace} onChange={(v) => set("trimWhitespace", v)} />
+              </div>
+            </Changed>
           </StageGroup>
 
           {/* ---- Think (LLM) stage ---- */}
@@ -2012,8 +2034,16 @@ type PagePairsInfo = {
 // PairedPagesView so the action button can live in the pane header (next to the
 // close button) while the page grid renders in the body below.
 type ToastFn = (kind: "info" | "ok" | "error", msg: string, ms?: number) => void;
+// Ask the user how to resolve "this book is already in the collection": the host
+// shows a Replace / Add-as-new-copy / Cancel dialog and invokes one of the callbacks.
+type AskReplaceFn = (bookName: string, onReplace: () => void, onNewCopy: () => void) => void;
 
-function usePagePairs(runId?: string, runStatus?: string, onToast?: ToastFn) {
+function usePagePairs(
+  runId?: string,
+  runStatus?: string,
+  onToast?: ToastFn,
+  onAskReplace?: AskReplaceFn,
+) {
   const [info, setInfo] = React.useState<PagePairsInfo | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [processing, setProcessing] = React.useState(false);
@@ -2117,20 +2147,37 @@ function usePagePairs(runId?: string, runStatus?: string, onToast?: ToastFn) {
     setAdded(false);
   }, [runId]);
 
-  const addToCollection = React.useCallback(() => {
-    if (!runId) return;
-    setAdding(true);
-    api
-      .addToCollection(runId)
-      .then(() => {
-        setAdded(true);
-        onToast?.("ok", "Added the finished book to the Bloom collection.");
-      })
-      .catch((e) =>
-        onToast?.("error", e?.message || "Couldn't add the book to a Bloom collection.", 8000),
-      )
-      .finally(() => setAdding(false));
-  }, [runId, onToast]);
+  const addToCollection = React.useCallback(
+    (mode?: "replace" | "new") => {
+      if (!runId) return;
+      setAdding(true);
+      api
+        .addToCollection(runId, mode)
+        .then((r) => {
+          if (r.needsChoice) {
+            // Already in the collection — let the host ask how to proceed, then re-send.
+            onAskReplace?.(
+              r.bookName || "This book",
+              () => addToCollection("replace"),
+              () => addToCollection("new"),
+            );
+            return;
+          }
+          setAdded(true);
+          onToast?.(
+            "ok",
+            r.replaced
+              ? "Replaced the book in the Bloom collection (kept its Bloom ID)."
+              : "Added the finished book to the Bloom collection.",
+          );
+        })
+        .catch((e) =>
+          onToast?.("error", e?.message || "Couldn't add the book to a Bloom collection.", 8000),
+        )
+        .finally(() => setAdding(false));
+    },
+    [runId, onToast, onAskReplace],
+  );
 
   return {
     info,
@@ -2153,7 +2200,7 @@ function usePagePairs(runId?: string, runStatus?: string, onToast?: ToastFn) {
 // review panel over the Bloom side (independent of side/super).
 type ViewMode = { mode: "side" | "super"; opacity: number; metadata: boolean };
 
-export function PdfViewerPane({
+export function PreviewPane({
   source,
   multiSelected,
   width,
@@ -2171,6 +2218,7 @@ export function PdfViewerPane({
   bloomRunning = false,
   bloomCollectionName,
   onToast,
+  onAskReplace,
 }: {
   source?: Source | null;
   multiSelected: boolean;
@@ -2196,8 +2244,10 @@ export function PdfViewerPane({
   bloomCollectionName?: string;
   // Pop a transient toast (e.g. the result of "Add finished product to Bloom Collection").
   onToast?: ToastFn;
+  // Ask how to resolve a book that's already in the collection (Replace / new copy / cancel).
+  onAskReplace?: AskReplaceFn;
 }) {
-  const pairs = usePagePairs(mode === "run" ? runId : undefined, runStatus, onToast);
+  const pairs = usePagePairs(mode === "run" ? runId : undefined, runStatus, onToast, onAskReplace);
   // The run is in its final Bloom stage — Bloom is styling the book. Surface the same
   // "Processing in Bloom…" spinner the manual re-process uses, until the run completes
   // and the re-fetch above swaps in the side-by-side comparison.
@@ -2336,7 +2386,7 @@ export function PdfViewerPane({
             <Btn
               variant="ghost"
               size="sm"
-              onClick={pairs.addToCollection}
+              onClick={() => pairs.addToCollection()}
               disabled={pairs.adding}
               title="Copy this finished book into the running Bloom collection whose primary language matches the book"
             >
@@ -2812,7 +2862,7 @@ function PairedPagesView({
   bloomRunning: boolean;
   bloomCollectionName?: string;
   view: ViewMode;
-  // Turn the metadata-review panel off (its "×" button) — owned by PdfViewerPane.
+  // Turn the metadata-review panel off (its "×" button) — owned by PreviewPane.
   onCloseMetadata?: () => void;
   // Master-page reuse: each source page's hash, and a save/clear callback. The
   // per-page button opens the picker dialog (managed here).

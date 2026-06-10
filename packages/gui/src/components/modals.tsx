@@ -711,6 +711,7 @@ function previewCmd(source: Source, p: Params, start: Stage) {
     (p.complexBecomesImage !== "busy"
       ? " \\\n  --complex-becomes-image " + p.complexBecomesImage
       : "") +
+    (p.trimWhitespace ? " \\\n  --trim-whitespace" : "") +
     " \\\n  --target " +
     p.target
   );
@@ -743,6 +744,7 @@ export function CompareModal({
     ],
     ["Cover handling", (r) => BLOOM.coverModes[r.params.coverMode]],
     ["Flatten complex", (r) => BLOOM.complexLevels[r.params.complexBecomesImage]],
+    ["Trim whitespace", (r) => (r.params.trimWhitespace ? "On" : "Off")],
     ["Target", (r) => BLOOM.targets[r.params.target]],
   ];
   const outcomes: [string, (r: Run) => React.ReactNode][] = [
@@ -1214,15 +1216,20 @@ export function ConfirmModal({
   title,
   message,
   confirmLabel,
+  secondaryLabel,
   danger,
   onConfirm,
+  onSecondary,
   onClose,
 }: {
   title?: string;
   message?: string;
   confirmLabel?: string;
+  /** Optional middle button (e.g. an alternative action alongside Cancel + confirm). */
+  secondaryLabel?: string;
   danger?: boolean;
   onConfirm: () => void;
+  onSecondary?: () => void;
   onClose: () => void;
 }) {
   return (
@@ -1238,6 +1245,11 @@ export function ConfirmModal({
             <Btn variant="default" onClick={onClose}>
               Cancel
             </Btn>
+            {secondaryLabel && onSecondary && (
+              <Btn variant="default" onClick={onSecondary}>
+                {secondaryLabel}
+              </Btn>
+            )}
             <Btn
               variant={danger ? "danger" : "primary"}
               icon={danger ? "trash" : "check"}

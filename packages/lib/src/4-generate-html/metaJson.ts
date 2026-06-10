@@ -227,3 +227,22 @@ export async function writeMetaJson(bookFolderPath: string, book: Book): Promise
 
   return meta;
 }
+
+/**
+ * Overwrite just the `bookInstanceId` in an existing book folder's meta.json,
+ * leaving every other field untouched. Pass an explicit `id` to reuse the
+ * identity of a book already in a collection (so a later Bloom Library re-upload
+ * updates the same entry); omit it to mint a fresh id (so a separate copy is a
+ * distinct book to Bloom). Returns the id that was written.
+ *
+ * Throws if the folder has no readable meta.json — callers should only use this
+ * on a folder we just wrote a Bloom book into.
+ */
+export async function setBookInstanceId(bookFolderPath: string, id?: string): Promise<string> {
+  const metaPath = path.join(bookFolderPath, "meta.json");
+  const meta = JSON.parse(await fs.readFile(metaPath, "utf-8")) as Record<string, unknown>;
+  const newId = id || randomUUID();
+  meta.bookInstanceId = newId;
+  await fs.writeFile(metaPath, JSON.stringify(meta, null, 2));
+  return newId;
+}

@@ -92,6 +92,15 @@ export const optionsSchema: OptionSpec[] = [
     help: "Full-page cover handling: 'auto' renders a cover image only when the page is detected as full-bleed art; 'render' always renders the first and last pages; 'none' leaves covers to Bloom's xMatter.",
   },
   {
+    key: "trimWhitespace",
+    cliFlag: "--trim-whitespace",
+    label: "Trim whitespace",
+    type: "boolean",
+    default: false,
+    stage: "ocr",
+    help: "Crop uniform white margins off the edges of each illustration so the artwork fills its frame. Off by default. Skips full-bleed covers, per-page snapshots, and decorative icons.",
+  },
+  {
     key: "complexBecomesImage",
     cliFlag: "--complex-becomes-image",
     label: "Translatability vs. Fidelity",

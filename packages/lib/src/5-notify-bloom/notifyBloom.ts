@@ -348,7 +348,7 @@ function isParentOf(parent: string, child: string): boolean {
 }
 
 /** Read the book's bookInstanceId from its meta.json, or undefined if unavailable. */
-async function readBookInstanceId(bookFolder: string): Promise<string | undefined> {
+export async function readBookInstanceId(bookFolder: string): Promise<string | undefined> {
   const metaPath = path.join(bookFolder, "meta.json");
   try {
     const raw = await fs.readFile(metaPath, "utf-8");

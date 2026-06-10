@@ -1,8 +1,8 @@
 {
-  "name": "@bloombridge/desktop",
-  "version": "0.1.1",
+  "name": "@bloombridge/app",
+  "version": "0.1.2",
   "private": true,
-  "description": "BloomBridge — Neutralino desktop wrapper for the Conversion Manager GUI",
+  "description": "BloomBridge — Neutralino desktop app wrapping the Conversion Manager GUI",
   "scripts": {
     "setup": "npx --yes @neutralinojs/neu@latest update",
     "sync-version": "node scripts/sync-version.mjs",

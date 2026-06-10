@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Start the full GUI dev stack (gui + lib + cli) in parallel watch mode.
-# Equivalent to `vp run dev`: gui Vite/React HMR on http://localhost:5180,
-# lib and cli rebuilding on change.
+# Start the BloomBridge dev server: the GUI (React + the in-process conversion API)
+# on http://localhost:5180, with @bloombridge/lib resolved from SOURCE.
+#
+# That means editing packages/lib is live in the running conversion engine — no
+# separate `lib build --watch`, no stale dist cached in the dev-server process (see
+# packages/gui/vite.config.ts + conversionApiPlugin). Develop in a browser at :5180.
+#
+# The native desktop shell (packages/app, Neutralino) is a separate, build-based
+# concern — run `pnpm --filter @bloombridge/app dev` when you want the packaged app.
 set -e
-exec vp run -r --parallel dev
+exec vp run -F @bloombridge/gui dev

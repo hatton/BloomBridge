@@ -43,6 +43,7 @@ export interface Params {
   visionModel: string; // --vision-model
   coverMode: string; // --cover (auto | render | none)
   complexBecomesImage: string; // --complex-becomes-image (covers | busy | anyCanvas | all)
+  trimWhitespace: boolean; // --trim-whitespace (crop white margins off illustrations)
   target: string; // --target (images | ocr | tagged | bloom)
 }
 

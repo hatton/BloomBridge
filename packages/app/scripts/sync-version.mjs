@@ -15,9 +15,9 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DESKTOP = path.resolve(__dirname, "..");
-const PKG = path.join(DESKTOP, "package.json");
-const CONFIG = path.join(DESKTOP, "neutralino.config.json");
+const APP_DIR = path.resolve(__dirname, "..");
+const PKG = path.join(APP_DIR, "package.json");
+const CONFIG = path.join(APP_DIR, "neutralino.config.json");
 
 const version = JSON.parse(fs.readFileSync(PKG, "utf-8")).version;
 const config = JSON.parse(fs.readFileSync(CONFIG, "utf-8"));

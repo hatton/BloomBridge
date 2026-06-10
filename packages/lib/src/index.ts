@@ -24,6 +24,7 @@ export { validateBloomHtml } from "./4-generate-html/validateBloomHtml";
 export {
   buildBookMetaData,
   writeMetaJson,
+  setBookInstanceId,
   writeAppearanceJson,
   hasFullPageFrontCover,
 } from "./4-generate-html/metaJson";
@@ -35,6 +36,7 @@ export {
 
 export {
   notifyBloomOfBook,
+  readBookInstanceId,
   getRunningBloomCollection,
   getRunningBloomInstances,
   getCollectionLanguages,
@@ -111,6 +113,7 @@ export type { NormalStyle } from "./1-ocr/detectNormalStyle";
 export { detectCanvasPages } from "./1-ocr/detectCanvasPages";
 export type { TextBoxFraction, CanvasPageInfo } from "./1-ocr/detectCanvasPages";
 export { detectSolidBackgroundColor } from "./1-ocr/detectBackgroundColor";
+export { trimWhitespaceInBookFolder } from "./1-ocr/trimImageWhitespace";
 
 // Export logger utilities for callers to access log messages
 export { logger, withRunContext } from "./logger";

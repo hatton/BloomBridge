@@ -10,6 +10,8 @@ import {
   defaultParams,
   getRunningBloomCollection,
   notifyBloomOfBook,
+  readBookInstanceId,
+  setBookInstanceId,
   bringBloomToFront,
   reloadBloomCollection,
   selectBookInBloom,
@@ -188,6 +190,29 @@ async function copyDir(src: string, dest: string) {
     if (e.isDirectory()) await copyDir(s, d);
     else await fs.copyFile(s, d);
   }
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A non-colliding folder for a "new copy" send: "Check - <book>", then
+ * "Check - <book> (2)", "(3)", … so repeated sends accumulate distinct copies
+ * rather than overwriting each other (each gets its own bookInstanceId).
+ */
+async function firstFreeCopyName(collection: string, bookName: string): Promise<string> {
+  const base = "Check - " + bookName;
+  let candidate = path.join(collection, base);
+  for (let n = 2; await pathExists(candidate); n++) {
+    candidate = path.join(collection, `${base} (${n})`);
+  }
+  return candidate;
 }
 
 /**
@@ -494,7 +519,13 @@ export async function handleApiRequest(
             try {
               const entries = await fs.readdir(col, { withFileTypes: true });
               for (const e of entries) {
-                if (e.isDirectory() && e.name.toLowerCase().startsWith("preview - ")) {
+                const lname = e.name.toLowerCase();
+                // "check - …" is the current throwaway-copy prefix; "preview - …"
+                // is the legacy one (collections may still hold those).
+                if (
+                  e.isDirectory() &&
+                  (lname.startsWith("check - ") || lname.startsWith("preview - "))
+                ) {
                   await fs
                     .rm(path.join(col, e.name), { recursive: true, force: true })
                     .catch(() => {});
@@ -1036,8 +1067,14 @@ export async function handleApiRequest(
             if (!rec)
               return send(res, 400, { error: "This run hasn't produced a Bloom book yet." });
             try {
-              const result = await addFinishedBookToCollectionForRun(rec);
-              return send(res, 200, { ok: true, id: result.id });
+              const mode = u.searchParams.get("mode"); // null | "replace" | "new"
+              const result = await addFinishedBookToCollectionForRun(
+                rec,
+                mode === "replace" || mode === "new" ? mode : undefined,
+              );
+              if (result.needsChoice)
+                return send(res, 200, { ok: true, needsChoice: true, bookName: rec.bookName });
+              return send(res, 200, { ok: true, id: result.id, replaced: result.replaced });
             } catch (e: any) {
               return send(res, e?.httpStatus || 500, {
                 error: e?.message || "Bloom couldn't add the book to its collection.",
@@ -1088,12 +1125,40 @@ export async function handleApiRequest(
                 error:
                   "No Bloom collection to preview into. Open a collection in Bloom, or set a default collection in Settings.",
               });
-            const dest = path.join(collection, "preview - " + rec.bookName);
+            // The collection may already hold this book under its canonical
+            // (un-prefixed) folder name — e.g. a copy the user previously kept or
+            // uploaded to Bloom Library, whose bookInstanceId matters. Without an
+            // explicit mode, surface that so the GUI can ask whether to replace it
+            // (reusing its id) or add this conversion as a separate copy.
+            const mode = u.searchParams.get("mode"); // null | "replace" | "new"
+            const canonical = path.join(collection, rec.bookName);
+            const canonicalExists = await pathExists(path.join(canonical, "meta.json"));
+            if (!mode && canonicalExists) {
+              return send(res, 200, { ok: true, needsChoice: true, bookName: rec.bookName });
+            }
+            // "replace" overwrites the canonical book and reuses its id; otherwise
+            // (explicit "new", or default when nothing's there) we add a fresh copy.
+            const replace = mode === "replace";
+            let dest: string;
+            let reuseId: string | undefined;
+            if (replace) {
+              dest = canonical;
+              reuseId = await readBookInstanceId(canonical);
+              // Clear the old folder first so stale files (renamed images, etc.)
+              // from the previous book don't linger alongside the new ones.
+              await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
+            } else {
+              dest = await firstFreeCopyName(collection, rec.bookName);
+            }
             try {
               await copyDir(rec.bookFolderPath, dest);
             } catch (e: any) {
               return send(res, 500, { error: "copy failed: " + (e?.message || e) });
             }
+            // Reuse the replaced book's id (so a Bloom Library re-upload updates the
+            // same entry), or mint a fresh id for a separate copy (so Bloom treats it
+            // as a distinct book rather than a duplicate of the run's source folder).
+            await setBookInstanceId(dest, replace ? reuseId : undefined).catch(() => {});
             const notify = await notifyBloomOfBook(dest);
             const broughtToFront = bloom ? await bringBloomToFront(bloom.port) : false;
             // Final step: ask Bloom to actually select/open the previewed book.
@@ -1102,6 +1167,7 @@ export async function handleApiRequest(
             return send(res, 200, {
               ok: true,
               dest,
+              replaced: replace,
               bloomRunning: !!bloom,
               collectionName: bloom?.collectionName,
               notified: notify.notified,
@@ -1149,7 +1215,25 @@ export function conversionApiPlugin(): Plugin {
   return {
     name: "bloombridge-api",
     configureServer(server: ViteDevServer) {
-      server.middlewares.use(handleApiRequest);
+      // Load the handler through Vite's SSR graph rather than using the statically
+      // imported `handleApiRequest` above. That static import resolved @bloombridge/lib
+      // to the built dist at config-load time and Node caches it for the life of this
+      // process — so a lib edit would never take effect without a restart. Going through
+      // ssrLoadModule means the handler (and its lib import, aliased to source in
+      // vite.config) is re-evaluated whenever the lib source changes: editing the
+      // conversion engine is live. Vite caches the module between edits, so this only
+      // re-runs when something actually changed.
+      server.middlewares.use(async (req, res, next) => {
+        try {
+          const mod = (await server.ssrLoadModule("/server/apiPlugin.ts")) as {
+            handleApiRequest: typeof handleApiRequest;
+          };
+          await mod.handleApiRequest(req, res, next);
+        } catch (err) {
+          server.ssrFixStacktrace(err as Error);
+          next(err);
+        }
+      });
     },
   };
 }

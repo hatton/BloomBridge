@@ -6,9 +6,9 @@
  * is the bulk of BloomBridge. So it can't update this app.
  *
  * Instead we reuse the channel we already ship through: GitHub Releases. Each release is
- * tagged `desktop-v<version>` and carries the Inno Setup installer
+ * tagged `app-v<version>` and carries the Inno Setup installer
  * (`BloomBridge-Setup-<version>.exe`). This module:
- *   1. asks the GitHub API for the newest `desktop-v*` release,
+ *   1. asks the GitHub API for the newest `app-v*` release,
  *   2. compares it to the running version (NL_APPVERSION),
  *   3. if newer, asks the user, downloads the installer, runs it, and quits.
  * The installer upgrades in place (stable AppId GUID) and relaunches the app
@@ -22,7 +22,7 @@
   // neutralino.config.json (exposed as NL_RELEASE_REPO). Format: "owner/repo".
   const REPO =
     typeof NL_RELEASE_REPO === "string" && NL_RELEASE_REPO ? NL_RELEASE_REPO : "hatton/BloomBridge";
-  const TAG_PREFIX = "desktop-v";
+  const TAG_PREFIX = "app-v";
   const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases?per_page=30`;
   const INSTALLER_RE = /BloomBridge-Setup-.*\.exe$/i;
 
@@ -81,7 +81,7 @@
   }
 
   /**
-   * Find the newest published `desktop-v*` release with an installer asset.
+   * Find the newest published `app-v*` release with an installer asset.
    * Returns { version, downloadUrl, name } or null.
    */
   async function findLatestRelease() {
@@ -152,7 +152,7 @@
       const current = currentVersion();
       const rel = await findLatestRelease();
       if (!rel) {
-        ulog("no desktop release with an installer found");
+        ulog("no app release with an installer found");
         return;
       }
       if (cmpVer(rel.version, current) <= 0) {

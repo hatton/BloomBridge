@@ -27,6 +27,7 @@ import { detectNormalStyle } from "../1-ocr/detectNormalStyle";
 import { detectCanvasPages, type CanvasPageInfo } from "../1-ocr/detectCanvasPages";
 import { renderPdfPageToImage } from "../1-ocr/renderPdfPage";
 import { getPdfPageInfo } from "../1-ocr/coverDetection";
+import { trimWhitespaceInBookFolder } from "../1-ocr/trimImageWhitespace";
 import { llmMarkdown } from "../2-llm/llmMarkdown";
 import { attemptCleanup } from "../2-llm/post-llm-cleanup";
 import { addBloomPlanToMarkdown } from "../3-add-bloom-plan/addBloomPlan";
@@ -100,6 +101,7 @@ export interface RunArgs {
   visionModelName?: string;
   emitSourceHashes?: boolean;
   complexBecomesImage?: string;
+  trimWhitespace?: boolean;
 }
 
 /** A fully-resolved plan: every path, key, and mode the stage loop needs. */
@@ -128,6 +130,7 @@ export interface RunPlan {
   emitSourceHashes: boolean;
   masterFolderPath?: string;
   complexBecomesImage: string;
+  trimWhitespace: boolean;
   /** Settings keyed by `optionsSchema` key, recorded in the provenance sidecar. */
   optionsRecord: Record<string, unknown>;
 }
@@ -153,6 +156,7 @@ export function runOptionsRecord(a: RunArgs): Record<string, unknown> {
     imager: a.imager ?? "poppler",
     parserEngine: a.parserEngine ?? "native",
     emitSourceHashes: a.emitSourceHashes ?? false,
+    trimWhitespace: a.trimWhitespace ?? false,
   };
 }
 
@@ -545,6 +549,7 @@ export async function planConversion(args: RunArgs): Promise<RunPlan> {
     emitSourceHashes,
     masterFolderPath,
     complexBecomesImage: args.complexBecomesImage ?? "busy",
+    trimWhitespace: args.trimWhitespace ?? false,
     optionsRecord: runOptionsRecord(args),
   };
 }
@@ -625,6 +630,10 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
         masterHashes: epubMasterHashes,
         templateHashes: epubTemplateHashes,
       });
+      if (plan.trimWhitespace) {
+        logger.info(`-> Trimming whitespace from illustration edges...`);
+        await trimWhitespaceInBookFolder(plan.bookFolderPath!);
+      }
       logger.info(`Writing tagged markdown to: ${plan.markdownCleanedAfterLLMPath}`);
       await fs.writeFile(plan.markdownCleanedAfterLLMPath!, markdown);
 
@@ -776,6 +785,14 @@ export async function runConversion(plan: RunPlan, hooks?: RunHooks): Promise<Ru
           plan.bookFolderPath!,
           plan.complexBecomesImage,
         );
+      }
+
+      // Crop the white margins off the extracted illustrations (opt-in). Done after
+      // all per-page analysis (which reads the PDF / rendered pages, not these PNGs),
+      // and skipped in flatten-all mode where every page is a full-bleed snapshot.
+      if (plan.trimWhitespace && !flattenAll) {
+        logger.info(`-> Trimming whitespace from illustration edges...`);
+        await trimWhitespaceInBookFolder(plan.bookFolderPath!);
       }
 
       logger.info(`Writing OCR'd markdown to: ${plan.markdownFromOCRPath}`);

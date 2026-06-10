@@ -80,6 +80,10 @@ program
     "For which pages should the converter snapshot the original PDF page instead of rebuilding it as editable text (the translatability-vs-fidelity tradeoff)? 'covers' rebuilds every interior page as editable text; 'busy' (default) additionally snapshots pages too busy to convert well; 'anyCanvas' snapshots any page with text over a picture; 'all' snapshots EVERY page (OCR-ing only a few pages for metadata/languages, skipping all per-page layout analysis). Legacy values (off, 0-5, always) are still accepted. Flattened pages carry a data-conversion-note. Requires PDF input.",
     "busy",
   )
+  .option(
+    "--trim-whitespace",
+    "Crop uniform white margins off the edges of each extracted illustration so the artwork fills its frame. Off by default. Skips full-bleed covers, per-page snapshots, and decorative icons.",
+  )
   .option("--verbose", "Enable verbose logging to see detailed process steps")
   .option(
     "--json-events",
@@ -107,6 +111,7 @@ program
         visionModelName: options.visionModel,
         emitSourceHashes: options.emitSourceHashes || false,
         complexBecomesImage: options.complexBecomesImage || "busy",
+        trimWhitespace: options.trimWhitespace || false,
         jsonEvents: options.jsonEvents || false,
       };
 

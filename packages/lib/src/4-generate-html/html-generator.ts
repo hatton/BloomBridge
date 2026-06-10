@@ -559,6 +559,32 @@ export class HtmlGenerator {
   }
 
   /**
+   * The pixel rect of the pane the origami item at `index` occupies, within a
+   * `canvasW × canvasH` marginBox. Top-level Bloom page layouts are vertical stacks
+   * (see generatePage: `orientation` is always Portrait → horizontal splits), and
+   * origami nests them right-leaning 50/50 (first item vs. the rest, recursively).
+   * So item i takes height share `1/2^(i+1)`, and the LAST item takes the same share
+   * as its predecessor (`1/2^(count-1)`); each spans the full width. Used to size an
+   * image's canvas element for the preview before Bloom recomputes geometry on view.
+   */
+  private static origamiPaneRect(
+    index: number,
+    count: number,
+    canvasW: number,
+    canvasH: number,
+  ): { width: number; height: number; left: number; top: number } {
+    const share = (i: number) => (i < count - 1 ? 1 / 2 ** (i + 1) : 1 / 2 ** i);
+    let top = 0;
+    for (let i = 0; i < index; i++) top += share(i) * canvasH;
+    return {
+      width: canvasW,
+      height: Math.round(share(index) * canvasH),
+      left: 0,
+      top: Math.round(top),
+    };
+  }
+
+  /**
    * The img class that controls how a full-bleed canvas image fits its element.
    * EPUB imports are forced to a 16:9 device page (see epubToBloomMarkdown), but their
    * illustrations rarely match that aspect, so `cover` would crop the art's edges
@@ -997,18 +1023,17 @@ ${backgroundHtml}${textElementsHtml}${imageElementsHtml ? "\n" + imageElementsHt
         origamiItems.push(textItem);
       } else if (element.type === "image") {
         const imageElement = element as ImageElement;
-        // For a page that is a single full-page image, size its canvas element to
-        // the marginBox (page minus margins) so it shows at full size before Bloom
-        // recomputes geometry on first view. object-fit:contain (Bloom's default for
-        // a non-cover canvas) keeps the whole image visible. We only do this for
-        // single-image pages; in multi-pane layouts the pane size isn't the marginBox.
-        const isSingleFullPageImage =
-          layoutElements.length === 1 && layoutElements[0].type === "image";
-        let canvasElementStyle: string | undefined;
-        if (isSingleFullPageImage) {
-          const { canvasW, canvasH } = HtmlGenerator.pagePx(metadata.pageSize || "A5Portrait");
-          canvasElementStyle = `width: ${canvasW}px; height: ${canvasH}px; left: 0px; top: 0px;`;
-        }
+        // Size the image's canvas element to the pane it will occupy, so it shows at
+        // the right size *before* Bloom recomputes geometry on first view. Without
+        // this the canvas element has no dimensions and the image renders as a tiny
+        // box in any static preview/thumbnail (the symptom that made trimmed images
+        // still look small). object-fit:contain (Bloom's default for a non-cover
+        // canvas) keeps the whole image visible inside the pane, so a tightly-trimmed
+        // illustration fills its pane. Bloom recomputes this on first view, so an
+        // approximate pane rect only affects the preview, never the edited page.
+        const { canvasW, canvasH } = HtmlGenerator.pagePx(metadata.pageSize || "A5Portrait");
+        const rect = HtmlGenerator.origamiPaneRect(index, layoutElements.length, canvasW, canvasH);
+        const canvasElementStyle = `width: ${rect.width}px; height: ${rect.height}px; left: ${rect.left}px; top: ${rect.top}px;`;
         origamiItems.push({ type: "image", src: imageElement.src, canvasElementStyle });
       }
     });

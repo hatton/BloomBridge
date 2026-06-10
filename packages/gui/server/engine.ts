@@ -17,6 +17,9 @@ import {
   bringBloomToFront,
   processBookInBloom,
   addBookToBloom,
+  notifyBloomOfBook,
+  selectBookInBloom,
+  setBookInstanceId,
   Parser,
   findMasterBookFolder,
   loadMasterPages,
@@ -335,7 +338,7 @@ async function readBookL1(bookFolderPath: string): Promise<string | undefined> {
  */
 async function findCompatibleBloomForRun(
   rec: RunRecord,
-): Promise<{ port: number; collectionName?: string }> {
+): Promise<{ port: number; collectionName?: string; collectionFolder: string }> {
   const l1 = (await readBookL1(rec.bookFolderPath!)) || "";
   const match = l1 ? await findBloomCollectionForLanguage(l1) : null;
   if (!match) {
@@ -346,7 +349,71 @@ async function findCompatibleBloomForRun(
       400,
     );
   }
-  return match;
+  return {
+    port: match.port,
+    collectionName: match.collectionName,
+    collectionFolder: match.collectionFolder,
+  };
+}
+
+/** Read selected fields from a book folder's meta.json (empty object if unreadable). */
+async function readBookMeta(
+  bookFolder: string,
+): Promise<{ title?: string; bookInstanceId?: string }> {
+  try {
+    return JSON.parse(await fs.readFile(path.join(bookFolder, "meta.json"), "utf-8")) as {
+      title?: string;
+      bookInstanceId?: string;
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** A "Check - …"/"preview - …" throwaway copy we made — never the canonical book to replace. */
+function isThrowawayCopy(folderName: string): boolean {
+  const n = folderName.toLowerCase();
+  return n.startsWith("check - ") || n.startsWith("preview - ");
+}
+
+/**
+ * Find a book already in `collectionFolder` that is the same book as this run's —
+ * i.e. the copy whose Bloom id we'd want to keep when replacing. Bloom renames a
+ * book folder to its title and appends "-<id>"/" - <id>" when another book of that
+ * title exists, so we can't rely on an exact folder-name match: we match on the
+ * book's title (from meta.json) and, as a fallback, a folder name that equals or
+ * begins with this run's book name. Throwaway "Check - …" copies we made are
+ * skipped. Returns the existing book's folder + bookInstanceId, or null.
+ */
+async function findExistingBookInCollection(
+  collectionFolder: string,
+  rec: RunRecord,
+): Promise<{ folder: string; id?: string } | null> {
+  const runTitle = rec.bookFolderPath ? (await readBookMeta(rec.bookFolderPath)).title : undefined;
+  const runTitleKey = runTitle?.toLowerCase();
+  // Bloom names the folder after the book title (the run name is a fallback), so
+  // match an existing folder that equals — or begins with, before Bloom's
+  // "-<id>"/" - <id>" collision suffix — either of those bases.
+  const bases = [rec.bookName, runTitle].filter((b): b is string => !!b);
+  const nameMatches = (folderName: string) =>
+    bases.some((base) => {
+      if (folderName === base) return true;
+      return folderName.startsWith(base) && /^[\s\-(]/.test(folderName.slice(base.length));
+    });
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(collectionFolder, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory() || isThrowawayCopy(e.name)) continue;
+    const folder = path.join(collectionFolder, e.name);
+    const meta = await readBookMeta(folder);
+    const titleMatch = !!runTitleKey && meta.title?.toLowerCase() === runTitleKey;
+    if (nameMatches(e.name) || titleMatch) return { folder, id: meta.bookInstanceId };
+  }
+  return null;
 }
 
 /**
@@ -403,7 +470,8 @@ export async function processBookInBloomForRun(
  */
 export async function addFinishedBookToCollectionForRun(
   rec: RunRecord,
-): Promise<{ id?: string; bookFolderPath?: string }> {
+  mode?: "replace" | "new",
+): Promise<{ id?: string; bookFolderPath?: string; needsChoice?: boolean; replaced?: boolean }> {
   if (!rec.bookFolderPath)
     throw new BloomProcessError("This run hasn't produced a Bloom book yet.", 400);
   try {
@@ -415,6 +483,29 @@ export async function addFinishedBookToCollectionForRun(
   const bloom = await findCompatibleBloomForRun(rec);
   await bringBloomToFront(bloom.port);
 
+  // Is this book already in the collection (perhaps under a Bloom-renamed folder,
+  // e.g. "<title>-<id>")? If so and the caller hasn't decided, ask whether to
+  // replace that copy — keeping its bookInstanceId so a later Bloom Library upload
+  // updates the same book — or add this conversion as a separate copy.
+  const existing = await findExistingBookInCollection(bloom.collectionFolder, rec);
+  if (existing && !mode) {
+    return { needsChoice: true };
+  }
+
+  if (existing && mode === "replace") {
+    // Overwrite the existing book in place (same folder, so Bloom sees the same
+    // book) and reuse its bookInstanceId. Clear it first so stale files don't linger.
+    const dest = existing.folder;
+    await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
+    await copyDir(rec.bookFolderPath, dest);
+    await setBookInstanceId(dest, existing.id).catch(() => {});
+    const notify = await notifyBloomOfBook(dest);
+    if (notify.bookId) await selectBookInBloom(notify.bookId, bloom.port);
+    return { id: existing.id, bookFolderPath: dest, replaced: true };
+  }
+
+  // No existing copy, or the user chose "add as a new copy": let Bloom copy it in
+  // (it keeps this run's fresh bookInstanceId, so it's a distinct book) and select it.
   const result = await addBookToBloom(rec.bookFolderPath, bloom.port);
   if (!result.ok)
     throw new BloomProcessError(
@@ -553,6 +644,7 @@ async function executeRun(rec: RunRecord) {
     visionFormatting: rec.params.visionFormatting,
     visionModelName: rec.params.visionModel,
     complexBecomesImage: rec.params.complexBecomesImage,
+    trimWhitespace: rec.params.trimWhitespace,
   };
 
   try {

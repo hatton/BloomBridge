@@ -25,6 +25,7 @@ export type Arguments = {
   visionModelName?: string;
   emitSourceHashes?: boolean;
   complexBecomesImage?: string;
+  trimWhitespace?: boolean;
   jsonEvents?: boolean;
 };
 
@@ -65,6 +66,7 @@ export async function processConversion(inputPath: string, options: Arguments) {
     visionModelName: options.visionModelName,
     emitSourceHashes: options.emitSourceHashes,
     complexBecomesImage: options.complexBecomesImage,
+    trimWhitespace: options.trimWhitespace,
   };
 
   try {

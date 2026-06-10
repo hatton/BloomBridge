@@ -13,7 +13,7 @@
   #define AppVersion "0.0.0"
 #endif
 #ifndef AppExe
-  #define AppExe "bloombridge-desktop-win_x64.exe"
+  #define AppExe "bloombridge-app-win_x64.exe"
 #endif
 #ifndef StageDir
   #define StageDir "stage"
@@ -57,10 +57,7 @@ Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdir
 
 [Icons]
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; IconFilename: "{app}\appIcon.ico"
-Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; IconFilename: "{app}\appIcon.ico"; Tasks: desktopicon
-
-[Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "Launch {#MyAppName}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+; Auto-launch after install without prompting (no postinstall checkbox).
+Filename: "{app}\{#AppExe}"; Description: "Launch {#MyAppName}"; WorkingDir: "{app}"; Flags: nowait skipifsilent

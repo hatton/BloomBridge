@@ -16,9 +16,9 @@ A command-line interface for converting PDFs and markdown to Bloom format. See [
 
 A local web app — the **Conversion Manager** — for browsing source documents, configuring conversions, running them, and live-watching progress. It's a React + Vite front end; the backend API and live (SSE) updates are served by Vite itself and drive the lib in-process (no separate server in dev).
 
-### [@bloombridge/desktop](./packages/desktop)
+### [@bloombridge/app](./packages/app)
 
-A [Neutralino](https://neutralino.js.org) desktop wrapper around the GUI, packaged as a self-contained Windows installer. It runs the GUI's Node backend as a sidecar process. See [its README](./packages/desktop/README.md) for setup, running, and building the installer.
+A [Neutralino](https://neutralino.js.org) desktop app wrapping the GUI, packaged as a self-contained Windows installer. It runs the GUI's Node backend as a sidecar process. See [its README](./packages/app/README.md) for setup, running, and building the installer.
 
 ## Requirements
 
