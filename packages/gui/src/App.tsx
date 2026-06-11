@@ -3,7 +3,13 @@ import React, { useState, useEffect } from "react";
 import { Icon } from "./lib/icons";
 import { IconBtn } from "./components/primitives";
 import { CenterTable } from "./components/table";
-import { SourcePanel, BatchPane, RunSelectionPane, PreviewPane } from "./components/panels";
+import {
+  SourcePanel,
+  BatchPane,
+  RunSelectionPane,
+  PreviewPane,
+  LEFT_MIN_PX,
+} from "./components/panels";
 import {
   RunConfig,
   CompareModal,
@@ -95,6 +101,19 @@ export function App() {
       /* ignore */
     }
   }, [pdfWidth]);
+  // Track the window width so we can clamp the preview pane when the window
+  // shrinks — keeping at least LEFT_MIN_PX for the left side. We clamp the
+  // displayed width only (not pdfWidth), so the user's preferred width is
+  // restored when the window is widened again.
+  const [windowWidth, setWindowWidth] = useState<number>(() =>
+    typeof window === "undefined" ? 1200 : window.innerWidth,
+  );
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const previewWidth = Math.max(260, Math.min(pdfWidth, windowWidth - LEFT_MIN_PX));
   const [bloom, setBloom] = useState<{
     running: boolean;
     collectionName?: string;
@@ -659,7 +678,7 @@ export function App() {
           runEtaMs={previewRun?.progress?.etaMs}
           runStartedMs={previewRun?.progress?.startedMs}
           runFailedStage={previewRun?.error?.stage}
-          width={pdfWidth}
+          width={previewWidth}
           onResize={setPdfWidth}
           showActions={showPreviewActions}
           hasRun={!!previewRun}
@@ -764,17 +783,17 @@ export function App() {
           style={{
             position: "fixed",
             left: "50%",
-            bottom: 46,
+            top: 20,
             transform: "translateX(-50%)",
             zIndex: 120,
             display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: 10,
             maxWidth: "70vw",
-            padding: "9px 14px",
+            padding: "12px 18px",
             borderRadius: 10,
             boxShadow: "var(--shadow-lg)",
-            fontSize: 12.5,
+            fontSize: 15,
             fontWeight: 600,
             background:
               toast.kind === "error"
@@ -792,7 +811,7 @@ export function App() {
         >
           <Icon
             name={toast.kind === "error" ? "alert" : toast.kind === "ok" ? "check" : "eye"}
-            size={15}
+            size={18}
           />
           <span>{toast.msg}</span>
           <button
@@ -808,7 +827,7 @@ export function App() {
               cursor: "pointer",
             }}
           >
-            <Icon name="x" size={13} />
+            <Icon name="x" size={15} />
           </button>
         </div>
       )}

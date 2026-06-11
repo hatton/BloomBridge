@@ -177,6 +177,7 @@ export const api = {
       masterFolder?: string;
       pages: { id: string; index: number }[];
       selectedMasterPageId?: string | null;
+      reason?: string;
     }>(
       `/api/runs/${runId}/master-pages${sourceHash ? `?sourceHash=${encodeURIComponent(sourceHash)}` : ""}`,
     ),

@@ -270,6 +270,7 @@ export function MasterPagePickerModal({
     ready: boolean;
     pages: { id: string; index: number }[];
     selectedId: string | null;
+    reason?: string;
   } | null>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -283,6 +284,7 @@ export function MasterPagePickerModal({
             ready: r.ready,
             pages: r.pages || [],
             selectedId: r.selectedMasterPageId ?? null,
+            reason: r.reason,
           });
       })
       .catch(() => {
@@ -358,10 +360,16 @@ export function MasterPagePickerModal({
             </div>
           ) : !state.ready ? (
             <div
-              style={{ padding: 24, textAlign: "center", color: "var(--text-3)", fontSize: 12.5 }}
+              style={{
+                padding: 24,
+                textAlign: "center",
+                color: "var(--text)",
+                fontSize: 15,
+                lineHeight: 1.45,
+              }}
             >
-              No master book found in this collection. Add a sibling book folder whose name ends in
-              “master”, then try again.
+              {state.reason ??
+                "No master book found in this collection. Add a sibling book folder whose name ends in “master”, then try again."}
             </div>
           ) : (
             <div

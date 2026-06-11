@@ -2261,16 +2261,24 @@ function usePagePairs(
     };
   }, [runId, runStatus]);
 
-  // Assign (or, with a null id, clear) the master page for a source page, then
-  // reload the Bloom column so the substitution (or its removal) shows immediately.
+  // Assign (or, with a null id, clear) the master page for a source page. The choice
+  // is persisted for this and future imports, but we deliberately do NOT refresh the
+  // current preview — the swap only takes effect on the next conversion run, so we
+  // toast a reminder rather than silently leaving the output looking unchanged.
   const saveMasterMapping = React.useCallback(
     (sourceHash: string, masterPageId: string | null) => {
       if (!runId) return Promise.resolve();
-      return api
-        .saveMasterMapping(runId, sourceHash, masterPageId)
-        .then(() => setReloadKey((k) => k + 1));
+      return api.saveMasterMapping(runId, sourceHash, masterPageId).then(() => {
+        onToast?.(
+          "ok",
+          masterPageId
+            ? "Master page saved. Re-run the conversion to see it applied."
+            : "Master page cleared. Re-run the conversion to see the change.",
+          8000,
+        );
+      });
     },
-    [runId],
+    [runId, onToast],
   );
 
   // "Add finished product to Bloom Collection" — copies the book into the matching
@@ -2337,6 +2345,11 @@ function usePagePairs(
 // toggled by the Superimpose checkbox. `metadata` drops the extracted-metadata
 // review panel over the Bloom side (independent of side/super).
 type ViewMode = { mode: "side" | "super"; opacity: number; metadata: boolean };
+
+// Minimum width (px) the left side (source list / workspace) keeps. The resize
+// handle won't let the right preview pane grow past this, and App clamps the
+// pane on window-shrink so the left side stays reasonably visible.
+export const LEFT_MIN_PX = 300;
 
 export function PreviewPane({
   source,
@@ -2415,9 +2428,9 @@ export function PreviewPane({
       onResize(pending);
     };
     const onMove = (ev: MouseEvent) => {
-      // handle is on the left edge: dragging left widens the pane. Cap only at the
-      // viewport edge (less a sliver) so it can be dragged almost all the way left.
-      const max = Math.max(260, window.innerWidth - 80);
+      // handle is on the left edge: dragging left widens the pane. Cap so the left
+      // side keeps at least LEFT_MIN_PX visible — the right pane can't eat past it.
+      const max = Math.max(260, window.innerWidth - LEFT_MIN_PX);
       pending = Math.max(260, Math.min(max, startW + (startX - ev.clientX)));
       if (!raf) raf = requestAnimationFrame(flush);
     };

@@ -50,7 +50,6 @@ import {
   resolveMasterPageId,
   getRunMasterFolder,
   saveMasterMappingForRun,
-  reapplyMastersForRun,
 } from "./engine";
 
 function send(res: ServerResponse, status: number, body: unknown) {
@@ -784,7 +783,9 @@ export async function handleApiRequest(
             return send(res, 200, await listMasterPagesForRun(runId, sourceHash));
           }
           // Record (or clear, when masterPageId is null) a source-hash → master-page
-          // mapping, then re-apply masters so the preview updates immediately.
+          // mapping. The choice is persisted for this and future imports, but the
+          // current run's output is deliberately left untouched — re-running the
+          // conversion is what applies the swap (the client toasts a reminder).
           if (action === "master-mapping" && method === "POST") {
             const body = await readBody(req);
             const sourceHash = String(body.sourceHash || "");
@@ -792,7 +793,6 @@ export async function handleApiRequest(
             if (!sourceHash) return send(res, 400, { error: "sourceHash required" });
             try {
               await saveMasterMappingForRun(runId, sourceHash, masterPageId);
-              await reapplyMastersForRun(runId);
             } catch (e) {
               return send(res, 400, { error: e instanceof Error ? e.message : String(e) });
             }
