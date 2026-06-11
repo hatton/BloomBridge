@@ -1,57 +1,56 @@
 ---
 name: release
-description: Commit and push a new app version. Ensures packages/app/package.json version is at least one patch (last digit) ahead of the last commit — bumping it automatically if it isn't — then commits all changes and pushes. Use when the user says "commit and push a new version", "ship a new version", "release", or invokes /release.
+description: Cut a new app release. Commits and pushes any pending changes, then triggers the GitHub Actions release workflow (release.yml), which builds the Windows installer and publishes a GitHub Release — auto-bumping packages/app/package.json's patch version if the current version was already released. Use when the user says "release", "ship a new version", "commit and push a new version", or invokes /release.
 ---
 
-# Release a new app version
+# Cut a new app release
 
-A one-shot "ship it": make sure the app's version is newer than what's committed, then commit everything and push. Follow these steps exactly.
+Releasing no longer happens automatically on push. This skill is the terminal entry
+point that drives the **release.yml** workflow; the GitHub "Run workflow" button is the
+equivalent web entry point. **CI owns versioning** — it bumps
+`packages/app/package.json` if the current version already has an `app-v<version>`
+release. So this skill must **not** edit the version itself.
 
-## 1. Read the two versions
+Follow these steps.
 
-- **Current** — the `"version"` field in `packages/app/package.json` (working tree).
-- **Committed** — `git show HEAD:packages/app/package.json`, then read its `"version"`.
+## 1. Commit and push any pending work
 
-Parse both as dotted numeric semver (e.g. `0.1.6` → `[0,1,6]`). Ignore any `-prerelease` suffix.
+The release builds from the tip of `master`, so anything you want included must be
+pushed first.
 
-## 2. Ensure the version is bumped
-
-Compare current vs committed component-by-component:
-
-- If **current is strictly greater** than committed (any component higher — at minimum the patch/last digit), it's already bumped. **Leave it as-is.**
-- Otherwise (current equals committed, or somehow lower), compute a new version =
-  **committed version with its last (patch) digit incremented by 1**, and write it
-  into `packages/app/package.json`. Change only the version string — preserve all
-  other formatting and indentation (use a targeted Edit, not a full rewrite).
-
-State the result in one line, e.g. `version: 0.1.6 (committed) → 0.1.7 (bumped)` or
-`version: 0.2.0 already ahead of committed 0.1.6 — keeping it`.
-
-## 3. Commit
-
-- Stage everything: `git add -A`.
-- If, after staging, there is **nothing to commit** (clean tree and the version was
-  already committed), stop and tell the user there's nothing to ship.
-- Commit message:
-  - If the user passed text as arguments, use that as the subject line.
-  - Otherwise use `chore(app): release v<new-version>`.
-  - End the message with the required trailer on its own line:
+- `git status --short`. If there are changes:
+  - `git add -A`
+  - Commit. Subject = the user's argument text if they passed any, else
+    `chore: pre-release`. End the message with the trailer on its own line:
     `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
+  - `git push` (set upstream with `git push -u origin <branch>` if needed).
+- If the tree is already clean, skip committing.
 
-## 4. Push
+The repo releases from `master`; stay on the current branch (don't create one) unless
+the user is already on a different branch.
 
-- `git push`. If the branch has no upstream, `git push -u origin <current-branch>`.
-- This repo commits directly to `master`; push to the current branch (don't create a
-  new one) unless the user is already on a different branch.
+## 2. Trigger the release workflow
 
-## 5. Report
+- `gh workflow run release.yml --ref master`
+- Only if the user explicitly asked for a **test build** (no release), pass
+  `-f dry_run=true` instead.
 
-Print the new version, the commit hash, and the push result (branch + remote).
+## 3. Watch it and report
 
-## Scope / non-goals
+- Find the run (it takes a few seconds to register):
+  `gh run list --workflow=release.yml --branch master --limit 1` → grab the run id/URL.
+- Watch to completion: `gh run watch <id> --exit-status`.
+- On **success**: report the published version and release URL —
+  `gh release list --limit 1` and `gh release view app-v<version> --web` (or print the
+  URL). Note that CI may have bumped the version, so read the actual released tag rather
+  than assuming it matches the local `package.json`.
+- On **failure**: show the failing step with `gh run view <id> --log-failed` and
+  summarize what broke.
 
-- This skill **only** versions, commits, and pushes. It does **not** build the
-  installer or create a GitHub release. (The auto-updater needs a GitHub release
-  tagged `app-v<version>` carrying the installer; that's a separate step.)
-- Do not touch `neutralino.config.json` — its version is a placeholder that the build
-  syncs from `package.json` automatically.
+## Notes
+
+- Do **not** modify `packages/app/package.json` or `neutralino.config.json` — the
+  workflow handles the version bump (and the build syncs the config from package.json).
+- A bare `git push` never triggers a release anymore; only this workflow does.
+- The auto-updater serves whatever the newest `app-v*` GitHub Release is, so a
+  successful run here is what actually pushes the update to installed copies.
