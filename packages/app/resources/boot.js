@@ -270,6 +270,37 @@ function trackWindowState() {
   setInterval(() => void saveWindowState(), WINDOW_STATE_POLL_MS);
 }
 
+// ---------------------------------------------------------------------------
+// Native folder-picker bridge. The GUI runs in a cross-origin <iframe> (the Node
+// sidecar's origin), so it can't call Neutralino's native API itself. It postMessages
+// us a request; we ACK, run os.showFolderDialog (the modern OS picker), and post the
+// chosen path back to the iframe's origin. See packages/gui/src/api.ts (pickFolder).
+// ---------------------------------------------------------------------------
+function installFolderPickerBridge() {
+  window.addEventListener("message", async (e) => {
+    // Only honour requests from the GUI we loaded into the iframe.
+    if (e.origin !== BACKEND_ORIGIN) return;
+    const d = e.data;
+    if (!d || d.source !== "bloombridge" || d.type !== "pickFolder") return;
+    const reply = (msg) => {
+      try {
+        if (e.source) e.source.postMessage({ source: "bloombridge", ...msg }, e.origin);
+      } catch (err) {
+        log(`folder-dialog reply failed: ${(err && (err.message || err.code)) || err}`);
+      }
+    };
+    reply({ type: "pickFolder:ack", id: d.id });
+    try {
+      const opts = d.initial ? { defaultPath: d.initial } : {};
+      const path = await Neutralino.os.showFolderDialog("Select source folder", opts);
+      reply({ type: "pickFolder:result", id: d.id, path: path || null });
+    } catch (err) {
+      log(`showFolderDialog failed: ${(err && (err.message || err.code)) || err}`);
+      reply({ type: "pickFolder:result", id: d.id, path: null });
+    }
+  });
+}
+
 async function shutdown() {
   try {
     if (spawnedId !== null) {
@@ -292,6 +323,7 @@ async function main() {
   started = true;
   log("main() started");
   watchBackendOutput();
+  installFolderPickerBridge();
   // Restore the saved window bounds before the splash hands off to the app, then
   // start tracking geometry changes so they're remembered next launch.
   await restoreWindowState();

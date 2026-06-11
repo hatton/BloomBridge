@@ -31,6 +31,64 @@ async function sendJson<T>(url: string, method: string, body?: unknown): Promise
   return parseOrThrow<T>(res);
 }
 
+/** True when we're embedded in the Neutralino desktop shell's <iframe> (vs. running
+ *  as a top-level page in a plain browser during dev). The shell can reach the native
+ *  OS dialogs; we can't from here, so we ask it via postMessage. */
+const inDesktopShell = (): boolean => {
+  try {
+    return window.parent !== window;
+  } catch {
+    return true; // cross-origin parent access threw → we're embedded
+  }
+};
+
+let pickSeq = 0;
+
+/** Ask the Neutralino shell (parent frame) to show its native folder dialog and
+ *  resolve to the chosen absolute path (null if cancelled). The shell ACKs receipt
+ *  immediately; if no ACK arrives quickly the bridge isn't there, so we reject and
+ *  let the caller fall back to the server picker. Once ACKed we wait indefinitely —
+ *  the user may sit in the dialog for a while. See packages/app/resources/boot.js. */
+function pickFolderViaShell(initial?: string): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    const id = ++pickSeq;
+    let acked = false;
+    const ackTimer = window.setTimeout(() => {
+      if (acked) return;
+      window.removeEventListener("message", onMsg);
+      reject(new Error("folder-dialog bridge unavailable"));
+    }, 2000);
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data;
+      if (!d || d.source !== "bloombridge" || d.id !== id) return;
+      if (d.type === "pickFolder:ack") {
+        acked = true;
+        window.clearTimeout(ackTimer);
+        return;
+      }
+      if (d.type === "pickFolder:result") {
+        window.removeEventListener("message", onMsg);
+        resolve(typeof d.path === "string" && d.path ? d.path : null);
+      }
+    };
+    window.addEventListener("message", onMsg);
+    // The parent is on Neutralino's origin (unknown to us here), so target "*"; the
+    // request is benign and the parent validates our origin before acting.
+    window.parent.postMessage({ source: "bloombridge", type: "pickFolder", id, initial }, "*");
+  });
+}
+
+async function pickFolder(initial?: string): Promise<{ path: string | null }> {
+  if (inDesktopShell()) {
+    try {
+      return { path: await pickFolderViaShell(initial) };
+    } catch {
+      /* bridge unavailable — fall through to the server picker */
+    }
+  }
+  return sendJson<{ path: string | null }>("/api/pick-folder", "POST", { initial });
+}
+
 export interface OptionSpec {
   key: string;
   cliFlag: string;
@@ -73,8 +131,7 @@ export const api = {
       "POST",
     ),
   recentFolders: () => getJson<{ folders: string[] }>("/api/recent-folders"),
-  pickFolder: (initial?: string) =>
-    sendJson<{ path: string | null }>("/api/pick-folder", "POST", { initial }),
+  pickFolder: (initial?: string) => pickFolder(initial),
   folder: (path: string) =>
     getJson<{ folder: string; sources: Source[] }>("/api/folder?path=" + encodeURIComponent(path)),
   folderSettings: (path: string) =>
