@@ -21,7 +21,9 @@
   // Where releases live. Overridable via the RELEASE_REPO global in
   // neutralino.config.json (exposed as NL_RELEASE_REPO). Format: "owner/repo".
   const REPO =
-    typeof NL_RELEASE_REPO === "string" && NL_RELEASE_REPO ? NL_RELEASE_REPO : "hatton/BloomBridge";
+    typeof NL_RELEASE_REPO === "string" && NL_RELEASE_REPO
+      ? NL_RELEASE_REPO
+      : "BloomBooks/BloomBridge";
   const TAG_PREFIX = "app-v";
   const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases?per_page=30`;
   const INSTALLER_RE = /BloomBridge-Setup-.*\.exe$/i;
@@ -181,12 +183,20 @@
       `powershell -NoProfile -NonInteractive -Command ` +
       `"$ProgressPreference='SilentlyContinue'; ` +
       `Invoke-WebRequest -Uri ${psQuote(rel.downloadUrl)} -OutFile ${psQuote(dest)}"`;
-    ulog(`downloading ${rel.downloadUrl} -> ${dest}`);
-    const out = await Neutralino.os.execCommand(cmd);
-    if (out.exitCode !== 0) {
-      throw new Error(`download failed (exit ${out.exitCode}): ${out.stdErr || out.stdOut}`);
+    // Retry a few times with a short backoff: the download can hit a transient
+    // DNS/connection blip even right after the release-check API call succeeded
+    // (we've seen "the remote name could not be resolved: 'github.com'"). One bad
+    // moment shouldn't abandon the whole update.
+    let lastErr = "download failed";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      ulog(`downloading (attempt ${attempt}/3) ${rel.downloadUrl} -> ${dest}`);
+      const out = await Neutralino.os.execCommand(cmd);
+      if (out.exitCode === 0) return dest;
+      lastErr = `download failed (exit ${out.exitCode}): ${out.stdErr || out.stdOut}`;
+      ulog(lastErr);
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 2000));
     }
-    return dest;
+    throw new Error(lastErr);
   }
 
   /** Launch the installer detached and quit so it can replace files. */

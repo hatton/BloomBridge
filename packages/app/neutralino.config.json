@@ -24,7 +24,7 @@
   ],
   "globalVariables": {
     "BACKEND_PORT": 5181,
-    "RELEASE_REPO": "hatton/BloomBridge"
+    "RELEASE_REPO": "BloomBooks/BloomBridge"
   },
   "modes": {
     "window": {

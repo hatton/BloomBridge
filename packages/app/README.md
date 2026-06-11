@@ -87,8 +87,8 @@ Notes:
   `app/` directory (the GUI + lib), which is the bulk of the app. Re-running the
   installer is the only way to update the whole thing.
 - The release repo is the `RELEASE_REPO` global in
-  [neutralino.config.json](neutralino.config.json) (`hatton/BloomBridge`). Change it if
-  releases move.
+  [neutralino.config.json](neutralino.config.json) (`BloomBooks/BloomBridge`). Change it
+  if releases move.
 - The check no-ops in `neu run` dev mode and swallows all errors — it can never block
   the app.
 - The version shown after the app name (window title + splash) comes from
