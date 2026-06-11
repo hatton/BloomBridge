@@ -1,9 +1,17 @@
 /*
  * Generate the desktop app icons from the GUI's app.svg.
- *   resources/icons/appIcon.png   — 256x256, used as the Neutralino window icon
+ *   resources/icons/appIcon.png   — 32x32, used as the Neutralino window icon
  *                                    (title bar + taskbar while running).
  *   resources/icons/appIcon.ico   — multi-size ICO, used by the Inno Setup installer
  *                                    (Setup.exe icon + Start-menu/desktop shortcut icon).
+ *
+ * Why 32x32 for the window PNG: Neutralino's Windows `setIcon` decodes this PNG and
+ * assigns the *single* resulting HICON (at the PNG's native size) to both ICON_SMALL
+ * (the title-bar caption, 16px) and ICON_BIG (the running taskbar button, 32px). A
+ * 256px source forced Windows to downscale 256->16 for the caption — a 16:1 squeeze
+ * that looked blurry. 32px gives the caption a clean 2:1 downscale and an exact-size
+ * taskbar icon at 100% DPI. (The runtime path can't carry multiple sizes, so a single
+ * well-chosen size is the lever here.)
  *
  * Run once after changing app.svg:  node packages/app/scripts/gen-icons.mjs
  * (The produced PNG/ICO are checked in; the installer build just copies them.)
@@ -20,6 +28,9 @@ const SVG = path.join(REPO, "packages", "gui", "public", "app.svg");
 const ICONS_DIR = path.join(APP_DIR, "resources", "icons");
 
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
+// Neutralino's runtime window icon: see header note — a single 32px source serves
+// both the title-bar caption (16px) and the running taskbar button (32px) crisply.
+const WINDOW_ICON_SIZE = 32;
 
 async function pngAt(size) {
   // density high enough that the 41x41 SVG rasterizes crisply at the largest size.
@@ -56,7 +67,7 @@ async function main() {
   if (!fs.existsSync(SVG)) throw new Error(`Source SVG not found: ${SVG}`);
   fs.mkdirSync(ICONS_DIR, { recursive: true });
 
-  fs.writeFileSync(path.join(ICONS_DIR, "appIcon.png"), await pngAt(256));
+  fs.writeFileSync(path.join(ICONS_DIR, "appIcon.png"), await pngAt(WINDOW_ICON_SIZE));
 
   const entries = [];
   for (const size of ICO_SIZES) entries.push({ size, png: await pngAt(size) });
