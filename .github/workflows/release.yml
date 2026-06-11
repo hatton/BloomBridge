@@ -25,7 +25,7 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Determine version (bump if the current one is already released)
         id: v
@@ -56,10 +56,10 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "pnpm"
@@ -77,7 +77,7 @@ jobs:
         run: node packages/app/scripts/build-installer.mjs
 
       - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: BloomBridge-Setup
           path: packages/app/installer-out/BloomBridge-Setup-*.exe
@@ -85,7 +85,7 @@ jobs:
 
       - name: Publish GitHub Release
         if: ${{ !inputs.dry_run }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: app-v${{ steps.v.outputs.version }}
           # Tag the current tip of master (the bump commit, when CI bumped) rather than
