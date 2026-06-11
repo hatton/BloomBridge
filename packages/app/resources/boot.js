@@ -282,6 +282,11 @@ async function shutdown() {
   }
 }
 
+// Exposed so the updater can quit the same way windowClose does — killing the node
+// sidecar before exiting. If it just called Neutralino.app.exit(), the sidecar would
+// be orphaned and keep file locks on the install dir while the installer overwrites it.
+window.BloomBridgeShutdown = shutdown;
+
 async function main() {
   if (started) return;
   started = true;

@@ -65,5 +65,8 @@ Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdir
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; IconFilename: "{app}\appIcon.ico"
 
 [Run]
-; Auto-launch after install without prompting (no postinstall checkbox).
-Filename: "{app}\{#AppExe}"; Description: "Launch {#MyAppName}"; WorkingDir: "{app}"; Flags: nowait skipifsilent
+; Auto-launch after install without prompting (no postinstall checkbox). No
+; `skipifsilent`: the auto-updater runs this installer with /VERYSILENT, and we still
+; want BloomBridge to relaunch in that case. `nowait` lets the installer exit without
+; waiting on the app.
+Filename: "{app}\{#AppExe}"; Description: "Launch {#MyAppName}"; WorkingDir: "{app}"; Flags: nowait

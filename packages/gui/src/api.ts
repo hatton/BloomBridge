@@ -171,9 +171,14 @@ export const api = {
   // a thumbnail URL per master page, and recording (or clearing) a mapping.
   runSourceHashes: (runId: string) =>
     getJson<{ hashes: Record<string, string> }>(`/api/runs/${runId}/source-hashes`),
-  masterPages: (runId: string) =>
-    getJson<{ ready: boolean; masterFolder?: string; pages: { id: string; index: number }[] }>(
-      `/api/runs/${runId}/master-pages`,
+  masterPages: (runId: string, sourceHash?: string) =>
+    getJson<{
+      ready: boolean;
+      masterFolder?: string;
+      pages: { id: string; index: number }[];
+      selectedMasterPageId?: string | null;
+    }>(
+      `/api/runs/${runId}/master-pages${sourceHash ? `?sourceHash=${encodeURIComponent(sourceHash)}` : ""}`,
     ),
   masterPageUrl: (runId: string, index: number, v = 0) =>
     `/api/runs/${runId}/master-page/__page-${index}.html${v ? `?v=${v}` : ""}`,

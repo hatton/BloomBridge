@@ -269,23 +269,29 @@ export function MasterPagePickerModal({
   const [state, setState] = React.useState<{
     ready: boolean;
     pages: { id: string; index: number }[];
+    selectedId: string | null;
   } | null>(null);
   const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
     let alive = true;
     api
-      .masterPages(runId)
+      .masterPages(runId, sourceHash)
       .then((r) => {
-        if (alive) setState({ ready: r.ready, pages: r.pages || [] });
+        if (alive)
+          setState({
+            ready: r.ready,
+            pages: r.pages || [],
+            selectedId: r.selectedMasterPageId ?? null,
+          });
       })
       .catch(() => {
-        if (alive) setState({ ready: false, pages: [] });
+        if (alive) setState({ ready: false, pages: [], selectedId: null });
       });
     return () => {
       alive = false;
     };
-  }, [runId]);
+  }, [runId, sourceHash]);
 
   const choose = (id: string | null) => {
     if (busy) return;
@@ -293,19 +299,46 @@ export function MasterPagePickerModal({
     void Promise.resolve(onChoose(id)).finally(() => setBusy(false));
   };
 
-  const tileBtn: React.CSSProperties = {
+  // The tile for the currently-chosen master page (or "Use none" when nothing is
+  // mapped) is highlighted with the accent colour + a ring so the existing choice is
+  // obvious on open.
+  const tileBtn = (selected: boolean): React.CSSProperties => ({
+    position: "relative",
     display: "flex",
     flexDirection: "column",
     gap: 6,
     padding: 8,
-    border: "1px solid var(--border)",
+    border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
     borderRadius: 8,
-    background: "var(--surface)",
+    background: selected
+      ? "color-mix(in oklch, var(--accent) 14%, var(--surface))"
+      : "var(--surface)",
+    boxShadow: selected ? "0 0 0 2px var(--accent)" : "none",
     cursor: busy ? "wait" : "pointer",
     textAlign: "center",
     font: "inherit",
     color: "var(--text)",
-  };
+  });
+
+  // A small "Current" pill shown on whichever tile is already selected.
+  const currentBadge = (
+    <span
+      style={{
+        position: "absolute",
+        top: 4,
+        right: 4,
+        padding: "1px 6px",
+        borderRadius: 999,
+        background: "var(--accent)",
+        color: "#fff",
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: ".3px",
+      }}
+    >
+      Current
+    </span>
+  );
 
   return (
     <Overlay onClose={onClose}>
@@ -338,7 +371,13 @@ export function MasterPagePickerModal({
                 gap: 12,
               }}
             >
-              <button type="button" disabled={busy} onClick={() => choose(null)} style={tileBtn}>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => choose(null)}
+                style={tileBtn(state.selectedId === null)}
+              >
+                {state.selectedId === null && currentBadge}
                 <div
                   style={{
                     width: "100%",
@@ -362,8 +401,9 @@ export function MasterPagePickerModal({
                   key={p.id}
                   disabled={busy}
                   onClick={() => choose(p.id)}
-                  style={tileBtn}
+                  style={tileBtn(p.id === state.selectedId)}
                 >
+                  {p.id === state.selectedId && currentBadge}
                   <MasterThumb runId={runId} index={p.index} />
                   <span style={{ fontSize: 11, fontWeight: 600 }}>Page {p.index}</span>
                 </button>

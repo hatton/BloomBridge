@@ -28,6 +28,7 @@ import {
   applyMasterPages,
   appendMasterMapping,
   clearMasterMapping,
+  readMasterPageMap,
   type ConversionEvent,
   type RunArgs,
 } from "@bloombridge/lib";
@@ -1406,7 +1407,15 @@ export async function getSourcePageHashes(runId: string): Promise<Record<number,
  */
 export async function listMasterPagesForRun(
   runId: string,
-): Promise<{ ready: boolean; masterFolder?: string; pages: { id: string; index: number }[] }> {
+  sourceHash?: string,
+): Promise<{
+  ready: boolean;
+  masterFolder?: string;
+  pages: { id: string; index: number }[];
+  // The master page already chosen for `sourceHash` (so the picker can highlight it),
+  // or null when none is mapped / no sourceHash was asked about.
+  selectedMasterPageId?: string | null;
+}> {
   await ensureLoaded();
   const rec = runs.get(runId);
   if (!rec) return { ready: false, pages: [] };
@@ -1414,7 +1423,12 @@ export async function listMasterPagesForRun(
   if (!masterFolder) return { ready: false, pages: [] };
   const byId = await loadMasterPagesById(masterFolder);
   const pages = [...byId.values()].map((mp, i) => ({ id: mp.id, index: i + 1 }));
-  return { ready: true, masterFolder, pages };
+  let selectedMasterPageId: string | null = null;
+  if (sourceHash) {
+    const { entries } = await readMasterPageMap(masterFolder);
+    selectedMasterPageId = entries.find((e) => e.sourceHash === sourceHash)?.masterPageId ?? null;
+  }
+  return { ready: true, masterFolder, pages, selectedMasterPageId };
 }
 
 /** The master book folder a run targets, or undefined when there is none. */

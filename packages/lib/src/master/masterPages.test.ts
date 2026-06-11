@@ -85,6 +85,29 @@ describe("master pages", () => {
     expect(result).toContain('data-source-pdf-page="7"');
   });
 
+  it("overwrites a master page's stale source-page number with the page it replaces", async () => {
+    const masterFolder = path.join(root, "Pub master");
+    const bookFolder = path.join(root, "Book One");
+    await fs.mkdir(masterFolder);
+    await fs.mkdir(bookFolder);
+    await fs.writeFile(path.join(masterFolder, "Pub master.htm"), MASTER_HTML_STALE_PDF_PAGE);
+    await fs.writeFile(path.join(masterFolder, "image-9-1.png"), "PNGDATA");
+
+    const masterPages = await loadMasterPages(masterFolder);
+    const result = await applyMasterPages(GENERATED_HTML, {
+      masterPages,
+      bookFolder,
+      masterFolder,
+      emitSourceHashes: false,
+    });
+
+    // The master's baked-in "99" (from the book it was authored in) is meaningless here:
+    // it must be replaced by the source page (7) we substituted onto, not kept. Keeping it
+    // would duplicate page numbers and mis-pair the preview.
+    expect(result).toContain('data-source-pdf-page="7"');
+    expect(result).not.toContain('data-source-pdf-page="99"');
+  });
+
   it("loads every master page keyed by id, including pages with no embedded hash", async () => {
     const masterFolder = path.join(root, "Pub master");
     await fs.mkdir(masterFolder);
@@ -278,6 +301,19 @@ describe("master pages", () => {
 const MASTER_HTML = `<!doctype html>
 <html><body>
   <div class="bloom-page customPage A5Portrait" id="master-guid-1" data-import-source-hash="abc123">
+    <div class="marginBox">
+      <p>THE MASTER LICENSE PAGE</p>
+      <img src="image-9-1.png" />
+    </div>
+  </div>
+</body></html>`;
+
+// Same matched page, but the master div carries a STALE data-source-pdf-page (the page
+// number it had in whatever book the master was built from). Substitution must NOT keep
+// it — it should be replaced with the source page we're standing in for.
+const MASTER_HTML_STALE_PDF_PAGE = `<!doctype html>
+<html><body>
+  <div class="bloom-page customPage A5Portrait" id="master-guid-1" data-import-source-hash="abc123" data-source-pdf-page="99">
     <div class="marginBox">
       <p>THE MASTER LICENSE PAGE</p>
       <img src="image-9-1.png" />

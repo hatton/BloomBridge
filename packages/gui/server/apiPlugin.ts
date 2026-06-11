@@ -777,9 +777,11 @@ export async function handleApiRequest(
           if (action === "source-hashes" && method === "GET") {
             return send(res, 200, { hashes: await getSourcePageHashes(runId) });
           }
-          // The master book's pages, for the picker dialog.
+          // The master book's pages, for the picker dialog. An optional ?sourceHash=
+          // asks which master page is already chosen for that page (to pre-highlight it).
           if (action === "master-pages" && method === "GET") {
-            return send(res, 200, await listMasterPagesForRun(runId));
+            const sourceHash = u.searchParams.get("sourceHash") || undefined;
+            return send(res, 200, await listMasterPagesForRun(runId, sourceHash));
           }
           // Record (or clear, when masterPageId is null) a source-hash → master-page
           // mapping, then re-apply masters so the preview updates immediately.

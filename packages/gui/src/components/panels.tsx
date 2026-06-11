@@ -2030,6 +2030,118 @@ export function RunSelectionPane({
 // the heading reads as part of the same dark pane as the PDF/Bloom columns below.
 const COMPARE_BACKDROP = "#202124";
 
+// A button for the compare/preview headers. On the dark compare backdrop it reads
+// as a translucent "real" button (the Review-Checklist pill look); on the light pane
+// header it falls back to a standard bordered button. Either way it brightens on
+// hover and presses down on click, so it feels like an actual button rather than
+// static text. `active` paints the accent fill used by toggles.
+function HeaderActionBtn({
+  children,
+  onClick,
+  title,
+  icon,
+  leading,
+  active = false,
+  disabled = false,
+  onDark = false,
+  size = "md",
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  title?: string;
+  icon?: string;
+  // Custom leading content (e.g. the Bloom logo) shown before the label.
+  leading?: React.ReactNode;
+  active?: boolean;
+  disabled?: boolean;
+  // True when the button sits on the dark COMPARE_BACKDROP (vs. a light pane header).
+  onDark?: boolean;
+  size?: "md" | "sm";
+}) {
+  const [hover, setHover] = React.useState(false);
+  const [pressed, setPressed] = React.useState(false);
+  const dims =
+    size === "sm"
+      ? { h: 20, px: 8, fs: 9.5, gap: 4, icon: 11, ls: ".3px" as string | undefined }
+      : { h: 26, px: 11, fs: 11.5, gap: 6, icon: 13, ls: undefined as string | undefined };
+
+  let bg: string;
+  let border: string;
+  let color: string;
+  if (active) {
+    bg = "var(--accent)";
+    border = "var(--accent)";
+    color = "#fff";
+  } else if (onDark) {
+    bg = "rgba(255,255,255,.06)";
+    border = "rgba(255,255,255,.20)";
+    color = "#e8eaed";
+  } else {
+    bg = "var(--surface)";
+    border = "var(--border-strong)";
+    color = "var(--text)";
+  }
+
+  // Hover / press feedback, layered on the resting look above.
+  let filter = "none";
+  if (!disabled) {
+    if (active) {
+      filter = pressed ? "brightness(0.9)" : hover ? "brightness(1.08)" : "none";
+    } else if (onDark) {
+      if (pressed) {
+        bg = "rgba(255,255,255,.22)";
+        border = "rgba(255,255,255,.34)";
+      } else if (hover) {
+        bg = "rgba(255,255,255,.13)";
+        border = "rgba(255,255,255,.30)";
+      }
+    } else {
+      filter = pressed ? "brightness(0.93)" : hover ? "brightness(0.97)" : "none";
+      if (hover || pressed) border = "var(--accent)";
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => {
+        setHover(false);
+        setPressed(false);
+      }}
+      onMouseDown={() => setPressed(true)}
+      onMouseUp={() => setPressed(false)}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: dims.gap,
+        height: dims.h,
+        padding: `0 ${dims.px}px`,
+        borderRadius: 999,
+        border: `1px solid ${border}`,
+        background: bg,
+        color,
+        fontSize: dims.fs,
+        fontWeight: 600,
+        letterSpacing: dims.ls,
+        whiteSpace: "nowrap",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+        transform: pressed && !disabled ? "translateY(0.5px)" : "none",
+        filter,
+        transition: "background .12s, border-color .12s, filter .12s, transform .06s",
+      }}
+    >
+      {leading}
+      {icon && <Icon name={icon} size={dims.icon} />}
+      {children}
+    </button>
+  );
+}
+
 // Bright blue marks everything that comes from the source PDF — the "PDF" labels
 // and the onion-skin tint — so the PDF layer reads as "blue" throughout the tab.
 // Applied as a "screen"-blend overlay (not a hue-rotate filter): screen maps the
@@ -2393,44 +2505,50 @@ export function PreviewPane({
           {/* The run-conversion call-to-action lives in the body's Bloom slot; the
               header keeps quiet re-run / re-process buttons once a run exists. */}
           {showActions && hasRun && (
-            <Btn
-              variant="ghost"
-              size="sm"
+            <HeaderActionBtn
+              onDark={mode === "run"}
               icon="play"
               onClick={onRunNow}
               title="Re-run a conversion with the current settings"
             >
               Re-Run Conversion
-            </Btn>
+            </HeaderActionBtn>
           )}
           {mode === "run" && pairs.info?.ready && pairs.info.bookReady && (
-            <Btn
-              variant="ghost"
-              size="sm"
+            <HeaderActionBtn
+              onDark
               icon={pairs.processing ? undefined : "refresh"}
               onClick={pairs.processInBloom}
               disabled={pairs.processing}
+              title="Re-run the Bloom processing step on this book"
             >
               {pairs.processing ? "Processing…" : "Re-process"}
-            </Btn>
+            </HeaderActionBtn>
           )}
           {mode === "run" && pairs.info?.ready && pairs.info.bookReady && (
-            <Btn
-              variant="ghost"
-              size="sm"
+            <HeaderActionBtn
+              onDark
               onClick={() => pairs.addToCollection()}
               disabled={pairs.adding}
               title="Copy this finished book into the running Bloom collection whose primary language matches the book"
+              leading={
+                !pairs.adding ? (
+                  <img
+                    src="/bloom.svg"
+                    alt=""
+                    width={14}
+                    height={14}
+                    style={{ display: "block" }}
+                  />
+                ) : undefined
+              }
             >
-              {!pairs.adding && (
-                <img src="/bloom.svg" alt="" width={14} height={14} style={{ display: "block" }} />
-              )}
               {pairs.adding
                 ? "Adding…"
                 : pairs.added
                   ? "Added to Collection"
                   : "Add finished product to Bloom Collection"}
-            </Btn>
+            </HeaderActionBtn>
           )}
           {showActions && (
             <IconBtn
@@ -2785,28 +2903,15 @@ function CompareHeadings({
   // LEFT of "Superimpose". A plain toggle button, available whenever the source is
   // ready — even before Bloom has styled the book — so it can be reviewed early.
   const reviewBtn = (
-    <button
+    <HeaderActionBtn
+      onDark
+      icon="check"
+      active={view.metadata}
       onClick={() => onView({ ...view, metadata: !view.metadata })}
       title="Review the extracted metadata against the source document"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        height: 24,
-        padding: "0 11px",
-        borderRadius: 999,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-        fontSize: 11.5,
-        fontWeight: 600,
-        border: `1px solid ${view.metadata ? "var(--accent)" : "rgba(255,255,255,.22)"}`,
-        background: view.metadata ? "var(--accent)" : "rgba(255,255,255,.06)",
-        color: view.metadata ? "#fff" : "#bdc1c6",
-      }}
     >
-      <Icon name="check" size={13} />
       Review Checklist
-    </button>
+    </HeaderActionBtn>
   );
   const superToggle = (
     <label style={toggleStyle}>
@@ -2910,6 +3015,66 @@ function PairedPagesView({
 }) {
   // The source hash whose master-page picker is currently open (null = closed).
   const [pickerHash, setPickerHash] = React.useState<string | null>(null);
+
+  // Preview zoom = the on-screen width of ONE source/Bloom pair, in pixels (ctrl+wheel
+  // over the pane). It's an absolute size, not a fraction of the pane, so the two
+  // controls are independent: ctrl+wheel changes how big each document is, while
+  // dragging the app splitter changes how MANY pairs fit per row at that same size
+  // (more pages when wider, not bigger pages). Each page is an iframe re-scaled to its
+  // column, so it stays crisp at any size. Null until the pane is first measured, at
+  // which point one pair is sized to fill the pane (the familiar single-column view).
+  const [pairPx, setPairPx] = React.useState<number | null>(null);
+  // Live pane (content) width, tracked so we can derive pairs-per-row and seed pairPx.
+  const [paneW, setPaneW] = React.useState(0);
+
+  // React's synthetic onWheel is registered passive at the root, so preventDefault()
+  // there is ignored and Chromium still zooms the whole window. We wire a native,
+  // non-passive listener via a callback ref. The ref form (not a plain useEffect) is
+  // needed because the scroll node only exists in the final tree — during the
+  // loading/processing early returns it's absent, and a once-on-mount effect would
+  // never see it appear.
+  const wheelNodeRef = React.useRef<HTMLDivElement | null>(null);
+  const onWheel = React.useCallback((e: WheelEvent) => {
+    if (!e.ctrlKey) return; // plain scroll falls through to normal vertical scrolling
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    // Clamp to an absolute px range: ~64px (a whole-book contact sheet) up to 3000px.
+    setPairPx((p) => (p == null ? p : Math.min(3000, Math.max(64, p * factor))));
+  }, []);
+  const setScrollRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      if (wheelNodeRef.current) wheelNodeRef.current.removeEventListener("wheel", onWheel);
+      wheelNodeRef.current = node;
+      if (node) node.addEventListener("wheel", onWheel, { passive: false });
+    },
+    [onWheel],
+  );
+  // Measure the rows wrapper so we know the available width (drives pairs-per-row and
+  // the first-fill of pairPx). A ResizeObserver via callback ref, for the same
+  // node-only-in-final-tree reason as the wheel listener above.
+  const rowsRoRef = React.useRef<ResizeObserver | null>(null);
+  const setRowsRef = React.useCallback((node: HTMLDivElement | null) => {
+    rowsRoRef.current?.disconnect();
+    if (!node) return;
+    const update = () => {
+      const w = node.clientWidth;
+      setPaneW(w);
+      // First measurement seeds one-pair-fills-the-pane; later resizes leave size alone.
+      setPairPx((p) => (p == null && w > 0 ? w : p));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(node);
+    rowsRoRef.current = ro;
+  }, []);
+
+  // How many pairs tile across the current pane at the current pair size, and whether
+  // that's an overview (>1 per row) — used to thin the UI down to bare thumbnails.
+  const COL_GAP = 40;
+  const perRow =
+    pairPx && paneW ? Math.max(1, Math.floor((paneW + COL_GAP) / (pairPx + COL_GAP))) : 1;
+  const compact = perRow > 1;
+
   const center = (msg: string) => (
     <div
       style={{
@@ -3033,10 +3198,13 @@ function PairedPagesView({
       }}
     >
       <div
+        ref={setScrollRef}
         style={{
           flex: 1,
           minHeight: 0,
           overflowY: "auto",
+          // A pair zoomed wider than the pane overflows; allow it to scroll sideways.
+          overflowX: pairPx != null && pairPx > paneW ? "auto" : "hidden",
           background: BACKDROP,
           padding: "8px 10px 24px",
         }}
@@ -3058,27 +3226,76 @@ function PairedPagesView({
           </div>
         )}
         {/* Column headings live in the pane header (CompareHeadings) so they read as one
-            surface with the controls; here we render just the scrolling page rows. */}
-        {rows.map((row, i) => (
-          <PairedRow
-            key={i}
-            runId={runId}
-            pdfPage={row.pdfPage}
-            bloomPage={row.bloomPage}
-            sourceKind={info.sourceKind === "epub" ? "epub" : "pdf"}
-            aspect={aspect}
-            natW={natW}
-            natH={natH}
-            reloadKey={reloadKey}
-            view={view}
-            // The Bloom-side placeholder rides in the first row only, so it appears
-            // once at the top of the Bloom column while the source pages flow below.
-            bloomNotice={i === 0 ? bloomNotice : null}
-            sourceHash={row.pdfPage !== null ? sourceHashes[String(row.pdfPage)] : undefined}
-            onPickMaster={setPickerHash}
-          />
-        ))}
+            surface with the controls; here we render just the scrolling page rows. Each
+            pair has an absolute pixel width (pairPx) and the row wraps, so a wider pane
+            fits more pairs at the same size; ctrl+wheel changes that size. A wide column
+            gap keeps neighbouring pairs reading as distinct source/Bloom units. */}
+        <div
+          ref={setRowsRef}
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "flex-start",
+            gap: `0 ${COL_GAP}px`,
+          }}
+        >
+          {rows.map((row, i) => (
+            <div
+              key={i}
+              style={{
+                width: pairPx != null ? `${pairPx}px` : "100%",
+                flexShrink: 0,
+              }}
+            >
+              <PairedRow
+                runId={runId}
+                pdfPage={row.pdfPage}
+                bloomPage={row.bloomPage}
+                sourceKind={info.sourceKind === "epub" ? "epub" : "pdf"}
+                aspect={aspect}
+                natW={natW}
+                natH={natH}
+                reloadKey={reloadKey}
+                view={view}
+                // In the multi-per-row overview the pairs are small scanning thumbnails;
+                // suppress the per-page "master" affordance, which clutters the grid.
+                compact={compact}
+                // The Bloom-side placeholder rides in the first row only, so it appears
+                // once at the top of the Bloom column while the source pages flow below.
+                bloomNotice={i === 0 ? bloomNotice : null}
+                sourceHash={row.pdfPage !== null ? sourceHashes[String(row.pdfPage)] : undefined}
+                onPickMaster={setPickerHash}
+              />
+            </div>
+          ))}
+        </div>
       </div>
+      {/* Zoom readout / reset — appears once the pair size differs from a single pane-
+          filling pair (zoomed, or the splitter widened the pane). Click resizes one pair
+          to fill the pane again. */}
+      {pairPx != null && paneW > 0 && Math.abs(pairPx - paneW) > 2 && (
+        <button
+          type="button"
+          title="Reset to one pair per row (ctrl + scroll to zoom)"
+          onClick={() => setPairPx(paneW)}
+          style={{
+            position: "absolute",
+            bottom: 12,
+            right: 14,
+            zIndex: 6,
+            padding: "3px 9px",
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,.18)",
+            background: "rgba(32,33,36,.85)",
+            color: "#e8eaed",
+            fontSize: 11,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          {perRow > 1 ? `${perRow}-up` : `${Math.round((pairPx / paneW) * 100)}%`}
+        </button>
+      )}
       {/* Extracted-metadata review panel, dropped over the Bloom (right) side. */}
       {view.metadata && <MetadataOverlay runId={runId} onClose={onCloseMetadata} />}
       {/* Master-page picker: choose which master book page serves this source page. */}
@@ -3452,6 +3669,7 @@ const PairedRow = React.memo(function PairedRow({
   natH,
   reloadKey,
   view,
+  compact,
   bloomNotice,
   sourceHash,
   onPickMaster,
@@ -3468,6 +3686,9 @@ const PairedRow = React.memo(function PairedRow({
   natH: number;
   reloadKey: number;
   view: ViewMode;
+  // Zoomed-out grid view: render as a bare scanning thumbnail (hide the per-page
+  // "master" button so the small tiles aren't cluttered).
+  compact?: boolean;
   // Placeholder shown in the Bloom column when there's no Bloom page (book not
   // styled yet / run failed). Only the first row receives it; null otherwise.
   bloomNotice?: React.ReactNode;
@@ -3644,31 +3865,22 @@ const PairedRow = React.memo(function PairedRow({
         }}
       >
         <span>{pdfPage !== null ? `PAGE ${pdfPage}` : " "}</span>
-        {/* Unobtrusive affordance: assign a master-book page to this source page.
-            Shown only once we know the page's hash (so a mapping can be recorded). */}
+        {/* Assign a master-book page to THIS source page. It sits next to the page
+            number (over the source/left column the master replaces), shown once we know
+            the page's hash. In the multi-up overview it drops to icon-only to avoid
+            cluttering the small tiles; at one-per-row it shows its "Master" label. */}
         {pdfPage !== null && sourceHash && onPickMaster && (
-          <button
-            type="button"
-            title="Use a master book page for this page"
-            onClick={() => onPickMaster(sourceHash)}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 3,
-              padding: "1px 6px",
-              border: "1px solid var(--border)",
-              borderRadius: 999,
-              background: "transparent",
-              color: "#9aa0a6",
-              fontSize: 9,
-              fontWeight: 600,
-              letterSpacing: ".3px",
-              cursor: "pointer",
-              lineHeight: 1.4,
-            }}
-          >
-            ⧉ master
-          </button>
+          <span style={{ display: "inline-flex" }}>
+            <HeaderActionBtn
+              onDark
+              size="sm"
+              icon="layers"
+              title="Use a master book page for this page"
+              onClick={() => onPickMaster(sourceHash)}
+            >
+              {compact ? null : "Master"}
+            </HeaderActionBtn>
+          </span>
         )}
       </div>
       {overlay ? (

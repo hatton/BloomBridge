@@ -80,11 +80,56 @@
     if (el) el.remove();
   }
 
+  /* --- LOCAL TEST CHANNEL (off by default) ----------------------------------
+   * If the file <dataDir>/BloomBridge/update-source.txt exists and contains a
+   * directory path, the updater treats that directory as the release channel instead
+   * of GitHub: it picks the highest-versioned BloomBridge-Setup-*.exe in it, skips the
+   * download (runs it in place) and skips the confirmation prompt. This lets the whole
+   * update flow (launch installer → kill sidecar → overwrite-in-place → relaunch) run
+   * with no network, no release tag, and no user input.
+   *
+   * It is a ONE-SHOT trigger: the sentinel file is deleted the moment we commit to
+   * installing, so the relaunched app falls back to the normal GitHub channel and
+   * doesn't loop. Inert unless the sentinel file is present. */
+  async function sentinelPath() {
+    const dataDir = await Neutralino.os.getPath("data");
+    return `${dataDir}/BloomBridge/update-source.txt`;
+  }
+
+  async function localUpdateDir() {
+    try {
+      const raw = await Neutralino.filesystem.readFile(await sentinelPath());
+      return String(raw).trim();
+    } catch {
+      return ""; // no sentinel → normal GitHub channel
+    }
+  }
+
+  async function findLatestLocalRelease(dir) {
+    const entries = await Neutralino.filesystem.readDirectory(dir);
+    let best = null;
+    for (const e of entries) {
+      if (e.type !== "FILE" || !INSTALLER_RE.test(e.entry)) continue;
+      const m = /BloomBridge-Setup-(.+)\.exe$/i.exec(e.entry);
+      const version = m ? m[1] : "0.0.0";
+      if (!best || cmpVer(version, best.version) > 0) {
+        best = { version, name: e.entry, localPath: `${dir}/${e.entry}` };
+      }
+    }
+    return best;
+  }
+
   /**
    * Find the newest published `app-v*` release with an installer asset.
-   * Returns { version, downloadUrl, name } or null.
+   * Returns { version, downloadUrl, name } (or { version, localPath, name } for the
+   * local test channel), or null.
    */
   async function findLatestRelease() {
+    const localDir = await localUpdateDir();
+    if (localDir) {
+      ulog(`LOCAL update channel: ${localDir}`);
+      return findLatestLocalRelease(localDir);
+    }
     const res = await fetch(RELEASES_URL, {
       headers: { Accept: "application/vnd.github+json" },
       cache: "no-store",
@@ -113,11 +158,25 @@
 
   /** Download the installer to the temp dir via PowerShell. Returns the local path. */
   async function downloadInstaller(rel) {
-    // getPath("temp") returns a forward-slash path on Windows; keep separators
-    // consistent (PowerShell accepts forward slashes) rather than mixing in a
-    // backslash, which produced an odd path in the launch step.
+    // Local test channel: the installer is already on disk — consume the one-shot
+    // sentinel (so the relaunched app won't re-trigger) and run it in place.
+    if (rel.localPath) {
+      try {
+        await Neutralino.filesystem.remove(await sentinelPath());
+      } catch {
+        /* sentinel already gone — fine */
+      }
+      const local = rel.localPath.replace(/\//g, "\\");
+      ulog(`using local installer (no download): ${local}`);
+      return local;
+    }
+    // getPath("temp") returns a forward-slash path on Windows. Normalize to
+    // backslashes: the launch step hands this path to the OS to execute, and the
+    // Windows process/shell layer does NOT reliably accept forward-slash separators
+    // (you get "Windows cannot find <path>"). Invoke-WebRequest (.NET) is happy with
+    // backslashes too, so we use them consistently from download on.
     const tempDir = await Neutralino.os.getPath("temp");
-    const dest = `${tempDir}/${rel.name}`;
+    const dest = `${tempDir}/${rel.name}`.replace(/\//g, "\\");
     const cmd =
       `powershell -NoProfile -NonInteractive -Command ` +
       `"$ProgressPreference='SilentlyContinue'; ` +
@@ -133,20 +192,25 @@
   /** Launch the installer detached and quit so it can replace files. */
   async function runInstallerAndExit(installerPath) {
     ulog(`launching installer: ${installerPath}`);
-    // Use PowerShell's Start-Process (not `cmd start`): cmd's `start` doesn't understand
-    // the single-quoted, forward-slash path PowerShell produces and treats the quotes as
-    // part of the filename. Start-Process launches the installer as an independent
-    // process and returns immediately, so it survives app.exit().
-    const cmd =
-      `powershell -NoProfile -NonInteractive -Command ` +
-      `"Start-Process -FilePath ${psQuote(installerPath)}"`;
-    const out = await Neutralino.os.execCommand(cmd);
-    if (out.exitCode !== 0) {
-      throw new Error(
-        `could not launch installer (exit ${out.exitCode}): ${out.stdErr || out.stdOut}`,
-      );
+    // Run the installer directly — no shell wrapper. `background: true` resolves the
+    // Promise immediately, and the spawned process isn't tracked by Neutralino (unlike
+    // spawnProcess), so it keeps running after we exit and can replace our files.
+    // The path has spaces (…\AppData\Local\Temp\…), so wrap it in double quotes.
+    // /VERYSILENT runs with no window or button clicks (the user already consented via
+    // the update prompt); /SUPPRESSMSGBOXES auto-answers the Restart-Manager close
+    // prompt; /NORESTART means it never reboots the machine. The .iss [Run] entry
+    // relaunches BloomBridge afterward (skipifsilent removed so this still fires).
+    const flags = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART";
+    await Neutralino.os.execCommand(`"${installerPath}" ${flags}`, { background: true });
+    // Quit via boot.js's shutdown so the node sidecar is killed too — otherwise it
+    // stays alive holding file locks in the install dir and the installer can only
+    // proceed by having the Restart Manager force-kill it. Fall back to a bare exit
+    // if the hook isn't present (e.g. boot.js changed).
+    if (typeof window.BloomBridgeShutdown === "function") {
+      await window.BloomBridgeShutdown();
+    } else {
+      await Neutralino.app.exit();
     }
-    await Neutralino.app.exit();
   }
 
   /**
@@ -172,16 +236,20 @@
       }
       ulog(`update available: ${current} -> ${rel.version}`);
 
-      const answer = await Neutralino.os.showMessageBox(
-        "Update available",
-        `BloomBridge ${rel.version} is available (you have ${current}).\n\n` +
-          `Download and install it now? BloomBridge will close to update, then reopen.`,
-        "YES_NO",
-        "QUESTION",
-      );
-      if (answer !== "YES") {
-        ulog("user declined update");
-        return;
+      // The local test channel runs unattended — skip the confirmation dialog (it's
+      // itself user input). The normal GitHub channel always asks first.
+      if (!rel.localPath) {
+        const answer = await Neutralino.os.showMessageBox(
+          "Update available",
+          `BloomBridge ${rel.version} is available (you have ${current}).\n\n` +
+            `Download and install it now? BloomBridge will close to update, then reopen.`,
+          "YES_NO",
+          "QUESTION",
+        );
+        if (answer !== "YES") {
+          ulog("user declined update");
+          return;
+        }
       }
 
       toast(`Downloading BloomBridge ${rel.version}…`);

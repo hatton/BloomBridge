@@ -656,12 +656,18 @@ export async function applyMasterPages(
       pageHtml = pageHtml.replace(/(<div\b[^>]*?\sid=)["'][^"']*["']/i, `$1"${randomUUID()}"`);
       // Mark it master-sourced (with the master page's own id) for the preview badge.
       pageHtml = setFromMasterAttr(pageHtml, master.id);
-      // Carry over the source-page link from the page we're replacing. Master-book
-      // HTML has no `data-source-pdf-page`, so without this the substituted page loses
-      // its alignment and the paired preview both un-pairs it and re-lists the orphaned
-      // source page at the very end.
+      // Re-stamp the source-page link to the page we're standing in for. A master page
+      // often carries a STALE `data-source-pdf-page` baked in from the book the master
+      // was built from (e.g. a template authored on page 14 of some other import); that
+      // number is meaningless here, so strip it and stamp this page's own. Skipping the
+      // overwrite when one was already present (the old behaviour) made every page filled
+      // by that template inherit the master's number — duplicating page numbers and
+      // mis-pairing the preview. A page with no source link at all also gets the master's
+      // stale one removed (without a link the preview un-pairs it and re-lists the orphan
+      // at the end, which is still better than a wrong pairing).
+      pageHtml = pageHtml.replace(/\s*data-source-pdf-page=["']\d+["']/i, "");
       const srcPageAttr = page.html.match(/\bdata-source-pdf-page=["']\d+["']/i)?.[0];
-      if (srcPageAttr && !/\bdata-source-pdf-page=/i.test(pageHtml)) {
+      if (srcPageAttr) {
         pageHtml = pageHtml.replace(/(<div\b)([^>]*>)/i, `$1 ${srcPageAttr}$2`);
       }
       logger.info(
